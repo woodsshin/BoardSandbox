@@ -1,0 +1,25 @@
+declare bse: {
+	view: {
+		spawn: (kind: string, x: number, y: number, opts: { owner: number?, props: { [string]: any }? }?) -> number,
+		move: (id: number, x: number, y: number) -> (),
+		set: (id: number, changes: { [string]: any }) -> (),
+		remove: (id: number) -> (),
+		get: (id: number) -> { id: number, kind: string, x: number, y: number, owner: number?, props: { [string]: any }? }?,
+		clear: () -> (),
+	},
+	turn: (seat: number) -> (),
+	over: (info: { winner: number?, reason: string?, cells: { { number } }? }?) -> (),
+	emit: (event: { [string]: any }) -> (),
+	status: (text: any, level: string?) -> (),
+	reject: (code: string, message: string, details: { [string]: any }?) -> { code: string, message: string, details: { [string]: any }? },
+	deepcopy: <T>(value: T) -> T,
+	is_headless: () -> boolean,
+	log: (...any) -> (),
+	warn: (...any) -> (),
+	err: (...any) -> (),
+	json: {
+		encode: (value: any) -> string,
+		decode: (text: string) -> any,
+		null: any,
+	},
+}

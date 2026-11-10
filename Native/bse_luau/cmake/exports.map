@@ -1,0 +1,6 @@
+{
+  global:
+    bse_*;
+  local:
+    *;
+};

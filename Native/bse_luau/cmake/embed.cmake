@@ -1,0 +1,5 @@
+file(READ "${INPUT}" content HEX)
+string(LENGTH "${content}" hex_length)
+math(EXPR byte_count "${hex_length} / 2")
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${content}")
+file(WRITE "${OUTPUT}" "#include \"prelude_data.h\"\n\nnamespace bse\n{\n\nconst unsigned char kPreludeData[] = {${bytes}0x00};\nconst std::size_t kPreludeSize = ${byte_count};\n\n} // namespace bse\n")
