@@ -27,6 +27,7 @@ namespace BoardSandbox.Client.UI
 
         private readonly GameHost _host;
         private readonly GuiTheme _theme;
+        private readonly GameLibraryPanel _library;
         private readonly Action _fitView;
         private readonly Queue<Action> _deferred = new Queue<Action>();
         private readonly List<Rect> _rects = new List<Rect>();
@@ -63,6 +64,7 @@ namespace BoardSandbox.Client.UI
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _fitView = fitView;
+            _library = new GameLibraryPanel(host, theme, Defer, () => _releaseFocus = true);
             _host.SessionReplaced += OnSessionReplaced;
         }
 
@@ -70,6 +72,9 @@ namespace BoardSandbox.Client.UI
         public bool TextFocused => GUIUtility.keyboardControl != 0;
 
         public bool ConsoleOpen => _showConsole;
+
+        // True while the list of games covers the screen; the board and the keyboard shortcuts of the app are idle then.
+        public bool ModalOpen => _library.IsOpen;
 
         // A line of explanation under the title of the game; empty for none.
         public string Note { get; set; } = string.Empty;
@@ -82,6 +87,14 @@ namespace BoardSandbox.Client.UI
                     return true;
             }
             return false;
+        }
+
+        // Opens the list of games. Call it between two frames, not from inside OnGUI.
+        public void OpenLibrary()
+        {
+            _library.Open();
+            _rects.Clear();
+            _rects.Add(new Rect(0f, 0f, Width, Height));
         }
 
         public void Defer(Action action)
@@ -146,8 +159,17 @@ namespace BoardSandbox.Client.UI
                     _releaseFocus = false;
                 }
             }
-            HandleKeys(e);
 
+            if (_library.IsOpen)
+            {
+                if (e.type == EventType.Repaint)
+                    _rects.Add(new Rect(0f, 0f, Width, Height));
+                _library.Draw();
+                DrawToasts();
+                return;
+            }
+
+            HandleKeys(e);
             DrawBanner();
             DrawGamePanel();
             DrawToolColumn();
@@ -312,13 +334,13 @@ namespace BoardSandbox.Client.UI
             BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
             BeginBox(width);
 
-            GUILayout.Label(manifest != null ? manifest.Name : "Board Sandbox", _theme.Heading);
+            GUILayout.Label(manifest != null ? DisplayText.Clip(manifest.Name, 40) : "Board Sandbox", _theme.Heading);
             if (manifest != null && manifest.Description.Length > 0)
-                GUILayout.Label(manifest.Description, _theme.Muted);
+                GUILayout.Label(DisplayText.Clip(manifest.Description, 600, false), _theme.Muted);
             if (session != null && Note.Length > 0)
                 GUILayout.Label(Note, _theme.Muted);
 
-            DrawModList();
+            DrawGamesButton();
             if (session != null)
             {
                 DrawSeats(manifest);
@@ -331,34 +353,10 @@ namespace BoardSandbox.Client.UI
             EndArea();
         }
 
-        private void DrawModList()
+        private void DrawGamesButton()
         {
-            IReadOnlyList<ModPackage> mods = _host.Catalog.Mods;
-            if (mods.Count == 0)
-            {
-                GUILayout.Label("No mods were found in:", _theme.Wrapped);
-                foreach (string root in _host.Catalog.Roots)
-                    GUILayout.Label(root, _theme.Muted);
-                return;
-            }
-            if (mods.Count == 1)
-                return;
-
-            GUILayout.Label("Game", _theme.Muted);
-            foreach (ModPackage mod in mods)
-            {
-                bool current = ReferenceEquals(_host.Mod, mod);
-                bool pressed = GUILayout.Toggle(current, mod.Manifest.Name, _theme.Button);
-                if (pressed && !current)
-                {
-                    ModPackage chosen = mod;
-                    Defer(() =>
-                    {
-                        if (_host.SelectMod(chosen))
-                            _host.StartNewGame();
-                    });
-                }
-            }
+            if (GUILayout.Button("Games (G)", _theme.Button))
+                Defer(OpenLibrary);
         }
 
         private void DrawSeats(ModManifest manifest)

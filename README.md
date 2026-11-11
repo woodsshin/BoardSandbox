@@ -3,6 +3,7 @@
 Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 보드로 보여 줍니다. 기본으로 오목(Gomoku) 모드가 들어 있습니다.
 
 - **모드로 게임 추가**: `config.json`과 `.luau` 파일이 든 폴더 하나가 게임 하나입니다.
+- **게임 선택 화면**: 앱에 들어 있는 게임과 로컬 폴더의 게임을 한 목록에서 검색하고 고릅니다. 모드는 출처(`Built-in`, `Local`, `Workshop`)를 갖고, 출처별로 모드를 읽어 오는 부분은 `IModSource`로 분리돼 있습니다.
 - **호스트 권한**: 마우스, 콘솔, 컴퓨터 플레이어의 모든 입력은 `GameSession.Submit` 하나를 거쳐 규칙 스크립트(`rules.command`)의 검증을 통과해야 반영됩니다. 거부된 입력은 코드와 사유가 붙은 결과로 돌아옵니다.
 - **인터셉터**: `ICommandInterceptor`로 입력이 규칙에 닿기 전에 막거나(`TurnGuard`), 처리 뒤 결과를 기록할 수 있습니다(`RejectionLog`).
 - **시간 되감기**: 수마다 스냅샷을 남겨(최대 4096단계) 되돌리기, 다시 실행, 임의 지점 이동을 지원합니다. 모드가 `snapshot`과 `restore`를 제공해야 합니다.
@@ -24,7 +25,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 
 1. Unity Hub에서 **Add > Add project from disk**로 이 폴더를 열고 6000.3.x 에디터를 선택합니다.
 2. 메뉴 **Board Sandbox > Check Native Plugin**을 실행해 Luau 버전이 표시되는지 확인합니다.
-3. 아무 씬에서 **Play**를 누르면 `BoardSandboxApp`이 자동으로 만들어지고 오목이 시작됩니다. 씬에 카메라가 없으면 `Board Camera`도 만듭니다.
+3. 아무 씬에서 **Play**를 누르면 `BoardSandboxApp`이 자동으로 만들어집니다. 읽은 게임이 하나뿐이면(들어 있는 구성은 오목 하나) 바로 시작하고, 둘 이상이면 게임 선택 화면이 열립니다([시작 규칙](#시작-규칙)). 씬에 카메라가 없으면 `Board Camera`도 만듭니다.
 4. 씬 파일이 필요하면 **Board Sandbox > Create Demo Scene**을 실행합니다.
 
 | 에디터 메뉴 | 동작 |
@@ -39,9 +40,9 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 
 | 필드 | 기본값 | 설명 |
 |---|---|---|
-| Initial Mod | `gomoku` | 시작할 모드 id. 찾지 못하면 목록의 첫 모드 |
-| Extra Mod Folders | 비어 있음 | 모드를 찾을 추가 폴더 |
-| Start Game | 켜짐 | 시작하자마자 새 게임을 엽니다 |
+| Initial Mod | 비어 있음 | 시작할 게임의 id. 비어 있을 때와 찾지 못할 때의 동작은 [시작 규칙](#시작-규칙)을 보세요 |
+| Extra Mod Folders | 비어 있음 | 모드를 찾을 추가 폴더 (출처 `Local`) |
+| Start Game | 켜짐 | 시작할 게임이 정해졌으면 바로 새 게임을 엽니다. 끄면 게임만 고르고 `New game`을 기다립니다 |
 | Ui Scale | 0 | 0이면 화면 높이에 맞춰 자동 (1~2.5배, 0.25 단위) |
 
 ## 조작
@@ -53,25 +54,33 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 | 오른쪽 드래그 | 카메라 회전 |
 | 마우스 휠 | 확대/축소 |
 | `F` | 보드 전체가 보이도록 카메라 맞춤 |
+| `G` | 게임 선택 화면 열기 |
 | `N` | 새 게임 |
 | `Ctrl+Z`, `←` | 되돌리기 |
 | `Ctrl+Y`, `Ctrl+Shift+Z`, `→` | 다시 실행 |
 | `` ` ``, `F1` | 콘솔 열기/닫기 (`Esc`는 콘솔이 열려 있을 때 닫음) |
 
-텍스트 입력란에 포커스가 있으면 단축키는 동작하지 않습니다. `client.click.action`이 없는 모드에서는 보드를 클릭해도 아무 일도 일어나지 않으며, 왼쪽 패널에 안내가 표시됩니다. 이때는 콘솔의 `play`를 씁니다.
+텍스트 입력란에 포커스가 있거나 게임 선택 화면이 열려 있으면 단축키는 동작하지 않습니다. `client.click.action`이 없는 모드에서는 보드를 클릭해도 아무 일도 일어나지 않으며, 왼쪽 패널에 안내가 표시됩니다. 이때는 콘솔의 `play`를 씁니다.
 
 ## 화면 구성
 
 화면 문자열은 영어이고, 모드가 보내는 문자열(좌석 이름, 상태 메시지 등)은 한글 글꼴(맑은 고딕 등)이 설치돼 있으면 한글로 표시됩니다.
 
 - **상단 배너**: 차례(`<좌석> to move`, 컴퓨터 차례면 `(computer)` 추가) 또는 결과(`<좌석> wins`, `Draw`)를 좌석 색 표시와 함께 보여 줍니다.
-- **왼쪽 패널**: 모드 이름과 설명, 모드가 둘 이상이면 `Game` 목록, 좌석별 `Human | Computer`, `New game` / `Undo` / `Redo`, 기록 슬라이더(기록이 2단계 이상일 때), `Options (apply to the next game)`.
+- **왼쪽 패널**: 모드 이름과 설명, `Games (G)` 버튼(게임 선택 화면 열기), 좌석별 `Human | Computer`, `New game` / `Undo` / `Redo`, 기록 슬라이더(기록이 2단계 이상일 때), `Options (apply to the next game)`.
   - 옵션은 모드의 `options` 기본값을 보여 줍니다. 불리언은 체크박스, 숫자와 문자열은 입력란이고, 그 밖의 값은 읽기 전용입니다. 바꾼 값은 다음 새 게임과 Simulation 패널에 적용됩니다.
   - `Computer` 좌석은 모드의 무작위 합법 수를 0.45초 간격으로 둡니다. 모드가 `random_command` 또는 `legal_commands`를 제공하지 않으면 선택할 수 없습니다(안내 토스트). 컴퓨터가 둘 수를 못 찾거나 수가 거부되면 그 좌석은 `Human`으로 돌아갑니다. 되돌린 시점이 컴퓨터 차례면 컴퓨터가 다시 둡니다.
 - **오른쪽 도구 열**: `Fit view`, `Console`, `Simulation`.
   - **Simulation 패널**: `Games`(기본 1000, 1~1,000,000)와 `Seed`(기본 1)를 정해 `Run`하면 무작위 대국을 백그라운드로 돌리고 진행률과 결과를 보여 줍니다. `Cancel`로 중단합니다. 화면에는 아무것도 그리지 않고, 진행 중인 게임에도 영향이 없습니다.
 - **콘솔 창**: 화면 아래. 명령 입력(`↑`/`↓`로 입력 기록 이동)과 스크립트 로그(`bse.log` 등)가 함께 나옵니다.
 - **토스트**: 규칙이 거부한 입력(`메시지 [CODE]`), 스크립트 오류, 모드 로드 오류, 모드의 `bse.status` 메시지.
+- **게임 선택 화면**: 화면 전체를 덮는 창입니다. 왼쪽 패널의 `Games (G)` 버튼이나 `G`로 열고, 시작할 게임이 정해지지 않았으면 앱이 시작할 때 저절로 열립니다.
+  - 검색란은 이름, id, 설명에서 찾으며 공백으로 나눈 단어가 모두 들어 있어야 합니다(대소문자 무시). 게임이 둘 이상의 출처에 있으면 `All`과 게임이 있는 출처(`Built-in`, `Local`, `Workshop`)로 거르는 필터가 나타납니다.
+  - 목록은 `Built-in`, `Local`, `Workshop` 순서이고 출처 안에서는 이름순입니다. 행에는 색 타일, 이름, 인원과 출처가 보이고 진행 중인 게임에는 `Playing`이 붙습니다. 행이 60개를 넘으면 보이는 행만 그립니다.
+  - 오른쪽에는 고른 게임의 이름, 출처, 인원, 버전, 설명, 좌석 이름, 옵션 기본값이 나옵니다.
+  - `Play`는 고른 게임으로 새 게임을 시작하며 진행 중이던 게임은 끝납니다. 고른 게임이 이미 진행 중이면 `Resume`(그대로 돌아가기)과 `New game`이 나옵니다. `Rescan`은 폴더를 다시 읽습니다. 읽지 못한 모드와 id가 겹친 모드는 `Problems (n)`에서 사유를 볼 수 있습니다.
+  - `↑`/`↓`로 고르고 `Enter`로 `Play` 또는 `Resume`, `Esc`로 닫습니다. 행을 더블 클릭하면 `Enter`와 같습니다.
+  - 열려 있는 동안 보드 입력과 단축키는 동작하지 않고 컴퓨터 플레이어도 멈춥니다. 게임이 하나도 없으면 찾아본 폴더와 안내가 나옵니다.
 
 ## 콘솔 명령
 
@@ -110,14 +119,33 @@ sim 1000 seed=1
 
 ## 모드
 
-모드는 폴더 하나입니다. 아래 위치에서 하위 폴더마다 `config.json`을 찾으며, `config.json`이 없는 폴더는 건너뜁니다. 위치 순서대로 읽고, 같은 id가 이미 있으면 뒤의 것은 오류로 알립니다. 모드는 앱을 시작할 때 한 번 읽으므로 파일을 고치면 다시 실행해야 반영됩니다.
+모드는 폴더 하나입니다. 아래 위치에서 하위 폴더마다 `config.json`을 찾으며, `config.json`이 없는 폴더는 건너뜁니다. 위치마다 출처가 있고 위에서부터 차례로 읽습니다. 같은 id가 이미 있으면 뒤의 것은 오류로 알리고 목록에는 앞의 것만 남기므로, `Built-in` 모드의 id는 다른 출처가 가져갈 수 없습니다. 같은 폴더가 두 번 나오면 앞의 출처로 한 번만 올립니다.
 
-1. 환경 변수 `BSE_MODS_DIR` (여러 개면 `;`로 구분)
-2. `BoardSandboxApp`의 Extra Mod Folders
-3. `Assets/StreamingAssets/Mods` (빌드에서는 `<앱>_Data/StreamingAssets/Mods`)
-4. `Application.persistentDataPath/Mods` (Windows: `%USERPROFILE%\AppData\LocalLow\<회사>\<제품>\Mods`)
+| 순서 | 위치 | 출처 |
+|---|---|---|
+| 1 | `Assets/StreamingAssets/Mods` (빌드에서는 `<앱>_Data/StreamingAssets/Mods`) | `Built-in` |
+| 2 | 환경 변수 `BSE_MODS_DIR` (여러 개면 `;`로 구분) | `Local` |
+| 3 | `BoardSandboxApp`의 Extra Mod Folders | `Local` |
+| 4 | `Application.persistentDataPath/Mods` (Windows: `%USERPROFILE%\AppData\LocalLow\<회사>\<제품>\Mods`) | `Local` |
 
-폴더 안의 모든 `.luau` 파일(하위 폴더 포함, 이름이 `.`으로 시작하는 파일과 폴더는 제외)이 모드 스크립트입니다. 제한은 모드당 파일 4096개, 파일당 4 MiB, 전체 32 MiB입니다. 읽지 못한 모드는 오류 토스트로 알리고 목록에서 뺍니다.
+`Workshop` 출처는 목록, 필터, 정렬에서 쓸 수 있는 값이지만 이 앱에는 Workshop 폴더를 읽는 소스가 없습니다. 소스를 더하려면 `IModSource`를 구현해 `BoardSandboxApp.ModSources()`가 만드는 목록의 끝에 넣습니다([C#에서 사용하기](#c에서-사용하기)).
+
+모드는 앱을 시작할 때와 게임 선택 화면에서 `Rescan`을 누를 때 읽습니다. 스크립트를 고친 뒤에는 `Rescan`하고 다시 `Play`해야 고친 내용으로 시작합니다. 진행 중인 게임은 `Rescan`으로 바뀌지 않으며, `New game`(`N`)은 그 게임을 읽어 온 그대로의 스크립트로 다시 시작합니다.
+
+폴더 안의 모든 `.luau` 파일(하위 폴더 포함, 이름이 `.`으로 시작하는 파일과 폴더는 제외)이 모드 스크립트입니다. 제한은 모드당 파일 4096개, 파일당 4 MiB, 전체 32 MiB입니다. 읽지 못한 모드는 오류 토스트로 알리고 목록에서 뺍니다. 사유는 게임 선택 화면의 `Problems`에도 남습니다. 모드가 정한 문자열은 화면에 나올 때 길이를 제한합니다(토스트 300자, 왼쪽 패널의 이름 40자와 설명 600자, 게임 선택 화면의 이름 32자와 설명 1200자). 넘치는 부분은 `…`로 줄이고, 모드가 정한 문자열에는 서식 태그를 쓰지 않습니다.
+
+### 시작 규칙
+
+앱을 시작하면 Initial Mod와 읽은 게임 수로 첫 화면이 정해집니다.
+
+| 조건 | 동작 |
+|---|---|
+| Initial Mod가 있고 그 게임이 있음 | 그 게임을 고르고, Start Game이 켜져 있으면 바로 시작합니다 |
+| Initial Mod가 있는데 그 게임이 없음 | 경고 토스트(`The game '<id>' was not found.`)와 함께 게임 선택 화면을 엽니다 |
+| Initial Mod가 비어 있고 게임이 하나 | 그 게임을 고르고, Start Game이 켜져 있으면 바로 시작합니다 |
+| Initial Mod가 비어 있고 게임이 없거나 둘 이상 | 게임 선택 화면을 엽니다 |
+
+고른 게임을 불러오지 못해 열린 게임이 없으면 게임 선택 화면을 엽니다.
 
 ```
 Mods/
@@ -135,7 +163,7 @@ Mods/
 | `api` | 예 | `1` |
 | `entry` | 예 | 진입 스크립트. `/`로 구분한 상대 경로이며 `.luau`로 끝나야 합니다 (200자 이하, 절대 경로와 `..` 불가) |
 | `version` | 아니오 | 기본 `0.0.0` |
-| `description` | 아니오 | 왼쪽 패널에 표시되는 설명 |
+| `description` | 아니오 | 게임 선택 화면과 왼쪽 패널에 표시되는 설명 |
 | `players` | 아니오 | `{ "min": 2, "max": 2 }`. `min` 기본 2, `max` 기본값은 `min`, 조건은 1 ≤ min ≤ max ≤ 16 |
 | `seats` | 아니오 | `[{ "name": "Black", "color": "#161616" }, ...]`. `max`개까지 읽고, 생략한 이름은 `Player N`, 생략한 색은 기본 8색 팔레트를 순환합니다. 색은 `#rrggbb` |
 | `options` | 아니오 | 새 게임 옵션의 기본값 객체 |
@@ -323,6 +351,7 @@ bse_analyze --strict --defs=Native/bse_luau/luau/bse.d.luau Assets/StreamingAsse
 `BoardSandbox.Core`는 UnityEngine을 참조하지 않으므로 콘솔 앱이나 테스트에서도 그대로 쓸 수 있습니다(`bse_luau` 네이티브 라이브러리는 필요합니다).
 
 ```csharp
+using BoardSandbox.Core.App;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Mods;
 using BoardSandbox.Core.Sim;
@@ -338,10 +367,25 @@ using (GameSession session = new GameSession(mod))
 }
 
 SimulationResult stats = SimulationRunner.Run(mod, new SimulationOptions { Games = 10000, Seed = 1 });
+
+ModCatalog catalog = new ModCatalog(new IModSource[]
+{
+    new FolderModSource("Assets/StreamingAssets/Mods", ModOrigin.BuiltIn),
+    new FolderModSource("MyMods", ModOrigin.Local)
+});
+using (GameHost host = new GameHost(catalog))
+{
+    GameLibrary library = new GameLibrary(host);
+    library.SetQuery("go");          // 이름, id, 설명으로 거르기
+    library.Play();                  // 고른 게임으로 새 게임 시작
+}
 ```
 
 - `GameSession`은 VM 하나와 화면 미러(`View`), 기록을 가집니다. 한 VM은 한 번에 한 스레드에서만 호출하세요. 서로 다른 VM은 동시에 써도 됩니다(시뮬레이션이 별도 VM을 백그라운드 스레드에서 돌립니다).
-- `GameHost`는 UI가 필요로 하는 것을 묶습니다: 모드 목록, 좌석별 사람/컴퓨터, 컴퓨터 플레이어 스케줄, 토스트, 콘솔, 거부 기록, 백그라운드 시뮬레이션.
+- `GameHost`는 UI가 필요로 하는 것을 묶습니다: 모드 목록(`ModCatalog`), 좌석별 사람/컴퓨터, 컴퓨터 플레이어 스케줄, 토스트, 콘솔, 거부 기록, 백그라운드 시뮬레이션. `StartGame(mod)`는 모드를 고르고 새 게임까지 시작하며, `IsRunning(mod)`는 그 모드의 같은 버전(내용 해시가 같음)이 진행 중인지 알려 줍니다.
+- `ModCatalog`는 `IModSource` 목록에서 모드를 모읍니다. 항목(`ModEntry`)은 모드와 출처(`ModOrigin`: `BuiltIn`, `Local`, `Workshop`)를 가지며, `Search(query, origin)`이 이름, id, 설명으로 찾아 출처, 이름 순으로 돌려줍니다. `Refresh()`는 소스를 다시 읽고, `FindStartup(id)`는 [시작 규칙](#시작-규칙)의 게임을 고릅니다.
+- `IModSource`는 `Origin`, `Description`(찾아보는 곳, 안내 문구에 쓰임), `Discover()`(`ModDiscovery`: 모드와 읽지 못한 모드의 오류)로 이루어집니다. 폴더를 읽는 `FolderModSource`가 들어 있고, `Discover()`가 예외를 던져도 오류로 보고될 뿐 다른 소스는 그대로 읽힙니다.
+- `GameLibrary`는 게임 선택 화면의 상태(검색어, 출처 필터, 고른 게임, 이동, `Rescan`, `Play`)를 화면 없이 다룹니다. 화면(`GameLibraryPanel`)은 이 상태를 그리기만 합니다.
 - `TurnGuard`는 차례가 아닌 좌석의 입력을 스크립트를 실행하지 않고 막는 인터셉터이며, 앱에는 기본으로 붙어 있지 않습니다. 앱은 `RejectionLog`만 붙입니다.
 
 ## 프로젝트 구조
@@ -350,7 +394,7 @@ SimulationResult stats = SimulationRunner.Run(mod, new SimulationOptions { Games
 Assets/
 ├─ BoardSandbox/
 │  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences)
-│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 보드와 말 뷰, IMGUI HUD, 셰이더
+│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 보드와 말 뷰, IMGUI HUD와 게임 선택 화면, 셰이더
 │  ├─ Editor/            메뉴, 네이티브 플러그인 설정
 │  ├─ Plugins/Windows/x86_64/   bse_luau.dll
 │  └─ Tests/Editor/      NUnit 테스트 (EditMode)
@@ -384,8 +428,8 @@ SubmitResult (수락 / 거부 / 차단 / 무효 / 오류)   Client(GridBoardView
 ```
 
 - **bse_luau** (네이티브): Luau VM을 C ABI(버전 1)로 감쌉니다. 모든 호출은 JSON 문자열 입출력(`bse_vm_call`)이고 메모리·시간 한도와 로그 수집을 제공합니다. 내보내는 함수는 `bse_*` 10개이며 헤더는 `Native/bse_luau/include/bse_luau.h`입니다.
-- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `CommandConsole`, `SimulationRunner`, `GameHost`.
-- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(보드 뷰, 카메라, HUD)를 구동하는 구성 루트입니다.
+- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, 모드 출처와 카탈로그(`IModSource`, `ModCatalog`), `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `CommandConsole`, `SimulationRunner`, `GameHost`, `GameLibrary`.
+- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(보드 뷰, 카메라, HUD, 게임 선택 화면)를 구동하는 구성 루트입니다.
 
 ## 네이티브 라이브러리 빌드
 
@@ -416,7 +460,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 | 종류 | 실행 방법 | 범위 |
 |---|---|---|
-| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 세션, 콘솔, 시뮬레이션, 호스트, 오목 규칙, 기하와 뷰 계산 |
+| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, 세션, 콘솔, 시뮬레이션, 호스트, 오목 규칙, 기하와 뷰 계산 |
 | dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 뷰)는 빼고 실행합니다 |
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
 | CI | `.github/workflows/ci.yml` (`windows-latest`) | MSVC로 네이티브 빌드와 테스트, DLL 설치, 하네스 실행, DLL 산출물 업로드 |
@@ -428,12 +472,14 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 | 항목 | 상태 |
 |---|---|
 | 네이티브 라이브러리 | zig로 크로스 빌드한 Windows x64 DLL이 Wine에서 네이티브 테스트를 모두 통과했습니다. 같은 소스를 Linux에서 일반 빌드와 ASan/UBSan 빌드로 돌려도 모두 통과했습니다. 실제 Windows와 Unity에서 이 DLL을 불러 본 적은 없고, MSVC 빌드와 GitHub Actions 워크플로도 실행해 보지 않았습니다 |
-| C# 코드 | Unity 6000.3 공개 참조 소스로 만든 UnityEngine 어셈블리를 기준으로 컴파일 검사를 통과했고, Core 로직은 dotnet 하네스 테스트를 통과했습니다. Unity 에디터와 플레이어에서의 실행(IMGUI 화면, 셰이더, 카메라, 입력)은 확인하지 못했습니다 |
+| C# 코드 | Unity 6000.3 공개 참조 소스로 만든 UnityEngine 어셈블리를 기준으로 컴파일 검사를 통과했고, Core 로직은 dotnet 하네스 테스트를 통과했습니다. Unity 에디터와 플레이어에서의 실행(게임 선택 화면을 포함한 IMGUI 화면, 셰이더, 카메라, 입력)은 확인하지 못했습니다 |
 | 패키지와 설정 | `Packages/manifest.json`, `ProjectSettings/ProjectVersion.txt`(6000.3.0f1), 플러그인 `.meta`는 직접 작성한 파일입니다. Unity가 프로젝트를 열면서 값을 고칠 수 있고, `com.unity.test-framework` 1.6.0이 6000.3과 맞는지는 확인하지 못했습니다 |
 | 스크립팅 백엔드 | Mono 기준으로 작성했습니다. IL2CPP 빌드는 확인하지 않았습니다 |
 
-기능 범위: 한 프로세스에서 하는 로컬 플레이(사람/컴퓨터 좌석)와 격자 보드. 네트워크 멀티플레이, 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 말은 `stone`, `disc`, `cube` 기본 도형으로 그립니다. 컴퓨터 플레이어는 무작위 수만 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
+기능 범위: 한 프로세스에서 하는 로컬 플레이(사람/컴퓨터 좌석)와 격자 보드. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 네트워크 멀티플레이, 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 말은 `stone`, `disc`, `cube` 기본 도형으로 그립니다. 컴퓨터 플레이어는 무작위 수만 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
 
 ## 라이선스
 
-이 저장소의 코드에는 라이선스가 지정되어 있지 않습니다. 네이티브 라이브러리에는 Luau(MIT)가 포함되어 있으며 고지문은 `THIRD_PARTY_NOTICES.txt`에 있습니다.
+Board Sandbox의 저작권과 라이선스 권한은 저자에게 있습니다. 이 저장소에는 사용을 허락하는 라이선스 파일이 없으므로 사용과 배포의 조건은 저자가 정합니다.
+
+Luau는 Board Sandbox의 일부가 아니며 저자의 권한이 미치지 않는 제3자 소프트웨어입니다. MIT 라이선스(Copyright (c) 2019-2026 Roblox Corporation, 1994–2019 Lua.org, PUC-Rio)로 배포되고 `bse_luau.dll`에 정적으로 들어 있습니다. MIT 라이선스는 사본마다 저작권 고지와 허락 문구를 넣도록 요구하므로 DLL이나 이를 담은 빌드를 배포할 때 `THIRD_PARTY_NOTICES.txt`를 함께 넣어야 합니다. zig로 만든 DLL이 담는 런타임 라이브러리(LLVM libc++ 등)의 고지도 같은 파일에 있습니다.

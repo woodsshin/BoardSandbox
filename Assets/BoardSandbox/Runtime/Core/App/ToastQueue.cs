@@ -45,6 +45,9 @@ namespace BoardSandbox.Core.App
     // Short messages for the person playing; the newest ones stay, repeats refresh instead of stacking.
     public sealed class ToastQueue
     {
+        // Longer messages, which a mod can send, are cut so that one toast cannot cover the screen.
+        public const int MaxTextLength = 300;
+
         private readonly List<Toast> _items = new List<Toast>();
         private readonly int _capacity;
         private readonly double _duration;
@@ -63,6 +66,7 @@ namespace BoardSandbox.Core.App
         {
             if (string.IsNullOrEmpty(text))
                 return;
+            text = DisplayText.Clip(text, MaxTextLength, false);
             Prune(now);
             Toast last = _items.Count > 0 ? _items[_items.Count - 1] : null;
             if (last != null && last.Level == level && string.Equals(last.Text, text, StringComparison.Ordinal))

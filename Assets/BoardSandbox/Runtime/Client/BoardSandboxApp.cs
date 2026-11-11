@@ -23,7 +23,7 @@ namespace BoardSandbox.Client
         private const float DragThreshold = 6f;
         private const double ComputerDelaySeconds = 0.45;
 
-        [SerializeField] private string initialMod = "gomoku";
+        [SerializeField] private string initialMod = "";
         [SerializeField] private string[] extraModFolders = new string[0];
         [SerializeField] private bool startGame = true;
 
@@ -98,18 +98,26 @@ namespace BoardSandbox.Client
             _view = new GridBoardView(_materials);
             _rig = new CameraRig(ResolveCamera());
 
-            _host = new GameHost(new ModCatalog(ModRoots()), new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds });
+            _host = new GameHost(new ModCatalog(ModSources()), new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds });
             _host.SessionReplaced += OnSessionReplaced;
             _hud = new Hud(_host, _theme, () => _rig.Reframe());
 
             foreach (ModLoadError error in _host.Catalog.Errors)
                 _host.Toasts.Add("Could not load " + Path.GetFileName(error.Directory) + ": " + error.Message, ToastLevel.Error, _host.Now);
 
-            ModPackage mod = _host.Catalog.Find(initialMod);
-            if (mod == null && _host.Catalog.Mods.Count > 0)
-                mod = _host.Catalog.Mods[0];
-            if (mod != null && _host.SelectMod(mod) && startGame)
-                _host.StartNewGame();
+            string requested = initialMod == null ? string.Empty : initialMod.Trim();
+            ModEntry first = _host.Catalog.FindStartup(requested);
+            if (requested.Length > 0 && first == null)
+                _host.Toasts.Add("The game '" + requested + "' was not found.", ToastLevel.Warning, _host.Now);
+            if (first != null)
+            {
+                if (startGame)
+                    _host.StartGame(first.Mod);
+                else
+                    _host.SelectMod(first.Mod);
+            }
+            if (_host.Session == null)
+                _hud.OpenLibrary();
         }
 
         private Camera ResolveCamera()
@@ -125,26 +133,32 @@ namespace BoardSandbox.Client
             return _ownedCamera.AddComponent<Camera>();
         }
 
-        private List<string> ModRoots()
+        // The games that come with the app are listed first, so that nothing else can take their ids.
+        private List<IModSource> ModSources()
         {
-            List<string> roots = new List<string>();
+            List<IModSource> sources = new List<IModSource>
+            {
+                new FolderModSource(Path.Combine(Application.streamingAssetsPath, "Mods"), ModOrigin.BuiltIn)
+            };
             string environment = Environment.GetEnvironmentVariable("BSE_MODS_DIR");
             if (!string.IsNullOrEmpty(environment))
             {
                 foreach (string part in environment.Split(Path.PathSeparator))
-                {
-                    if (part.Length > 0)
-                        roots.Add(part);
-                }
+                    AddLocalFolder(sources, part);
             }
-            foreach (string folder in extraModFolders)
+            if (extraModFolders != null)
             {
-                if (!string.IsNullOrWhiteSpace(folder))
-                    roots.Add(folder);
+                foreach (string folder in extraModFolders)
+                    AddLocalFolder(sources, folder);
             }
-            roots.Add(Path.Combine(Application.streamingAssetsPath, "Mods"));
-            roots.Add(Path.Combine(Application.persistentDataPath, "Mods"));
-            return roots;
+            AddLocalFolder(sources, Path.Combine(Application.persistentDataPath, "Mods"));
+            return sources;
+        }
+
+        private static void AddLocalFolder(List<IModSource> sources, string folder)
+        {
+            if (!string.IsNullOrWhiteSpace(folder))
+                sources.Add(new FolderModSource(folder, ModOrigin.Local));
         }
 
         private void OnSessionReplaced()
@@ -199,6 +213,7 @@ namespace BoardSandbox.Client
             try
             {
                 _hud.RunDeferred();
+                _host.AiPaused = _hud.ModalOpen;
                 _host.Update();
 
                 GameSession session = _host.Session;
@@ -310,13 +325,16 @@ namespace BoardSandbox.Client
 
         private void HandleKeys(Event e)
         {
-            if (e.type != EventType.KeyDown || _hud.TextFocused)
+            if (e.type != EventType.KeyDown || _hud.TextFocused || _hud.ModalOpen)
                 return;
             bool modifier = e.control || e.command;
             switch (e.keyCode)
             {
                 case KeyCode.F:
                     _rig.Reframe();
+                    break;
+                case KeyCode.G:
+                    _hud.Defer(_hud.OpenLibrary);
                     break;
                 case KeyCode.N:
                     _hud.Defer(() => _host.StartNewGame());

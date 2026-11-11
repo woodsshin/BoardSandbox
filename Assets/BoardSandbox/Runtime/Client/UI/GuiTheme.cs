@@ -29,6 +29,10 @@ namespace BoardSandbox.Client.UI
         private static readonly Color RaisedColor = new Color(0.17f, 0.19f, 0.24f, 1f);
         private static readonly Color HoverColor = new Color(0.24f, 0.27f, 0.34f, 1f);
         private static readonly Color PressedColor = new Color(0.12f, 0.14f, 0.18f, 1f);
+        private static readonly Color CardColor = new Color(0.10f, 0.12f, 0.15f, 1f);
+        private static readonly Color RowColor = new Color(0.12f, 0.14f, 0.18f, 1f);
+        private static readonly Color RowSelectedColor = new Color(0.16f, 0.30f, 0.52f, 1f);
+        private static readonly Color DimColor = new Color(0f, 0f, 0f, 0.62f);
         private static readonly Color FieldColor = new Color(0.04f, 0.05f, 0.07f, 1f);
         private static readonly Color FieldFocusColor = new Color(0.07f, 0.09f, 0.13f, 1f);
         private static readonly Color InfoColor = new Color(0.10f, 0.14f, 0.20f, 0.96f);
@@ -53,12 +57,27 @@ namespace BoardSandbox.Client.UI
         public GUIStyle Toggle { get; private set; }
         public GUIStyle Mono { get; private set; }
         public GUIStyle Swatch { get; private set; }
+        public GUIStyle Card { get; private set; }
+        public GUIStyle RowButton { get; private set; }
+        public GUIStyle RowName { get; private set; }
+        public GUIStyle RowInfo { get; private set; }
+        public GUIStyle TileLetter { get; private set; }
+        public GUIStyle Badge { get; private set; }
         public GUIStyle InfoToast { get; private set; }
         public GUIStyle WarningToast { get; private set; }
         public GUIStyle ErrorToast { get; private set; }
 
         public Texture2D TrackTexture { get; private set; }
         public Texture2D FillTexture { get; private set; }
+
+        // Darkens everything behind a full-screen panel.
+        public Texture2D DimTexture { get; private set; }
+
+        // The color of the tile that stands for a game; the hue is in [0, 1).
+        public static Color TileColor(float hue)
+        {
+            return Color.HSVToRGB(Mathf.Repeat(hue, 1f), 0.5f, 0.62f);
+        }
 
         public int S(float value)
         {
@@ -82,6 +101,7 @@ namespace BoardSandbox.Client.UI
                 _monoFont = CreateFont(MonospacedFonts);
                 TrackTexture = Solid(FieldColor);
                 FillTexture = Solid(AccentColor);
+                DimTexture = Solid(DimColor);
                 _fontsChosen = true;
             }
             Build();
@@ -141,6 +161,7 @@ namespace BoardSandbox.Client.UI
                 padding = new RectOffset(S(10), S(10), S(5), S(5)),
                 margin = new RectOffset(S(2), S(2), S(2), S(2)),
                 wordWrap = false,
+                richText = false,
                 clipping = TextClipping.Clip
             };
             Paint(Button.normal, RaisedColor, TextColor);
@@ -169,6 +190,7 @@ namespace BoardSandbox.Client.UI
             {
                 font = _font,
                 fontSize = S(13),
+                richText = false,
                 margin = new RectOffset(S(2), S(2), S(4), S(4))
             };
             ColorText(Toggle, TextColor);
@@ -193,6 +215,36 @@ namespace BoardSandbox.Client.UI
             };
             Swatch.normal.background = Texture2D.whiteTexture;
 
+            Card = new GUIStyle(Panel)
+            {
+                padding = new RectOffset(S(14), S(14), S(12), S(12)),
+                margin = new RectOffset(S(8), 0, 0, 0)
+            };
+            Paint(Card.normal, CardColor, TextColor);
+
+            RowButton = new GUIStyle(skin.button)
+            {
+                border = new RectOffset(),
+                padding = new RectOffset(),
+                margin = new RectOffset(),
+                clipping = TextClipping.Clip
+            };
+            Paint(RowButton.normal, RowColor, TextColor);
+            Paint(RowButton.hover, HoverColor, TextColor);
+            Paint(RowButton.active, PressedColor, TextColor);
+            Paint(RowButton.focused, RowColor, TextColor);
+            Paint(RowButton.onNormal, RowSelectedColor, Color.white);
+            Paint(RowButton.onHover, Color.Lerp(RowSelectedColor, Color.white, 0.1f), Color.white);
+            Paint(RowButton.onActive, Color.Lerp(RowSelectedColor, Color.black, 0.2f), Color.white);
+            Paint(RowButton.onFocused, RowSelectedColor, Color.white);
+
+            RowName = Line(14, TextColor, TextAnchor.MiddleLeft);
+            RowName.fontStyle = FontStyle.Bold;
+            RowInfo = Line(11, MutedColor, TextAnchor.MiddleLeft);
+            Badge = Line(11, Color.Lerp(AccentColor, Color.white, 0.45f), TextAnchor.MiddleRight);
+            TileLetter = Line(20, Color.white, TextAnchor.MiddleCenter);
+            TileLetter.fontStyle = FontStyle.Bold;
+
             InfoToast = Toast(InfoColor, TextColor);
             WarningToast = Toast(WarningBackColor, WarningColor);
             ErrorToast = Toast(ErrorBackColor, ErrorColor);
@@ -205,11 +257,23 @@ namespace BoardSandbox.Client.UI
                 font = _font,
                 fontSize = S(13),
                 wordWrap = true,
+                richText = false,
                 alignment = TextAnchor.MiddleLeft,
                 padding = new RectOffset(S(14), S(14), S(8), S(8)),
                 margin = new RectOffset(0, 0, 0, S(6))
             };
             Paint(style.normal, background, text);
+            return style;
+        }
+
+        // One clipped line of text that is placed with an explicit rectangle.
+        private GUIStyle Line(int size, Color color, TextAnchor alignment)
+        {
+            GUIStyle style = Text(GUI.skin.label, size, color, false);
+            style.alignment = alignment;
+            style.clipping = TextClipping.Clip;
+            style.margin = new RectOffset();
+            style.padding = new RectOffset();
             return style;
         }
 

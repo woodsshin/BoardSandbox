@@ -124,6 +124,22 @@ namespace BoardSandbox.Core.App
             return true;
         }
 
+        // Selects the mod and starts a game of it with the mod's default options.
+        public bool StartGame(ModPackage mod)
+        {
+            return SelectMod(mod) && StartNewGame();
+        }
+
+        // Whether the game in progress is this mod in this version. A mod that was edited on disk and loaded again
+        // is a different version.
+        public bool IsRunning(ModPackage mod)
+        {
+            GameSession s = Session;
+            return s != null && s.IsStarted && mod != null
+                && string.Equals(s.Mod.Manifest.Id, mod.Manifest.Id, StringComparison.Ordinal)
+                && string.Equals(s.Mod.ContentHash, mod.ContentHash, StringComparison.Ordinal);
+        }
+
         public void SetOption(string key, JsonValue value)
         {
             if (string.IsNullOrEmpty(key))

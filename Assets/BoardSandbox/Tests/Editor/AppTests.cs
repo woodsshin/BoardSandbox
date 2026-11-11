@@ -84,6 +84,20 @@ namespace BoardSandbox.Tests
         }
 
         [Test]
+        public void ToastsCutVeryLongText()
+        {
+            ToastQueue queue = new ToastQueue();
+            queue.Add(new string('x', 1000), ToastLevel.Warning, 0);
+            string shown = queue.Active(0)[0].Text;
+            Assert.AreEqual(ToastQueue.MaxTextLength, shown.Length);
+            Assert.IsTrue(shown.EndsWith("\u2026"));
+
+            queue.Add(new string('y', ToastQueue.MaxTextLength), ToastLevel.Info, 0);
+            Assert.AreEqual(ToastQueue.MaxTextLength, queue.Active(0)[1].Text.Length);
+            Assert.IsFalse(queue.Active(0)[1].Text.EndsWith("\u2026"));
+        }
+
+        [Test]
         public void ToastsKeepTheNewestAndMergeRepeats()
         {
             ToastQueue queue = new ToastQueue(2, 5.0);
@@ -120,7 +134,7 @@ namespace BoardSandbox.Tests
             TestSupport.WriteFile(extra, "mini/main.luau", MinimalScript);
 
             ModCatalog catalog = new ModCatalog(new[] { TestSupport.ModsRoot, extra, "", null, Path.Combine(extra, "missing") });
-            Assert.AreEqual(3, catalog.Roots.Count);
+            Assert.AreEqual(3, catalog.Sources.Count);
             Assert.AreEqual(0, catalog.Errors.Count);
             Assert.IsNotNull(catalog.Find("gomoku"));
             Assert.IsNotNull(catalog.Find("mini"));
