@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>BoardSandbox.Client.Editor.Check</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <UnityEngineDll Condition="'$(UnityEngineDll)' == ''">$(MSBuildThisFileDirectory).reference/UnityEngine.dll</UnityEngineDll>
+    <RepositoryRoot>$(MSBuildThisFileDirectory)../../</RepositoryRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="EditorStub/UnityEditorStub.cs" />
+    <Compile Include="$(RepositoryRoot)Assets/BoardSandbox/Editor/**/*.cs" />
+    <ProjectReference Include="UnityCheck.csproj" />
+    <Reference Include="UnityEngine">
+      <HintPath>$(UnityEngineDll)</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

@@ -30,3 +30,5 @@ Tools/UnityCheck/.reference/
 Native/build*/
 Native/out/
 __pycache__/
+
+!Tools/**/*.csproj
