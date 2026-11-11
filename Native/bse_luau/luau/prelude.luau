@@ -567,7 +567,8 @@ handlers.simulate = function(args: any): any
 			if cmd == nil then
 				break
 			end
-			if rules.command(seat, cmd) ~= nil then
+			local err = rules.command(seat, cmd)
+			if err ~= nil and err ~= true then
 				rejected += 1
 				break
 			end

@@ -11,6 +11,10 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 	if cmd.stall == true then
 		return nil
 	end
+	if cmd.yes == true then
+		bse.over({ winner = seat })
+		return true
+	end
 	if cmd.draw == true then
 		bse.over({ reason = "draw" })
 		return nil
@@ -29,6 +33,8 @@ function rules.random_command(seat: number): any
 		return { stall = true }
 	elseif mode == "draw" then
 		return { draw = true }
+	elseif mode == "true" then
+		return { yes = true }
 	end
 	return { ok = mode == "win" and bse.is_headless() }
 end

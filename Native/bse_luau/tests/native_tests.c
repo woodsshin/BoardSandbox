@@ -1079,6 +1079,10 @@ static void test_simulation(void)
         "{\"ok\":true,\"stats\":{\"aborted\":0,\"draws\":10,\"games\":10,\"moves\":10,\"rejected\":0,\"wins\":[]}}");
     EXPECT_CALL(vm, "simulate", "{\"games\":10,\"max_moves\":5,\"options\":{\"mode\":\"stall\"}}",
         "{\"ok\":true,\"stats\":{\"aborted\":10,\"draws\":0,\"games\":10,\"moves\":50,\"rejected\":0,\"wins\":[]}}");
+    EXPECT_CALL(vm, "simulate", "{\"games\":10,\"options\":{\"mode\":\"true\"}}",
+        "{\"ok\":true,\"stats\":{\"aborted\":0,\"draws\":0,\"games\":10,\"moves\":10,\"rejected\":0,\"wins\":{\"1\":10}}}");
+    EXPECT_STATUS(vm, "new_game", "{}", BSE_OK);
+    EXPECT_CALL(vm, "command", "{\"seat\":1,\"cmd\":{\"yes\":true}}", "{\"events\":[{\"t\":\"over\",\"winner\":1}],\"ok\":true}");
     bse_vm_destroy(vm);
 
     {
