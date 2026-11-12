@@ -153,8 +153,10 @@ return rules";
 
                 NetClientRoom guest = new NetClientRoom(host.Mod, network.Join("Bob"));
                 Assert.IsFalse(guest.Joined);
+                Assert.IsFalse(guest.Ready);
                 Pump(room, guest);
                 Assert.IsTrue(guest.Joined);
+                Assert.IsTrue(guest.Ready);
                 Assert.AreEqual(2, guest.Players.Count);
                 Assert.AreEqual("Ann", guest.Players[0].Name);
                 Assert.AreEqual(1, guest.Players[0].Seat);
@@ -561,12 +563,19 @@ return rules";
                 int changes = 0;
                 joining.RoomChanged += () => changes++;
 
+                int lost = 0;
+                joining.RoomLost += () => lost++;
+                hosting.RoomLost += () => lost += 100;
+                Assert.IsNull(hosting.Loading);
+
                 ModPackage gomoku = ann.Catalog.Find("gomoku");
                 Assert.IsTrue(hosting.HostGame(gomoku));
                 Assert.IsTrue(hosting.Busy);
+                StringAssert.Contains("Opening", hosting.Loading);
                 Assert.IsFalse(hosting.HostGame(gomoku));
                 hosting.Update();
                 Assert.IsNotNull(hosting.Room);
+                Assert.IsNull(hosting.Loading);
                 Assert.IsTrue(hosting.Room.IsHost);
                 Assert.IsTrue(ann.Session.IsStarted);
                 Assert.AreEqual("gomoku", ann.Mod.Manifest.Id);
@@ -584,12 +593,17 @@ return rules";
                 Assert.AreEqual(0, joining.Lobbies("cubic3").Count);
 
                 Assert.IsTrue(joining.Join(joining.Lobbies("gomoku")[0]));
+                StringAssert.Contains("Joining", joining.Loading);
+                joining.Update();
+                StringAssert.Contains("host", joining.Loading);
                 for (int i = 0; i < 4; i++)
                 {
                     joining.Update();
                     hosting.Update();
                 }
                 Assert.IsNotNull(joining.Room);
+                Assert.IsNull(joining.Loading);
+                Assert.AreEqual(0, lost);
                 Assert.IsFalse(joining.Room.IsHost);
                 Assert.AreEqual(1, changes);
                 Assert.AreEqual(2, joining.Room.Players.Count);
@@ -599,6 +613,7 @@ return rules";
                 Assert.IsNull(hosting.Room);
                 joining.Update();
                 Assert.IsNull(joining.Room);
+                Assert.AreEqual(1, lost);
                 Assert.AreEqual(2, changes);
                 Assert.Greater(bob.Toasts.Active(bob.Now).Count, 0);
 

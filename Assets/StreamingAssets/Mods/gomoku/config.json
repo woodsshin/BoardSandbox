@@ -12,6 +12,7 @@
   "options": { "size": 15, "win_length": 5, "exact_win": false },
   "client": {
     "board": { "style": "lines" },
+    "stage": { "camera": { "pitch": 89 } },
     "click": { "action": "place_stone", "preview": "stone" },
     "pieces": { "stone": { "shape": "stone" } }
   }

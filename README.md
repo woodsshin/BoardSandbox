@@ -1,9 +1,11 @@
 # Board Sandbox Engine
 
-Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 보드로 보여 줍니다. 기본으로 오목(Gomoku) 모드가 들어 있습니다.
+Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 장면으로 보여 줍니다. 기본으로 오목(Gomoku)과 3D 큐브 퍼즐(Cubic 3x3) 모드가 들어 있습니다.
 
 - **모드로 게임 추가**: `config.json`과 `.luau` 파일이 든 폴더 하나가 게임 하나입니다.
 - **게임 선택 화면**: 앱에 들어 있는 게임과 로컬 폴더의 게임을 한 목록에서 검색하고 고릅니다. 모드는 출처(`Built-in`, `Local`, `Workshop`)를 갖고, 출처별로 모드를 읽어 오는 부분은 `IModSource`로 분리돼 있습니다.
+- **장면도 모드가 정함**: 보드, 테이블, 배경, 조명, 카메라, 표시(마커), 말의 모양·크기·위치·회전·면 색을 `config.json`과 Luau에서 정합니다. 클릭, 드래그, 키 입력도 모드가 명령으로 받습니다.
+- **Steam 멀티플레이**: 게임을 고르면 그 게임을 하는 방 목록이 나오고, 방을 열거나 들어갑니다. 한 판을 함께 두는 게임은 한 화면을 동기화하고, 각자 푸는 게임은 화면을 나눠 서로의 판을 봅니다.
 - **호스트 권한**: 마우스, 콘솔, 컴퓨터 플레이어의 모든 입력은 `GameSession.Submit` 하나를 거쳐 규칙 스크립트(`rules.command`)의 검증을 통과해야 반영됩니다. 거부된 입력은 코드와 사유가 붙은 결과로 돌아옵니다.
 - **인터셉터**: `ICommandInterceptor`로 입력이 규칙에 닿기 전에 막거나(`TurnGuard`), 처리 뒤 결과를 기록할 수 있습니다(`RejectionLog`).
 - **시간 되감기**: 수마다 스냅샷을 남겨(최대 4096단계) 되돌리기, 다시 실행, 임의 지점 이동을 지원합니다. 모드가 `snapshot`과 `restore`를 제공해야 합니다.
@@ -18,6 +20,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 | 플랫폼 | Windows 10 이상, x64 (에디터와 Standalone 빌드) |
 | 렌더 파이프라인 | Built-in, URP (셰이더에 `LightMode` 태그가 없어 둘 다에서 그려지도록 작성) |
 | UI와 입력 | IMGUI(`OnGUI`). `UnityEngine.Input`, uGUI, UI Toolkit은 쓰지 않습니다 |
+| 멀티플레이 | Steam 클라이언트와 [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) 2025.165.0 (`Packages/manifest.json`의 git 패키지, Unity가 받아 옵니다). 없어도 로컬 플레이는 됩니다 |
 
 네이티브 라이브러리 `bse_luau.dll`(Luau 0.745를 정적으로 포함, 외부 의존은 KERNEL32와 Windows UCRT뿐)은 `Assets/BoardSandbox/Plugins/Windows/x86_64/`에 들어 있어 따로 설치할 것이 없습니다. 직접 빌드하려면 [네이티브 라이브러리 빌드](#네이티브-라이브러리-빌드)를 보세요.
 
@@ -25,7 +28,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 
 1. Unity Hub에서 **Add > Add project from disk**로 이 폴더를 열고 6000.3.x 에디터를 선택합니다.
 2. 메뉴 **Board Sandbox > Check Native Plugin**을 실행해 Luau 버전이 표시되는지 확인합니다.
-3. 아무 씬에서 **Play**를 누르면 `BoardSandboxApp`이 자동으로 만들어집니다. 읽은 게임이 하나뿐이면(들어 있는 구성은 오목 하나) 바로 시작하고, 둘 이상이면 게임 선택 화면이 열립니다([시작 규칙](#시작-규칙)). 씬에 카메라가 없으면 `Board Camera`도 만듭니다.
+3. 아무 씬에서 **Play**를 누르면 `BoardSandboxApp`이 자동으로 만들어집니다. 읽은 게임이 하나뿐이면 바로 시작하고, 둘 이상이면(들어 있는 구성은 오목과 Cubic 3x3) 게임 선택 화면이 열립니다([시작 규칙](#시작-규칙)). 씬에 카메라가 없으면 `Board Camera`도 만듭니다.
 4. 씬 파일이 필요하면 **Board Sandbox > Create Demo Scene**을 실행합니다.
 
 | 에디터 메뉴 | 동작 |
@@ -49,18 +52,23 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 
 | 입력 | 동작 |
 |---|---|
-| 왼쪽 클릭 | 말 놓기. 모드가 `client.click.action`을 지정했고 사람 좌석의 차례일 때만 동작하며, 현재 차례 좌석으로 `{ action, x, y }` 명령을 제출합니다 |
-| 왼쪽 드래그, 가운데 버튼 드래그 | 카메라 이동 |
+| 왼쪽 클릭 | 모드가 `client.click.action`을 지정했고 둘 수 있는 차례일 때 명령을 제출합니다. 보드 게임은 클릭한 칸(`{ action, x, y }`), `click.target`이 `object`인 게임은 클릭한 오브젝트를 보냅니다 |
+| 오른쪽 클릭 | `click.target`이 `object`인 게임에서 `button = 1`인 클릭 명령 |
+| 오브젝트 위에서 왼쪽 드래그 | 모드가 `client.drag.action`을 지정했으면 끈 방향을 담은 명령 |
+| 왼쪽 드래그, 가운데 버튼 드래그 | 카메라 이동 (모드가 `stage.camera`에서 바꿀 수 있음) |
 | 오른쪽 드래그 | 카메라 회전 |
 | 마우스 휠 | 확대/축소 |
-| `F` | 보드 전체가 보이도록 카메라 맞춤 |
+| `F` | 장면 전체가 보이도록 카메라 맞춤 |
 | `G` | 게임 선택 화면 열기 |
 | `N` | 새 게임 |
 | `Ctrl+Z`, `←` | 되돌리기 |
 | `Ctrl+Y`, `Ctrl+Shift+Z`, `→` | 다시 실행 |
-| `` ` ``, `F1` | 콘솔 열기/닫기 (`Esc`는 콘솔이 열려 있을 때 닫음) |
+| `` ` ``, `F1` | 콘솔 열기/닫기 |
+| `Esc` | 콘솔이 열려 있으면 닫고, 아니면 패널을 접거나 펼칩니다 |
 
-텍스트 입력란에 포커스가 있거나 게임 선택 화면이 열려 있으면 단축키는 동작하지 않습니다. `client.click.action`이 없는 모드에서는 보드를 클릭해도 아무 일도 일어나지 않으며, 왼쪽 패널에 안내가 표시됩니다. 이때는 콘솔의 `play`를 씁니다.
+모드가 `client.keys`로 묶은 키는 위의 단축키보다 먼저 처리됩니다. 텍스트 입력란에 포커스가 있거나 게임 선택 화면·로딩 화면이 떠 있으면 단축키는 동작하지 않습니다. 클릭, 드래그, 키 가운데 아무것도 받지 않는 모드에서는 왼쪽 패널에 안내가 표시되며 콘솔의 `play`를 씁니다. 연출([`fx`](#연출))이 재생되는 동안에는 입력을 받지 않습니다. 다른 사람의 방에 들어가 있을 때는 새 게임과 되돌리기를 쓸 수 없습니다.
+
+Cubic 3x3의 조작: 면을 클릭하면 시계 방향, 오른쪽 클릭이나 `Shift`+클릭은 반시계 방향으로 돕니다. 스티커를 끌면 그 스티커가 속한 바깥 층이 끈 방향으로 돕니다. `U` `R` `F` `D` `L` `B`는 면을 돌리고 `Shift`와 함께 누르면 반대로 돕니다(이 게임에서 `F`는 카메라 맞춤 대신 앞면입니다). 배경을 끌면 시점이 위아래까지 제한 없이 돕니다.
 
 ## 화면 구성
 
@@ -69,7 +77,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 ![오목 플레이 화면: 상단 배너, 왼쪽 패널, 오른쪽 도구 열, 3D 보드](Image/Gomoku.png)
 
 - **상단 배너**: 차례(`<좌석> to move`, 컴퓨터 차례면 `(computer)` 추가) 또는 결과(`<좌석> wins`, `Draw`)를 좌석 색 표시와 함께 보여 줍니다.
-- **왼쪽 패널**: 모드 이름과 설명, `Games (G)` 버튼(게임 선택 화면 열기), 좌석별 `Human | Computer`, `New game` / `Undo` / `Redo`, 기록 슬라이더(기록이 2단계 이상일 때), `Options (apply to the next game)`.
+- **왼쪽 패널**: 모드 이름과 접기 버튼(`Hide (Esc)` / `Show (Esc)`), 설명, `Games (G)` 버튼(게임 선택 화면 열기), 좌석별 `Human | Computer`, `New game` / `Undo` / `Redo`, 기록 슬라이더(기록이 2단계 이상일 때), `Options (apply to the next game)`, 방에 있을 때는 참가자 목록과 `Close room` / `Leave room`. 접으면 모드 이름과 펼치기 버튼만 남고 오른쪽 도구 열과 콘솔도 숨습니다.
 
   ![Cubic 3x3 화면: 왼쪽 패널에 모드 설명, Games (G) 버튼, 숫자 옵션 입력란이 보입니다](Image/Cube.png)
 
@@ -85,10 +93,30 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 
   - 검색란은 이름, id, 설명에서 찾으며 공백으로 나눈 단어가 모두 들어 있어야 합니다(대소문자 무시). 게임이 둘 이상의 출처에 있으면 `All`과 게임이 있는 출처(`Built-in`, `Local`, `Workshop`)로 거르는 필터가 나타납니다.
   - 목록은 `Built-in`, `Local`, `Workshop` 순서이고 출처 안에서는 이름순입니다. 행에는 색 타일, 이름, 인원과 출처가 보이고 진행 중인 게임에는 `Playing`이 붙습니다. 행이 60개를 넘으면 보이는 행만 그립니다.
-  - 오른쪽에는 고른 게임의 이름, 출처, 인원, 버전, 설명, 좌석 이름, 옵션 기본값이 나옵니다.
+  - 오른쪽에는 고른 게임의 이름, 출처, 인원, 버전, 설명, 좌석 이름, 옵션 기본값이 나오고, 그 아래 `Online rooms`에 그 게임을 하는 방 목록과 `Refresh`, `Host`, 방마다 `Join`이 있습니다([멀티플레이](#멀티플레이)).
   - `Play`는 고른 게임으로 새 게임을 시작하며 진행 중이던 게임은 끝납니다. 고른 게임이 이미 진행 중이면 `Resume`(그대로 돌아가기)과 `New game`이 나옵니다. `Rescan`은 폴더를 다시 읽습니다. 읽지 못한 모드와 id가 겹친 모드는 `Problems (n)`에서 사유를 볼 수 있습니다.
   - `↑`/`↓`로 고르고 `Enter`로 `Play` 또는 `Resume`, `Esc`로 닫습니다. 행을 더블 클릭하면 `Enter`와 같습니다.
   - 열려 있는 동안 보드 입력과 단축키는 동작하지 않고 컴퓨터 플레이어도 멈춥니다. 게임이 하나도 없으면 찾아본 폴더와 안내가 나옵니다.
+
+- **로딩 화면**: 방을 열거나 들어가는 동안 화면을 덮고 진행 상태(`Opening a room`, `Joining the room`, `Waiting for the host`, `Loading the game`)를 보여 줍니다. 방에 들어간 뒤에는 `Cancel`로 나올 수 있습니다.
+- **분할 화면**: 각자 푸는 게임의 방에서는 화면을 격자로 나눠 플레이어마다 한 칸을 주고, 칸 아래쪽에 이름을 표시합니다. 자기 칸이 첫 번째이며 카메라는 칸마다 따로 움직입니다.
+
+## 멀티플레이
+
+Steam 로비로 방을 만들고 Steam의 중계 메시지로 통신합니다. Steam이 실행 중이어야 하며, 그렇지 않으면 `Online rooms` 자리에 사유가 표시되고 로컬 플레이만 됩니다.
+
+1. 게임 선택 화면에서 게임을 고르면 그 게임의 방 목록을 가져옵니다(게임 id와 프로토콜 버전으로 거름, 최대 50개).
+2. `Host`는 방을 열고 그 게임을 새로 시작합니다. `Join`은 방에 들어갑니다. 방의 게임 파일이 내 것과 다르면(내용 해시 비교) 버전과 `differs`가 표시되고 들어갈 수 없습니다.
+3. 방을 연 사람(호스트)의 앱이 규칙을 실행하고 모든 참가자에게 이벤트를 보냅니다. 참가자의 입력은 호스트로 가서 검증됩니다.
+
+| 방식 | `config.json` | 동작 |
+|---|---|---|
+| 한 화면 | 기본 | 판 하나를 모두가 봅니다. 들어온 순서대로 좌석을 받고, 좌석이 다 차면 관전자가 됩니다(관전자 8명까지). 좌석 주인이 나가면 관전자가 이어받습니다. 아무도 앉지 않은 좌석은 호스트가 둡니다 |
+| 분할 화면 | `"multiplayer": { "mode": "split" }` | 플레이어마다 자기 판을 갖고 서로의 판을 봅니다. `seed_option`으로 지정한 옵션이 0 이하이면 호스트가 시드를 하나 뽑아 모든 판이 같은 상태로 시작합니다. 누군가 먼저 승리로 끝내면 경기가 끝납니다. `players`(기본 4, 최대 8)를 넘는 사람은 관전합니다 |
+
+새 게임, 되돌리기, 옵션 변경은 호스트만 합니다. 호스트가 나가거나 다른 게임을 고르면 방이 닫히고(호스트 이전 없음), 참가자에게는 게임 선택 화면이 열립니다. 참가자가 자기 게임을 시작하면 방에서 나옵니다.
+
+프로젝트 루트의 `steam_appid.txt`는 Steam 테스트용 앱 ID 480입니다. 자신의 앱 ID가 있으면 바꾸고, 빌드한 실행 파일을 Steam 밖에서 실행할 때는 이 파일을 실행 파일 옆에 둡니다.
 
 ## 콘솔 명령
 
@@ -175,6 +203,7 @@ Mods/
 | `players` | 아니오 | `{ "min": 2, "max": 2 }`. `min` 기본 2, `max` 기본값은 `min`, 조건은 1 ≤ min ≤ max ≤ 16 |
 | `seats` | 아니오 | `[{ "name": "Black", "color": "#161616" }, ...]`. `max`개까지 읽고, 생략한 이름은 `Player N`, 생략한 색은 기본 8색 팔레트를 순환합니다. 색은 `#rrggbb` |
 | `options` | 아니오 | 새 게임 옵션의 기본값 객체 |
+| `multiplayer` | 아니오 | `{ "mode": "split", "players": 4, "seed_option": "seed" }`. `mode`가 `split`이면 분할 화면, 그 밖에는 한 화면([멀티플레이](#멀티플레이)) |
 | `client` | 아니오 | 화면 표시 힌트 ([클라이언트 힌트](#클라이언트-힌트)) |
 
 오목의 `config.json`:
@@ -194,6 +223,7 @@ Mods/
   "options": { "size": 15, "win_length": 5, "exact_win": false },
   "client": {
     "board": { "style": "lines" },
+    "stage": { "camera": { "pitch": 89 } },
     "click": { "action": "place_stone", "preview": "stone" },
     "pieces": { "stone": { "shape": "stone" } }
   }
@@ -214,7 +244,7 @@ Mods/
 | `rules.query(name, args)` | 아니오 | 콘솔 `query`에 답할 값을 반환합니다 |
 
 - **거부는 상태를 바꾸기 전에 합니다.** 화면 객체를 바꾸거나 이벤트를 내보낸 뒤 거부를 반환하면 스크립트 오류(`INVALID_REJECTION`)로 처리됩니다.
-- **스냅샷의 범위**: 엔진이 화면 객체, 차례, 종료 상태를 함께 저장하고 복원합니다. `snapshot`/`restore`에는 규칙 자신의 상태만 넣으면 됩니다. 복원할 때 화면 미러가 비워졌다가 복원 이벤트로 다시 채워지므로, 클라이언트가 읽는 사용자 정의 이벤트(`board`, `last_move`)는 `restore`에서도 다시 내보내야 합니다.
+- **스냅샷의 범위**: 엔진이 화면 객체, 차례, 종료 상태를 함께 저장하고 복원합니다. `snapshot`/`restore`에는 규칙 자신의 상태만 넣으면 됩니다. 복원할 때 화면 미러가 비워졌다가 복원 이벤트로 다시 채워지므로, 클라이언트가 읽는 사용자 정의 이벤트(`board`, `last_move`, `stage`)는 `restore`에서도 다시 내보내야 합니다.
 - **무작위**: 무작위는 `math.random`을 씁니다. 엔진이 시드를 `math.randomseed`로 정해 주므로 같은 시드는 같은 결과를 냅니다.
 - **오류**: 스크립트가 예외를 던지거나 시간·메모리 한도를 넘으면 VM을 새로 만들어 마지막 정상 스냅샷으로 복구하고 토스트로 알립니다. `snapshot`/`restore`가 없는 모드는 복구할 수 없어 게임이 멈추고 `New game`이 필요합니다.
 - **환경**: Luau 샌드박스입니다. 표준 라이브러리 테이블과 `bse`는 쓰기 금지이고 `io`, `os`, `loadstring`, `dofile`, `getfenv`, `setfenv`는 없습니다. 기본 한도는 호출당 250 ms, 부트 2000 ms, 메모리 64 MB입니다 (시뮬레이션 VM은 메모리 256 MB, 호출 60초).
@@ -230,7 +260,7 @@ Mods/
 | `bse.view.get(id)` | `{ id, kind, x, y, owner, props }` 복사본 또는 `nil` |
 | `bse.turn(seat)` | 차례 지정 |
 | `bse.over({ winner = seat, reason = "...", cells = { {x, y}, ... } })` | 게임 종료. `winner`가 없거나 0이면 승자 없음(무승부) |
-| `bse.emit({ t = "이름", ... })` | 사용자 정의 이벤트. `reset`, `spawn`, `move`, `set`, `remove`, `turn`, `over`, `status`는 예약된 이름입니다 |
+| `bse.emit({ t = "이름", ... })` | 사용자 정의 이벤트. `reset`, `spawn`, `move`, `set`, `remove`, `turn`, `over`, `status`는 예약된 이름입니다. `stage`와 `fx`는 화면이 해석합니다([클라이언트 힌트](#클라이언트-힌트)) |
 | `bse.status(text, level)` | 토스트로 보일 메시지. `level`은 `info`(기본), `warning`(또는 `warn`), `error` |
 | `bse.reject(code, message, details)` | `command`가 반환할 거부 값을 만듭니다 |
 | `bse.deepcopy(value)`, `bse.is_headless()` | 깊은 복사(64단계까지), 헤드리스 여부 |
@@ -328,23 +358,90 @@ ff 20 seed=3
 sim 1000 seed=1
 ```
 
-기준 구현은 `Assets/StreamingAssets/Mods/gomoku`입니다. 모든 훅과 `bse.view`, `bse.emit`을 쓰며 격자 보드를 위한 클라이언트 힌트도 갖추고 있습니다.
+기준 구현은 `Assets/StreamingAssets/Mods/gomoku`(격자 보드)와 `Assets/StreamingAssets/Mods/cubic3`(3D 오브젝트, 연출, 클릭·드래그·키 입력, 분할 화면)입니다.
 
 ### 클라이언트 힌트
 
-`config.json`의 `client`는 화면 표시에만 쓰이며 코어는 해석하지 않습니다. 격자 보드(`GridBoardView`)가 다음을 읽습니다.
+`config.json`의 `client`는 화면 표시와 입력에만 쓰이며 코어는 해석하지 않습니다. 장면 뷰(`SceneView`)와 앱이 읽습니다.
 
 | 키 | 값 | 설명 |
 |---|---|---|
-| `board.style` | `lines`, `checker` | 선의 교차점에 말을 두는 판, 체크무늬 칸에 두는 판 (기본 `lines`) |
-| `board.columns`, `board.rows` | 정수 | 보드 크기 |
-| `click.action` | 문자열 | 보드를 클릭하면 `{ action = <값>, x, y }`를 제출합니다. 비우면 클릭 입력이 없습니다 |
-| `click.preview` | 말 kind | 마우스를 올린 자리에 반투명으로 보여 줄 말 |
-| `pieces.<kind>.shape` | `stone`, `disc`, `cube` | 말 모양. 기본은 kind가 `stone`이면 `stone`, 그 외 `disc` |
+| `board` | 객체 | `stage.board`와 같은 내용(아래). 둘 다 있으면 `stage.board`가 덮어씁니다 |
+| `stage` | 객체 | 장면의 기본값 ([장면](#장면)) |
+| `click.action` | 문자열 | 클릭하면 제출할 명령의 `action`. 비우면 클릭 입력이 없습니다 |
+| `click.target` | `object` | 지정하면 칸 대신 클릭한 오브젝트를 보냅니다: `{ action, id, point, normal, button, shift }` (`button`은 0 왼쪽, 1 오른쪽) |
+| `click.preview` | 말 kind | 마우스를 올린 칸에 반투명으로 보여 줄 말 (칸을 클릭하는 게임) |
+| `drag.action` | 문자열 | 오브젝트 위에서 시작한 드래그가 18픽셀을 넘으면 한 번 제출: `{ action, id, point, normal, drag }`. `drag`는 닿은 면을 따라 끈 방향의 단위 벡터 |
+| `keys` | 객체 | 키 이름(`"u"`, `"shift+u"`, `"1"`, `"space"` 등)마다 제출할 명령 객체 |
+| `pieces.<kind>` | 객체 | 그 kind의 모든 말에 적용할 기본 속성 ([오브젝트](#오브젝트)) |
 
-보드 크기는 모드가 `bse.emit({ t = "board", columns = n, rows = m })`로 알린 값이 가장 우선이고, 없으면 `board.columns`/`board.rows`, 그것도 없으면 말 위치에 맞춰 정합니다(최소 8, 최대 64). 열 1은 기본 시점에서 왼쪽, 행 1은 먼 쪽(화면 위쪽)입니다.
+좌표계는 x가 오른쪽, y가 위, z가 보는 사람 쪽이며 `point`, `normal`, `drag`와 아래의 `pos`, `rot`, `axis`, `pivot`, `target`, `direction`이 모두 이 좌표를 씁니다. 길이의 단위는 보드 한 칸(1)입니다.
 
-말 색은 `props.color`가 정하고(`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, 또는 `black` `white` `red` `green` `blue` `yellow` `orange` `purple` `brown` `gray` `cyan` `pink`), 없으면 소유 좌석의 색입니다. `props.scale`(0.25~3)로 크기를 바꿉니다. 사용자 정의 이벤트 `last_move { x, y, seat }`는 마지막 수 표시에, `bse.over`의 `cells`는 승리 줄 강조에 쓰입니다. 한 화면에 그리는 말은 최대 6000개입니다.
+#### 장면
+
+`client.stage`가 기본값이고, 게임 중에는 `bse.emit({ t = "stage", ... })`로 바꿉니다. 여러 번 보내면 객체끼리 합쳐지고, 새 게임이나 복원으로 화면이 비워지면 기본값으로 돌아갑니다. 말하지 않은 값은 아래 기본값입니다.
+
+| 키 | 기본값 | 설명 |
+|---|---|---|
+| `background` | `#13161a` | 배경색 |
+| `table.visible`, `table.color`, `table.size`, `table.y` | `true`, `#27313b`, 800, 보드 바로 아래 | 바닥 천 |
+| `board.visible` | `true` | 보드를 그릴지 |
+| `board.style` | `lines` | `lines`(선의 교차점에 말), `checker`(체크무늬 칸에 말) |
+| `board.columns`, `board.rows` | 없음 | 보드 크기 |
+| `board.cell`, `board.margin`, `board.thickness` | 1, 0.8(`checker`는 0.9), 0.4 | 칸 크기, 가장자리 여백과 판 두께(칸 단위) |
+| `board.colors.slab` / `line` / `light` / `dark` | `#dcb06b`, `#2b1d10`, `#ecd4a0`, `#9a6a3c` | 판, 선, 밝은 칸, 어두운 칸 |
+| `board.lines.thin` / `thick`, `board.stars` | 0.045, 0.085, `true` | 선 굵기(칸 단위), 화점 |
+| `light.direction`, `light.color`, `light.ambient`, `light.intensity` | `[-0.35, 0.85, 0.4]`, `#ffffff`, 0.45, 0.65 | 빛이 오는 방향과 세기 |
+| `camera.yaw`, `camera.pitch`, `camera.fov`, `camera.target` | 0, 55, 40, `[0, 0, 0]` | 시작 시점(각도는 도) |
+| `camera.distance`, `camera.radius` | 0, 0 | 거리. 0이면 `radius`(이 반지름의 공이 들어오게), 그것도 0이면 보드에 맞춥니다 |
+| `camera.min_pitch`, `camera.max_pitch`, `camera.free_pitch` | 12, 89, `false` | 위아래 회전 범위(-89~89). `free_pitch`가 `true`이면 위아래로도 한 바퀴 돕니다 |
+| `camera.min_distance`, `camera.max_distance`, `camera.zoom` | 자동, 자동, `true` | 확대/축소 범위 |
+| `camera.left_drag`, `camera.right_drag`, `camera.middle_drag` | `pan`, `orbit`, `pan` | 버튼별 드래그: `pan`, `orbit`, `none` |
+| `markers.last_move` / `win` / `cursor` / `preview` / `shadow` | 보임 | 마지막 수 점, 승리 줄 고리, 커서 고리, 미리보기 말, 말 그림자. 각각 `visible`, `color`, `size` |
+
+보드 크기는 `bse.emit({ t = "board", columns = n, rows = m })`로 알린 값이 가장 우선이고, 없으면 `board.columns`/`board.rows`, 그것도 없으면 말 위치에 맞춰 정합니다(최소 8, 최대 64). 열 1은 기본 시점에서 왼쪽, 행 1은 먼 쪽(화면 위쪽)입니다. 사용자 정의 이벤트 `last_move { x, y, seat }`는 마지막 수 표시에, `bse.over`의 `cells`는 승리 줄 강조에 쓰입니다.
+
+#### 오브젝트
+
+말의 `props`(`bse.view.spawn`, `bse.view.set`)가 모양과 위치를 정합니다. 말에 없는 속성은 `pieces.<kind>`에서, 거기도 없으면 기본값에서 가져옵니다.
+
+| 속성 | 기본값 | 설명 |
+|---|---|---|
+| `shape` | kind가 `stone`이면 `stone`, 그 외 `disc` | `stone`, `disc`, `cube`(0.7 상자), `box`(1 상자), `sphere`, `cylinder`, `cone` |
+| `color` | 소유 좌석의 색 | `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, 또는 `black` `white` `red` `green` `blue` `yellow` `orange` `purple` `brown` `gray` `cyan` `pink` |
+| `alpha` | 1 | 투명도 |
+| `size` | 1 | 모양의 원래 크기에 곱하는 배율. 숫자 하나 또는 `[x, y, z]` |
+| `scale` | 1 | 전체 배율(0.25~3) |
+| `pos` | 없음 | `[x, y, z]`. 있으면 보드 칸이 아니라 공간의 이 위치에 놓입니다 |
+| `rot` | 없음 | 각도 3개(x, y, z 축 순서로 도는 도 단위 회전) 또는 3x3 회전 행렬 9개(행 순서) |
+| `anchor` | `pos`가 있으면 `center`, 없으면 `bottom` | 위치가 가리키는 곳: 가운데 또는 바닥 |
+| `faces` | 없음 | `box`/`cube`의 면에 붙일 색: `{ px, nx, py, ny, pz, nz }` |
+| `face_inset` | 0.1 | 면 색을 가장자리에서 들여 그리는 비율(0~0.45) |
+| `gloss` | 0.55 | 광택(0~1) |
+| `shadow` | `pos`가 없으면 `true` | 바닥 그림자 |
+| `visible`, `pick` | `true`, `true` | 그릴지, 클릭·드래그 대상인지 |
+| `tween` | 0 | `pos`가 바뀔 때 미끄러져 가는 시간(초, 최대 5). 회전과 크기는 바로 바뀝니다 |
+
+보드 칸에 놓인 말은 놓일 때 떨어지고 옮길 때 포물선으로 움직입니다. 한 화면에 그리는 말은 최대 6000개입니다.
+
+#### 연출
+
+`bse.emit({ t = "fx", ... })`는 상태를 바꾸지 않는 연출입니다. 화면은 이벤트를 순서대로 재생하다가 `fx`를 만나면 `seconds` 동안 멈춰 연출을 보여 주고, 그 뒤의 이벤트를 이어서 적용합니다. 그래서 "돌리는 연출 → 돌고 난 위치로 `set`" 순서로 내보내면 끊김 없이 이어집니다.
+
+| `kind` | 필드 | 설명 |
+|---|---|---|
+| `rotate` | `ids`, `axis`, `pivot`, `degrees`, `seconds` | `ids`의 오브젝트를 `pivot`을 지나는 `axis` 둘레로 돌립니다. 각도는 오른손 법칙(축 끝에서 볼 때 반시계가 양수) |
+| `wait` | `seconds` | 기다립니다 |
+
+`seconds`는 최대 10초입니다. 연출이 밀리면 빨라지고(최대 12배), 48개 넘게 밀리면 오래된 것부터 건너뜁니다. 헤드리스 시뮬레이션에서는 무시됩니다.
+
+```lua
+bse.emit({ t = "stage", board = { visible = false }, table = { visible = false },
+	camera = { yaw = 32, pitch = 26, radius = 3.1, free_pitch = true, left_drag = "orbit" } })
+local id = bse.view.spawn("cubie", 0, 0, { props = { shape = "box", pos = { 1, 1, 1 }, faces = { py = "#f06aa8" } } })
+bse.emit({ t = "fx", kind = "rotate", ids = { id }, axis = { 0, 1, 0 }, pivot = { 0, 0, 0 }, degrees = -90, seconds = 0.22 })
+bse.view.set(id, { pos = { -1, 1, 1 }, rot = { 0, 0, -1, 0, 1, 0, 1, 0, 0 } })
+```
 
 ### 정적 분석
 
@@ -362,6 +459,7 @@ bse_analyze --strict --defs=Native/bse_luau/luau/bse.d.luau Assets/StreamingAsse
 using BoardSandbox.Core.App;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Mods;
+using BoardSandbox.Core.Net;
 using BoardSandbox.Core.Sim;
 
 ModPackage mod = ModLoader.LoadDirectory("Assets/StreamingAssets/Mods/gomoku");
@@ -386,6 +484,11 @@ using (GameHost host = new GameHost(catalog))
     GameLibrary library = new GameLibrary(host);
     library.SetQuery("go");          // 이름, id, 설명으로 거르기
     library.Play();                  // 고른 게임으로 새 게임 시작
+
+    Multiplayer online = new Multiplayer(host, backend);   // backend: ILobbyBackend (Steam은 SteamBackend)
+    online.Refresh("gomoku");        // 그 게임의 방 목록 요청
+    online.HostGame(host.Mod);       // 또는 online.Join(online.Lobbies("gomoku")[0])
+    online.Update();                 // 프레임마다
 }
 ```
 
@@ -394,6 +497,8 @@ using (GameHost host = new GameHost(catalog))
 - `ModCatalog`는 `IModSource` 목록에서 모드를 모읍니다. 항목(`ModEntry`)은 모드와 출처(`ModOrigin`: `BuiltIn`, `Local`, `Workshop`)를 가지며, `Search(query, origin)`이 이름, id, 설명으로 찾아 출처, 이름 순으로 돌려줍니다. `Refresh()`는 소스를 다시 읽고, `FindStartup(id)`는 [시작 규칙](#시작-규칙)의 게임을 고릅니다.
 - `IModSource`는 `Origin`, `Description`(찾아보는 곳, 안내 문구에 쓰임), `Discover()`(`ModDiscovery`: 모드와 읽지 못한 모드의 오류)로 이루어집니다. 폴더를 읽는 `FolderModSource`가 들어 있고, `Discover()`가 예외를 던져도 오류로 보고될 뿐 다른 소스는 그대로 읽힙니다.
 - `GameLibrary`는 게임 선택 화면의 상태(검색어, 출처 필터, 고른 게임, 이동, `Rescan`, `Play`)를 화면 없이 다룹니다. 화면(`GameLibraryPanel`)은 이 상태를 그리기만 합니다.
+- `PlaybackQueue`는 세션의 이벤트(`GameSession.EventApplied`)를 두 번째 `ViewModel`에 순서대로 재생하며 `fx`마다 멈춥니다. 화면은 이 `Display`를 그립니다.
+- `Multiplayer`는 방 찾기, 열기, 들어가기와 방의 진행을 맡습니다. 방은 `NetHostRoom`(게임을 실행하는 쪽)과 `NetClientRoom`(보여 주기만 하는 쪽)이고, 로비 서비스는 `ILobbyBackend`, 연결은 `INetTransport`로 분리돼 있습니다. `LoopbackNetwork`는 한 프로세스 안에서 방을 만드는 전송으로 테스트에 쓰입니다.
 - `TurnGuard`는 차례가 아닌 좌석의 입력을 스크립트를 실행하지 않고 막는 인터셉터이며, 앱에는 기본으로 붙어 있지 않습니다. 앱은 `RejectionLog`만 붙입니다.
 
 ## 프로젝트 구조
@@ -401,19 +506,23 @@ using (GameHost host = new GameHost(catalog))
 ```
 Assets/
 ├─ BoardSandbox/
-│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences)
-│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 보드와 말 뷰, IMGUI HUD와 게임 선택 화면, 셰이더
+│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜)
+│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동
 │  ├─ Editor/            메뉴, 네이티브 플러그인 설정
 │  ├─ Plugins/Windows/x86_64/   bse_luau.dll
 │  └─ Tests/Editor/      NUnit 테스트 (EditMode)
-└─ StreamingAssets/Mods/gomoku/   오목 모드
+└─ StreamingAssets/Mods/
+   ├─ gomoku/            오목
+   └─ cubic3/            3D 큐브 퍼즐
 Native/
 ├─ bse_luau/             C ABI 래퍼(C++17), CMake, Luau 프렐류드, 네이티브 테스트, 분석 도구
 └─ scripts/build_native.py
 Tools/
-├─ CoreTests/            Unity 없이 Core 테스트를 실행하는 dotnet 하네스
+├─ CoreTests/            Unity 없이 테스트를 실행하는 dotnet 하네스
 └─ UnityCheck/           Unity API 대비 컴파일 검사용 프로젝트
-.github/workflows/ci.yml
+Image/                   README의 화면 그림
+steam_appid.txt          Steam 앱 ID (테스트용 480)
+LICENSE.md
 THIRD_PARTY_NOTICES.txt
 ```
 
@@ -430,7 +539,8 @@ flowchart TD
     History["기록 (스냅샷)"]
     After["인터셉터 AfterSubmit<br/>RejectionLog"]
     Result["SubmitResult<br/>수락 / 거부 / 차단 / 무효 / 오류"]
-    Client["Client<br/>GridBoardView, HUD"]
+    Queue["PlaybackQueue<br/>fx마다 멈추며 순서대로 재생"]
+    Client["Client<br/>SceneView, HUD"]
 
     Input -->|"InputPacket(seat, command, source)"| Submit
     Submit --> Before
@@ -441,12 +551,15 @@ flowchart TD
     View --> History
     History --> After
     After --> Result
-    View -.->|"ViewModel만 읽어 그림"| Client
+    Events -.->|"EventApplied"| Queue
+    Queue -.->|"Display(ViewModel)만 읽어 그림"| Client
 ```
 
 - **bse_luau** (네이티브): Luau VM을 C ABI(버전 1)로 감쌉니다. 모든 호출은 JSON 문자열 입출력(`bse_vm_call`)이고 메모리·시간 한도와 로그 수집을 제공합니다. 내보내는 함수는 `bse_*` 10개이며 헤더는 `Native/bse_luau/include/bse_luau.h`입니다.
-- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, 모드 출처와 카탈로그(`IModSource`, `ModCatalog`), `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `CommandConsole`, `SimulationRunner`, `GameHost`, `GameLibrary`.
-- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(보드 뷰, 카메라, HUD, 게임 선택 화면)를 구동하는 구성 루트입니다.
+- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, 모드 출처와 카탈로그(`IModSource`, `ModCatalog`), `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `PlaybackQueue`, `CommandConsole`, `SimulationRunner`, `GameHost`, `GameLibrary`, `Net`(`Multiplayer`, `NetHostRoom`, `NetClientRoom`).
+- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(장면 뷰, 카메라, HUD, 게임 선택 화면, Steam 연동)를 구동하는 구성 루트입니다. 화면에 보이는 판마다 `SceneView`, 카메라, `PlaybackQueue`를 하나씩 두며, 분할 화면에서는 판마다 레이어(31번부터 아래로)와 카메라 뷰포트를 나눕니다.
+
+멀티플레이에서는 호스트의 `NetHostRoom`이 세션의 이벤트를 참가자에게 보내고, 참가자의 `NetClientRoom`이 받은 이벤트를 자기 `PlaybackQueue`에 넣습니다. 참가자의 입력은 호스트에서 좌석과 차례를 확인한 뒤 `GameSession.Submit`으로 들어갑니다. 메시지는 JSON이며 `hello`, `welcome`, `roster`, `sync`, `ev`, `cmd`, `note`, `finished`, `bye`가 있습니다.
 
 ## 네이티브 라이브러리 빌드
 
@@ -465,7 +578,7 @@ pip install ziglang
 python3 Native/scripts/build_native.py windows-x64 --run-tests
 ```
 
-옵션: `--luau-src <경로>`는 이미 받아 둔 Luau 소스를 사용, `--no-install`은 프로젝트에 복사하지 않습니다. 스크립트 없이 CMake만 쓸 때(CI와 같은 방식):
+옵션: `--luau-src <경로>`는 이미 받아 둔 Luau 소스를 사용, `--no-install`은 프로젝트에 복사하지 않습니다. 스크립트 없이 CMake만 쓸 때:
 
 ```
 cmake -S Native/bse_luau -B Native/build/ci -A x64
@@ -477,26 +590,27 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 | 종류 | 실행 방법 | 범위 |
 |---|---|---|
-| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, 세션, 콘솔, 시뮬레이션, 호스트, 오목 규칙, 기하와 뷰 계산 |
-| dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 뷰)는 빼고 실행합니다 |
+| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 기하·장면·오브젝트 계산 |
+| dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 장면)는 빼고 실행합니다 |
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
-| CI | `.github/workflows/ci.yml` (`windows-latest`) | MSVC로 네이티브 빌드와 테스트, DLL 설치, 하네스 실행, DLL 산출물 업로드 |
 
-하네스는 환경 변수 `BSE_NATIVE_DIR`(네이티브 라이브러리 폴더)와 `BSE_MODS_DIR`(모드 폴더)을 따릅니다. `Tools/UnityCheck`는 Unity 없이 C# 컴파일을 검사하는 개발용 프로젝트로, UnityEngine 타입이 든 어셈블리 `.reference/UnityEngine.dll`이 있어야 빌드됩니다. 이 파일은 저장소에 포함하지 않습니다.
+하네스는 환경 변수 `BSE_NATIVE_DIR`(네이티브 라이브러리 폴더)와 `BSE_MODS_DIR`(모드 폴더)을 따릅니다. `Tools/UnityCheck`는 Unity 없이 C# 컴파일을 검사하는 개발용 프로젝트로, UnityEngine 타입이 든 어셈블리 `.reference/UnityEngine.dll`이 있어야 빌드됩니다. `.reference/Steamworks.NET/`에 Steamworks.NET 패키지의 `Runtime` 소스를 두면 Steam 연동 코드도 함께 검사합니다. `.reference`는 저장소에 포함하지 않습니다.
 
 ## 상태와 제한
 
 | 항목 | 상태 |
 |---|---|
-| 네이티브 라이브러리 | zig로 크로스 빌드한 Windows x64 DLL이 Wine에서 네이티브 테스트를 모두 통과했습니다. 같은 소스를 Linux에서 일반 빌드와 ASan/UBSan 빌드로 돌려도 모두 통과했습니다. 실제 Windows와 Unity에서 이 DLL을 불러 본 적은 없고, MSVC 빌드와 GitHub Actions 워크플로도 실행해 보지 않았습니다 |
-| C# 코드 | Unity 6000.3 공개 참조 소스로 만든 UnityEngine 어셈블리를 기준으로 컴파일 검사를 통과했고, Core 로직은 dotnet 하네스 테스트를 통과했습니다. Unity 에디터와 플레이어에서의 실행(게임 선택 화면을 포함한 IMGUI 화면, 셰이더, 카메라, 입력)은 확인하지 못했습니다 |
-| 패키지와 설정 | `Packages/manifest.json`, `ProjectSettings/ProjectVersion.txt`(6000.3.0f1), 플러그인 `.meta`는 직접 작성한 파일입니다. Unity가 프로젝트를 열면서 값을 고칠 수 있고, `com.unity.test-framework` 1.6.0이 6000.3과 맞는지는 확인하지 못했습니다 |
+| 네이티브 라이브러리 | zig로 크로스 빌드한 Windows x64 DLL이 Wine에서 네이티브 테스트를 모두 통과했습니다. 같은 소스를 Linux에서 일반 빌드와 ASan/UBSan 빌드로 돌려도 모두 통과했습니다. MSVC 빌드는 실행해 보지 않았습니다 |
+| C# 코드 | Unity 6000.3.19f1에서 열어 실행해 왔습니다(멀티플레이 추가분은 아래 행). 로직은 dotnet 하네스 테스트(480개)를 통과했고, Unity 코드는 공개 참조 소스로 만든 UnityEngine 어셈블리를 기준으로 컴파일 검사를 합니다 |
+| Steam 멀티플레이 | 방과 동기화 로직은 루프백 전송으로 테스트했고, Steam 연동 코드는 Steamworks.NET 소스와 함께 컴파일 검사만 했습니다. 실제 Steam 로비 생성·검색·참가, P2P 전송, 분할 화면과 로딩 화면의 표시는 확인하지 못했습니다 |
 | 스크립팅 백엔드 | Mono 기준으로 작성했습니다. IL2CPP 빌드는 확인하지 않았습니다 |
 
-기능 범위: 한 프로세스에서 하는 로컬 플레이(사람/컴퓨터 좌석)와 격자 보드. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 네트워크 멀티플레이, 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 말은 `stone`, `disc`, `cube` 기본 도형으로 그립니다. 컴퓨터 플레이어는 무작위 수만 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
+기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 컴퓨터 플레이어는 무작위 수만 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
 
 ## 라이선스
 
-Board Sandbox의 저작권과 라이선스 권한은 저자에게 있습니다. 이 저장소에는 사용을 허락하는 라이선스 파일이 없으므로 사용과 배포의 조건은 저자가 정합니다.
+Board Sandbox의 저작권과 사용 조건은 [LICENSE.md](LICENSE.md)에 있습니다.
 
 Luau는 Board Sandbox의 일부가 아니며 저자의 권한이 미치지 않는 제3자 소프트웨어입니다. MIT 라이선스(Copyright (c) 2019-2026 Roblox Corporation, 1994–2019 Lua.org, PUC-Rio)로 배포되고 `bse_luau.dll`에 정적으로 들어 있습니다. MIT 라이선스는 사본마다 저작권 고지와 허락 문구를 넣도록 요구하므로 DLL이나 이를 담은 빌드를 배포할 때 `THIRD_PARTY_NOTICES.txt`를 함께 넣어야 합니다. zig로 만든 DLL이 담는 런타임 라이브러리(LLVM libc++ 등)의 고지도 같은 파일에 있습니다.
+
+Steam 연동에 쓰는 Steamworks.NET(MIT, Riley Labrecque)과 그 패키지에 든 Steamworks SDK 재배포 파일(`steam_api64.dll`, Valve)도 제3자 소프트웨어입니다. 저장소에는 들어 있지 않고 Unity가 패키지로 받아 오며, 빌드를 배포할 때는 각자의 라이선스와 Steamworks SDK 약관을 따릅니다.

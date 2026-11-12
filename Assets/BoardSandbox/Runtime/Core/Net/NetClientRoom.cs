@@ -16,6 +16,7 @@ namespace BoardSandbox.Core.Net
         public const int MaxPlayers = 64;
 
         private readonly Dictionary<int, ViewModel> _incoming = new Dictionary<int, ViewModel>();
+        private readonly HashSet<int> _shown = new HashSet<int>();
 
         public NetClientRoom(ModPackage mod, INetTransport transport)
             : base(transport, mod)
@@ -28,6 +29,22 @@ namespace BoardSandbox.Core.Net
 
         // True once the host has let the local player in.
         public bool Joined { get; private set; }
+
+        // True once every table has arrived and can be shown.
+        public bool Ready
+        {
+            get
+            {
+                if (!Joined || BoardList.Count == 0)
+                    return false;
+                foreach (NetBoard board in BoardList)
+                {
+                    if (!_shown.Contains(board.Id))
+                        return false;
+                }
+                return true;
+            }
+        }
 
         public override bool CanAct
         {
@@ -92,6 +109,7 @@ namespace BoardSandbox.Core.Net
                     NetBoard board = FindBoard(message["board"].AsInt(0));
                     if (board == null || _incoming.ContainsKey(board.Id))
                         break;
+                    _shown.Add(board.Id);
                     foreach (JsonValue raw in message["events"].Items)
                     {
                         ViewEvent e = Parse(raw);
@@ -166,6 +184,7 @@ namespace BoardSandbox.Core.Net
             if (message["more"].AsBool(false))
                 return;
             _incoming.Remove(board.Id);
+            _shown.Add(board.Id);
             board.Queue.Reset(model);
         }
 

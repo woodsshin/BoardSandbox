@@ -70,6 +70,16 @@ namespace BoardSandbox.Client.UI
             _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true);
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer.RoomChanged += OnRoomChanged;
+            _multiplayer.RoomLost += OpenLibrary;
+        }
+
+        // True while the panels are folded away so that they do not cover the table.
+        public bool Collapsed { get; private set; }
+
+        public void ToggleCollapsed()
+        {
+            Collapsed = !Collapsed;
+            _releaseFocus = true;
         }
 
         // The room of a game that somebody else hosts; null when the local player hosts or plays alone.
@@ -88,7 +98,7 @@ namespace BoardSandbox.Client.UI
         public bool ConsoleOpen => _showConsole;
 
         // True while the list of games covers the screen; the board and the keyboard shortcuts of the app are idle then.
-        public bool ModalOpen => _library.IsOpen;
+        public bool ModalOpen => _library.IsOpen || _multiplayer.Loading != null;
 
         // A line of explanation under the title of the game; empty for none.
         public string Note { get; set; } = string.Empty;
@@ -183,20 +193,81 @@ namespace BoardSandbox.Client.UI
                 return;
             }
 
-            if (GuestRoom != null)
+            string loading = _multiplayer.Loading;
+            if (loading != null)
             {
-                DrawBanner();
-                DrawGuestPanel(GuestRoom);
+                DrawLoading(loading);
                 DrawToasts();
                 return;
             }
 
             HandleKeys(e);
             DrawBanner();
-            DrawGamePanel();
-            DrawToolColumn();
-            DrawConsole();
+            if (Collapsed)
+            {
+                DrawCollapsed();
+            }
+            else if (GuestRoom != null)
+            {
+                DrawGuestPanel(GuestRoom);
+            }
+            else
+            {
+                DrawGamePanel();
+                DrawToolColumn();
+                DrawConsole();
+            }
             DrawToasts();
+        }
+
+        // Covers the table while a room is being opened or entered.
+        private void DrawLoading(string text)
+        {
+            Rect screen = new Rect(0f, 0f, Width, Height);
+            if (Event.current.type == EventType.Repaint)
+                _rects.Add(screen);
+            Color previous = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.82f);
+            GUI.DrawTexture(screen, Texture2D.whiteTexture);
+            GUI.color = previous;
+
+            float width = _theme.Sf(360);
+            float height = _theme.Sf(150);
+            GUILayout.BeginArea(new Rect((Width - width) * 0.5f, (Height - height) * 0.5f, width, height));
+            GUILayout.BeginVertical(_theme.Panel);
+            NetRoom room = _multiplayer.Room;
+            GUILayout.Label(room != null ? DisplayText.Clip(room.Mod.Manifest.Name, 40) : "Online", _theme.Heading);
+            int dots = (int)(_host.Now * 2.0) % 4;
+            GUILayout.Label(text.TrimEnd('…') + new string('.', dots), _theme.Label);
+            GUILayout.Space(_theme.Sf(10));
+            GUI.enabled = room != null;
+            if (GUILayout.Button("Cancel", _theme.Button))
+                Defer(_multiplayer.Leave);
+            GUI.enabled = true;
+            GUILayout.EndVertical();
+            GUILayout.EndArea();
+        }
+
+        private void DrawPanelHeader(string title)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(title, _theme.Heading, GUILayout.ExpandWidth(true));
+            if (GUILayout.Button(Collapsed ? "Show (Esc)" : "Hide (Esc)", _theme.Button, GUILayout.ExpandWidth(false)))
+                Defer(ToggleCollapsed);
+            GUILayout.EndHorizontal();
+        }
+
+        // All that is left of the panels while they are folded away.
+        private void DrawCollapsed()
+        {
+            NetRoom guest = GuestRoom;
+            ModManifest manifest = guest != null ? guest.Mod.Manifest : _host.Session?.Mod.Manifest;
+            float width = _theme.Sf(250);
+            BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
+            BeginBox(width);
+            DrawPanelHeader(manifest != null ? DisplayText.Clip(manifest.Name, 18) : "Board Sandbox");
+            EndBox();
+            EndArea();
         }
 
         private void SampleStatus()
@@ -288,10 +359,13 @@ namespace BoardSandbox.Client.UI
             {
                 e.Use();
             }
-            else if (e.keyCode == KeyCode.Escape && _showConsole)
+            else if (e.keyCode == KeyCode.Escape)
             {
                 e.Use();
-                Defer(ToggleConsole);
+                if (_showConsole && !Collapsed && GuestRoom == null)
+                    Defer(ToggleConsole);
+                else
+                    Defer(ToggleCollapsed);
             }
         }
 
@@ -377,7 +451,7 @@ namespace BoardSandbox.Client.UI
             BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
             BeginBox(width);
 
-            GUILayout.Label(manifest != null ? DisplayText.Clip(manifest.Name, 40) : "Board Sandbox", _theme.Heading);
+            DrawPanelHeader(manifest != null ? DisplayText.Clip(manifest.Name, 24) : "Board Sandbox");
             if (manifest != null && manifest.Description.Length > 0)
                 GUILayout.Label(DisplayText.Clip(manifest.Description, 600, false), _theme.Muted);
             if (session != null && Note.Length > 0)
@@ -405,7 +479,7 @@ namespace BoardSandbox.Client.UI
             BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
             BeginBox(width);
             ModManifest manifest = room.Mod.Manifest;
-            GUILayout.Label(DisplayText.Clip(manifest.Name, 40), _theme.Heading);
+            DrawPanelHeader(DisplayText.Clip(manifest.Name, 24));
             if (manifest.Description.Length > 0)
                 GUILayout.Label(DisplayText.Clip(manifest.Description, 600, false), _theme.Muted);
             if (GUILayout.Button("Fit view (F)", _theme.Button))

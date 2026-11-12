@@ -71,6 +71,23 @@ namespace BoardSandbox.Core.Net
         // Raised when a room was entered or left.
         public event Action RoomChanged;
 
+        // Raised when the room of somebody else's game went away without the local player leaving it.
+        public event Action RoomLost;
+
+        // What the local player is waiting for on the way into a room; null when there is nothing to wait for.
+        public string Loading
+        {
+            get
+            {
+                if (_pending != null)
+                    return _pendingHost ? "Opening a room…" : "Joining the room…";
+                NetClientRoom guest = Room as NetClientRoom;
+                if (guest == null || guest.Ready)
+                    return null;
+                return guest.Joined ? "Loading the game…" : "Waiting for the host…";
+            }
+        }
+
         // The rooms that play the given game.
         public IReadOnlyList<LobbyInfo> Lobbies(string modId)
         {
@@ -159,8 +176,11 @@ namespace BoardSandbox.Core.Net
             Room.Update();
             if (Room.IsClosed)
             {
+                bool guest = !Room.IsHost;
                 Say(Room.ClosedReason, ToastLevel.Warning);
                 Leave();
+                if (guest)
+                    RoomLost?.Invoke();
             }
         }
 
