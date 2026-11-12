@@ -1,63 +1,63 @@
 using BoardSandbox.Client.Geometry;
+using BoardSandbox.Client.Views;
 using UnityEngine;
 
 namespace BoardSandbox.Client.Cameras
 {
-    // An orbiting camera that looks at a point of the table and eases towards what the player asks for.
+    // An orbiting camera that looks at a point of the scene and eases towards what the player asks for.
     public sealed class CameraRig
     {
-        public const float DefaultYaw = 0f;
-        public const float DefaultPitch = 55f;
-        public const float FieldOfView = 40f;
-
         private const float DegreesPerPixel = 0.25f;
         private const float Stiffness = 12f;
         private const float AspectTolerance = 0.01f;
 
         private readonly Camera _camera;
+        private CameraSettings _settings;
         private BoardLayout _layout;
+        private CameraPlan _plan;
         private float _framedAspect;
         private bool _userMoved;
 
         private Vector3 _target;
         private float _yaw;
-        private float _pitch = DefaultPitch;
+        private float _pitch = 55f;
         private float _distance = 20f;
 
         private Vector3 _goalTarget;
         private float _goalYaw;
-        private float _goalPitch = DefaultPitch;
+        private float _goalPitch = 55f;
         private float _goalDistance = 20f;
-
-        private float _minDistance = 2f;
-        private float _maxDistance = 200f;
-        private Vector2 _reach = new Vector2(10f, 10f);
 
         public CameraRig(Camera camera)
         {
             _camera = camera;
             _camera.orthographic = false;
-            _camera.fieldOfView = FieldOfView;
             _camera.clearFlags = CameraClearFlags.SolidColor;
-            _camera.backgroundColor = new Color(0.075f, 0.085f, 0.1f, 1f);
-            Apply();
+            Background = StageSettings.DefaultBackground;
+            Frame(new CameraSettings(), null, true);
         }
 
         public Camera Camera => _camera;
 
-        // Looks at the whole board from the default angle; the camera glides there unless it is told to jump.
-        public void Frame(BoardLayout layout, bool jump)
+        public Color32 Background
         {
+            set => _camera.backgroundColor = value;
+        }
+
+        // Looks at the scene the way the stage asks for; the layout is null when no board is shown. The camera
+        // glides there unless it is told to jump.
+        public void Frame(CameraSettings settings, BoardLayout layout, bool jump)
+        {
+            _settings = settings;
             _layout = layout;
             _userMoved = false;
             _framedAspect = _camera.aspect;
-            _goalYaw = DefaultYaw;
-            _goalPitch = DefaultPitch;
-            _goalTarget = Vector3.zero;
-            _goalDistance = layout.FitDistance(FieldOfView, _camera.aspect, _goalYaw, _goalPitch);
-            _minDistance = Mathf.Max(1.5f, layout.CellSize * 2f);
-            _maxDistance = _goalDistance * 3f;
-            _reach = new Vector2(layout.SlabHalfWidth, layout.SlabHalfDepth);
+            _plan = CameraPlan.Resolve(settings, layout, _camera.aspect);
+            _camera.fieldOfView = _plan.Fov;
+            _goalYaw = CameraMath.WrapDegrees(_plan.Yaw);
+            _goalPitch = _plan.Pitch;
+            _goalTarget = _plan.Target;
+            _goalDistance = _plan.Distance;
             if (jump)
             {
                 _target = _goalTarget;
@@ -70,34 +70,47 @@ namespace BoardSandbox.Client.Cameras
 
         public void Reframe()
         {
-            if (_layout != null)
-                Frame(_layout, false);
+            Frame(_settings, _layout, false);
+        }
+
+        public void Drag(DragMode mode, Vector2 mouseDelta, float screenHeight)
+        {
+            if (mode == DragMode.Orbit)
+                Orbit(mouseDelta);
+            else if (mode == DragMode.Pan)
+                Pan(mouseDelta, screenHeight);
         }
 
         public void Orbit(Vector2 mouseDelta)
         {
             _userMoved = true;
             _goalYaw = CameraMath.WrapDegrees(_goalYaw + mouseDelta.x * DegreesPerPixel);
-            _goalPitch = CameraMath.ClampPitch(_goalPitch + mouseDelta.y * DegreesPerPixel);
+            _goalPitch = CameraMath.ClampPitch(_goalPitch + mouseDelta.y * DegreesPerPixel, _plan.MinPitch, _plan.MaxPitch);
         }
 
         public void Pan(Vector2 mouseDelta, float screenHeight)
         {
             _userMoved = true;
-            _goalTarget += CameraMath.PanOffset(_goalYaw, _goalPitch, mouseDelta, _goalDistance, FieldOfView, screenHeight);
-            _goalTarget = new Vector3(Mathf.Clamp(_goalTarget.x, -_reach.x, _reach.x), 0f, Mathf.Clamp(_goalTarget.z, -_reach.y, _reach.y));
+            Vector3 moved = _goalTarget + CameraMath.PanOffset(_goalYaw, _goalPitch, mouseDelta, _goalDistance, _plan.Fov, screenHeight);
+            Vector3 home = _plan.Target;
+            _goalTarget = new Vector3(
+                Mathf.Clamp(moved.x, home.x - _plan.Reach.x, home.x + _plan.Reach.x),
+                Mathf.Clamp(moved.y, home.y - _plan.Reach.y, home.y + _plan.Reach.y),
+                Mathf.Clamp(moved.z, home.z - _plan.Reach.z, home.z + _plan.Reach.z));
         }
 
         public void Zoom(float wheelNotches)
         {
+            if (!_settings.Zoom)
+                return;
             _userMoved = true;
-            _goalDistance = CameraMath.Zoom(_goalDistance, wheelNotches, _minDistance, _maxDistance);
+            _goalDistance = CameraMath.Zoom(_goalDistance, wheelNotches, _plan.MinDistance, _plan.MaxDistance);
         }
 
         public void Tick(float deltaTime)
         {
-            if (_layout != null && !_userMoved && Mathf.Abs(_camera.aspect - _framedAspect) > AspectTolerance)
-                Frame(_layout, false);
+            if (!_userMoved && Mathf.Abs(_camera.aspect - _framedAspect) > AspectTolerance)
+                Frame(_settings, _layout, false);
 
             _yaw = CameraMath.WrapDegrees(CameraMath.DampAngle(_yaw, _goalYaw, Stiffness, deltaTime));
             _pitch = CameraMath.Damp(_pitch, _goalPitch, Stiffness, deltaTime);

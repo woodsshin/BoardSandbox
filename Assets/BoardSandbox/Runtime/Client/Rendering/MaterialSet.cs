@@ -12,12 +12,16 @@ namespace BoardSandbox.Client.Rendering
         public const string OpaqueShaderName = "BoardSandbox/Basic";
         public const string OverlayShaderName = "BoardSandbox/Overlay";
 
+        private static readonly int LightDirectionId = Shader.PropertyToID("_BseLightDirection");
+        private static readonly int LightColorId = Shader.PropertyToID("_BseLightColor");
+        private static readonly int LightLevelsId = Shader.PropertyToID("_BseLightLevels");
+
         private static readonly string[] OpaqueFallbacks = { "Universal Render Pipeline/Unlit", "Unlit/Color", "Sprites/Default" };
         private static readonly string[] OverlayFallbacks = { "Sprites/Default", "Unlit/Transparent Cutout", "Universal Render Pipeline/Unlit" };
 
         private readonly Shader _opaque;
         private readonly Shader _overlay;
-        private readonly Dictionary<uint, Material> _pieces = new Dictionary<uint, Material>();
+        private readonly Dictionary<ulong, Material> _pieces = new Dictionary<ulong, Material>();
         private readonly Dictionary<uint, Material> _overlays = new Dictionary<uint, Material>();
         private readonly List<Material> _owned = new List<Material>();
 
@@ -36,16 +40,25 @@ namespace BoardSandbox.Client.Rendering
         // Shows the colors stored in the vertices of the mesh.
         public Material Vertex { get; }
 
-        public Material Piece(Color32 color)
+        public Material Piece(Color32 color, float gloss = 0.55f)
         {
-            uint key = Pack(color);
+            ulong key = ((ulong)Pack(color) << 8) | (byte)Mathf.RoundToInt(Mathf.Clamp01(gloss) * 255f);
             if (_pieces.TryGetValue(key, out Material material))
                 return material;
-            material = Own(new Material(_opaque) { name = "Piece " + key.ToString("x8") });
+            material = Own(new Material(_opaque) { name = "Piece " + key.ToString("x10") });
             material.color = color;
-            SetFloat(material, "_Glossiness", 0.55f);
+            SetFloat(material, "_Glossiness", Mathf.Clamp01(gloss));
             _pieces[key] = material;
             return material;
+        }
+
+        // The light every material of the table is lit by; the direction points towards the light.
+        public static void SetLight(Vector3 direction, Color color, float ambient, float intensity)
+        {
+            Vector3 towards = direction.sqrMagnitude > 1e-6f ? direction.normalized : Vector3.up;
+            Shader.SetGlobalVector(LightDirectionId, new Vector4(towards.x, towards.y, towards.z, 1f));
+            Shader.SetGlobalColor(LightColorId, color);
+            Shader.SetGlobalVector(LightLevelsId, new Vector4(ambient, intensity, 0f, 1f));
         }
 
         // A see-through tint; the alpha of the color decides how much shows.

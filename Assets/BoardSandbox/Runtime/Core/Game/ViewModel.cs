@@ -79,6 +79,8 @@ namespace BoardSandbox.Core.Game
         // Returns false when the event refers to an object that does not exist.
         public bool Apply(ViewEvent e)
         {
+            if (e.Kind == ViewEventKind.Effect)
+                return true;
             Version++;
             switch (e.Kind)
             {
@@ -113,8 +115,10 @@ namespace BoardSandbox.Core.Game
                     Over = new OverInfo(e.Winner, e.Reason, e.Cells);
                     return true;
                 case ViewEventKind.Custom:
-                    if (!_customByType.ContainsKey(e.Type))
+                    if (!_customByType.TryGetValue(e.Type, out ViewEvent earlier))
                         _customOrder.Add(e.Type);
+                    else if (e.Type == ViewEvent.StageType)
+                        e = ViewEvent.Parse(JsonMerge.Deep(earlier.Raw, e.Raw));
                     _customByType[e.Type] = e;
                     return true;
                 default:

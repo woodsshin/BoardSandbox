@@ -26,11 +26,18 @@ namespace BoardSandbox.Core.Game
         Turn,
         Over,
         Status,
-        Custom
+        Custom,
+
+        // A step of the presentation that changes no state: "fx".
+        Effect
     }
 
     public sealed class ViewEvent
     {
+        public const string EffectType = "fx";
+        public const string StageType = "stage";
+        public const double MaxEffectSeconds = 10.0;
+
         private static readonly Point2[] NoCells = new Point2[0];
 
         private ViewEvent()
@@ -63,6 +70,9 @@ namespace BoardSandbox.Core.Game
         public IReadOnlyList<Point2> Cells { get; private set; }
         public string Text { get; private set; }
         public string Level { get; private set; }
+
+        // How long an effect takes; 0 for every other event.
+        public double Seconds { get; private set; }
 
         public static ViewEvent Parse(JsonValue raw)
         {
@@ -127,6 +137,10 @@ namespace BoardSandbox.Core.Game
                     e.Text = raw["text"].AsString();
                     e.Level = raw["level"].AsString("info");
                     break;
+                case EffectType:
+                    e.Kind = ViewEventKind.Effect;
+                    e.Seconds = ClampSeconds(raw["seconds"].AsDouble());
+                    break;
                 default:
                     e.Kind = ViewEventKind.Custom;
                     break;
@@ -140,6 +154,13 @@ namespace BoardSandbox.Core.Game
             foreach (JsonValue raw in array.Items)
                 events.Add(Parse(raw));
             return events;
+        }
+
+        private static double ClampSeconds(double seconds)
+        {
+            if (double.IsNaN(seconds) || seconds <= 0)
+                return 0;
+            return Math.Min(seconds, MaxEffectSeconds);
         }
 
         private static int RequireId(JsonValue raw)

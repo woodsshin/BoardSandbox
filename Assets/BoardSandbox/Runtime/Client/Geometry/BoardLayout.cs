@@ -17,12 +17,15 @@ namespace BoardSandbox.Client.Geometry
     {
         public const int MaxSize = 64;
 
-        public BoardLayout(int columns, int rows, BoardStyle style = BoardStyle.Lines, float cellSize = 1f)
+        // A negative margin or thickness stands for the usual one; both are given in cells.
+        public BoardLayout(int columns, int rows, BoardStyle style = BoardStyle.Lines, float cellSize = 1f, float margin = -1f, float thickness = -1f)
         {
             Columns = Mathf.Clamp(columns, 1, MaxSize);
             Rows = Mathf.Clamp(rows, 1, MaxSize);
             Style = style;
-            CellSize = Mathf.Max(0.01f, cellSize);
+            CellSize = Mathf.Clamp(cellSize, 0.01f, 100f);
+            Margin = CellSize * (margin >= 0f ? Mathf.Min(margin, 20f) : style == BoardStyle.Lines ? 0.8f : 0.9f);
+            Thickness = CellSize * (thickness >= 0f ? Mathf.Clamp(thickness, 0.01f, 20f) : 0.4f);
         }
 
         public int Columns { get; }
@@ -31,8 +34,8 @@ namespace BoardSandbox.Client.Geometry
         public float CellSize { get; }
 
         // Distance from the outermost coordinate to the edge of the board.
-        public float Margin => CellSize * (Style == BoardStyle.Lines ? 0.8f : 0.9f);
-        public float Thickness => CellSize * 0.4f;
+        public float Margin { get; }
+        public float Thickness { get; }
 
         // Half of the extent covered by the coordinates themselves.
         public float HalfWidth => (Columns - 1) * CellSize * 0.5f;

@@ -21,6 +21,7 @@ namespace BoardSandbox.Client
     public sealed class BoardSandboxApp : MonoBehaviour
     {
         private const float DragThreshold = 6f;
+        private const float GestureThreshold = 18f;
         private const double ComputerDelaySeconds = 0.45;
 
         [SerializeField] private string initialMod = "";
@@ -32,7 +33,8 @@ namespace BoardSandbox.Client
 
         private GameHost _host;
         private MaterialSet _materials;
-        private GridBoardView _view;
+        private SceneView _view;
+        private PlaybackQueue _queue;
         private CameraRig _rig;
         private GuiTheme _theme;
         private Hud _hud;
@@ -40,7 +42,7 @@ namespace BoardSandbox.Client
 
         private GameSession _boundSession;
         private ViewHints _hints = new ViewHints(null);
-        private int _framedLayout = -1;
+        private int _framedVersion = -1;
         private bool _overflowReported;
         private string _failure;
 
@@ -48,6 +50,9 @@ namespace BoardSandbox.Client
         private bool _dragged;
         private int _pressButton;
         private Vector2 _pressPosition;
+        private bool _pressOnObject;
+        private bool _gestureSent;
+        private PickHit _pressHit;
         private bool _hovering;
         private int _hoverX;
         private int _hoverY;
@@ -95,7 +100,9 @@ namespace BoardSandbox.Client
         {
             _theme = new GuiTheme();
             _materials = new MaterialSet();
-            _view = new GridBoardView(_materials);
+            _view = new SceneView(_materials);
+            _queue = new PlaybackQueue();
+            _queue.Played += OnEvent;
             _rig = new CameraRig(ResolveCamera());
 
             _host = new GameHost(new ModCatalog(ModSources()), new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds });
@@ -165,16 +172,17 @@ namespace BoardSandbox.Client
         {
             Unbind();
             _boundSession = _host.Session;
+            _queue.Reset(_boundSession?.View);
             if (_boundSession == null)
                 return;
-            _boundSession.EventApplied += OnEvent;
+            _boundSession.EventApplied += _queue.Enqueue;
             _boundSession.ScriptLog += OnScriptLog;
             _boundSession.HandlerFailed += OnHandlerFailed;
 
             ModManifest manifest = _boundSession.Mod.Manifest;
             _hints = new ViewHints(manifest.Client);
             _overflowReported = false;
-            _hud.Note = _hints.CanClick ? string.Empty : "Clicks do nothing in this game: its config.json has no client.click.action. Use the console command 'play'.";
+            _hud.Note = _hints.CanClick || _hints.CanDrag || _hints.KeyCount > 0 ? string.Empty : "Clicks do nothing in this game: its config.json has no client.click.action. Use the console command 'play'.";
             _view.Bind(_hints, manifest);
         }
 
@@ -182,7 +190,7 @@ namespace BoardSandbox.Client
         {
             if (_boundSession == null)
                 return;
-            _boundSession.EventApplied -= OnEvent;
+            _boundSession.EventApplied -= _queue.Enqueue;
             _boundSession.ScriptLog -= OnScriptLog;
             _boundSession.HandlerFailed -= OnHandlerFailed;
             _boundSession = null;
@@ -217,20 +225,23 @@ namespace BoardSandbox.Client
                 _host.Update();
 
                 GameSession session = _host.Session;
-                _view.Sync(session?.View);
+                float delta = Time.unscaledDeltaTime;
+                _queue.Update(delta);
+                _view.Sync(_queue.Display);
+                _view.SetEffect(_queue.ActiveEffect, _queue.Progress);
                 if (_view.Overflowed && !_overflowReported)
                 {
                     _overflowReported = true;
-                    _host.Toasts.Add("This game has more than " + GridBoardView.MaxPieces + " pieces; the rest are not drawn.", ToastLevel.Warning, _host.Now);
+                    _host.Toasts.Add("This game has more than " + SceneView.MaxPieces + " pieces; the rest are not drawn.", ToastLevel.Warning, _host.Now);
                 }
-                if (_view.Layout != null && _view.LayoutVersion != _framedLayout)
+                _rig.Background = _view.Stage.Background;
+                if (_view.FrameVersion != _framedVersion)
                 {
-                    bool first = _framedLayout < 0;
-                    _framedLayout = _view.LayoutVersion;
-                    _rig.Frame(_view.Layout, first);
+                    bool first = _framedVersion < 0;
+                    _framedVersion = _view.FrameVersion;
+                    _rig.Frame(_view.Stage.Camera, _view.Layout, first);
                 }
 
-                float delta = Time.unscaledDeltaTime;
                 _view.Tick(delta);
                 _rig.Tick(delta);
                 UpdatePreview(session);
@@ -244,8 +255,8 @@ namespace BoardSandbox.Client
 
         private void UpdatePreview(GameSession session)
         {
-            bool show = _hovering && _hints.CanClick && _host.AcceptsHumanInput && !_pressing;
-            Color32 color = show ? PieceStyle.SeatColor(session.Mod.Manifest, session.View.Turn) : new Color32(255, 255, 255, 255);
+            bool show = _hovering && _hints.CanClick && !_hints.ClickObjects && InputOpen && !_pressing;
+            Color32 color = show ? ObjectLook.SeatColor(session.Mod.Manifest, session.View.Turn) : new Color32(255, 255, 255, 255);
             _view.SetPreview(show, _hoverX, _hoverY, color);
         }
 
@@ -284,6 +295,9 @@ namespace BoardSandbox.Client
                     _dragged = false;
                     _pressButton = e.button;
                     _pressPosition = e.mousePosition;
+                    _gestureSent = false;
+                    _pressOnObject = e.button == 0 && _hints.CanDrag && InputOpen
+                        && _view.TryPickObject(_rig.RayFromScreen(GuiToScreen(e.mousePosition)), out _pressHit);
                     e.Use();
                     break;
 
@@ -292,12 +306,19 @@ namespace BoardSandbox.Client
                         return;
                     if ((e.mousePosition - _pressPosition).magnitude > DragThreshold)
                         _dragged = true;
-                    if (_dragged || _pressButton != 0)
+                    if (_pressOnObject)
                     {
-                        if (_pressButton == 1)
-                            _rig.Orbit(e.delta);
-                        else
-                            _rig.Pan(e.delta, Screen.height);
+                        if (!_gestureSent && (e.mousePosition - _pressPosition).magnitude > GestureThreshold)
+                        {
+                            _gestureSent = true;
+                            Vector2 to = e.mousePosition;
+                            _hud.Defer(() => DragObject(to));
+                        }
+                    }
+                    else if (_dragged || _pressButton != 0)
+                    {
+                        CameraSettings camera = _view.Stage.Camera;
+                        _rig.Drag(_pressButton == 0 ? camera.LeftDrag : _pressButton == 1 ? camera.RightDrag : camera.MiddleDrag, e.delta, Screen.height);
                     }
                     e.Use();
                     break;
@@ -306,10 +327,12 @@ namespace BoardSandbox.Client
                     if (!_pressing || e.button != _pressButton)
                         return;
                     _pressing = false;
-                    if (_pressButton == 0 && !_dragged)
+                    if (!_dragged && (_pressButton == 0 || (_pressButton == 1 && _hints.ClickObjects)))
                     {
                         Vector2 at = e.mousePosition;
-                        _hud.Defer(() => ClickBoard(at));
+                        int button = _pressButton;
+                        bool shift = e.shift;
+                        _hud.Defer(() => Click(at, button, shift));
                     }
                     e.Use();
                     break;
@@ -328,6 +351,13 @@ namespace BoardSandbox.Client
             if (e.type != EventType.KeyDown || _hud.TextFocused || _hud.ModalOpen)
                 return;
             bool modifier = e.control || e.command;
+            JsonValue bound = modifier || e.alt ? null : _hints.KeyCommand(KeyName(e.keyCode), e.shift);
+            if (bound != null)
+            {
+                _hud.Defer(() => SubmitHuman(bound.DeepClone()));
+                e.Use();
+                return;
+            }
             switch (e.keyCode)
             {
                 case KeyCode.F:
@@ -359,21 +389,71 @@ namespace BoardSandbox.Client
             _hovering = false;
             if (_pressing && _dragged)
                 return;
-            if (_hud.Contains(mouse) || !_view.TryPick(_rig.RayFromScreen(GuiToScreen(mouse)), out int x, out int y))
+            if (_hints.ClickObjects || _hud.Contains(mouse) || !_view.TryPickCell(_rig.RayFromScreen(GuiToScreen(mouse)), out int x, out int y))
                 return;
             _hovering = true;
             _hoverX = x;
             _hoverY = y;
         }
 
-        private void ClickBoard(Vector2 guiPoint)
+        private bool InputOpen => _host.AcceptsHumanInput && !_queue.IsBusy;
+
+        private void SubmitHuman(JsonValue command)
         {
-            if (!_hints.CanClick || !_host.AcceptsHumanInput)
+            if (InputOpen)
+                _host.Submit(_host.Session.View.Turn, command, "human");
+        }
+
+        private void Click(Vector2 guiPoint, int button, bool shift)
+        {
+            if (!_hints.CanClick || !InputOpen)
                 return;
-            if (!_view.TryPick(_rig.RayFromScreen(GuiToScreen(guiPoint)), out int x, out int y))
+            Ray ray = _rig.RayFromScreen(GuiToScreen(guiPoint));
+            JsonValue command = JsonValue.NewObject().Set("action", _hints.ClickAction);
+            if (_hints.ClickObjects)
+            {
+                if (!_view.TryPickObject(ray, out PickHit hit))
+                    return;
+                command.Set("id", hit.Id).Set("point", ModVector(hit.Point)).Set("normal", ModVector(hit.Normal)).Set("button", button).Set("shift", shift);
+            }
+            else
+            {
+                if (button != 0 || !_view.TryPickCell(ray, out int x, out int y))
+                    return;
+                command.Set("x", x).Set("y", y);
+            }
+            SubmitHuman(command);
+        }
+
+        // A drag that began on an object: the command names the object, where it was touched and which way
+        // the cursor went along the touched surface.
+        private void DragObject(Vector2 guiPoint)
+        {
+            if (!_hints.CanDrag || !InputOpen)
                 return;
-            JsonValue command = JsonValue.NewObject().Set("action", _hints.ClickAction).Set("x", x).Set("y", y);
-            _host.Submit(_host.Session.View.Turn, command, "human");
+            Ray ray = _rig.RayFromScreen(GuiToScreen(guiPoint));
+            if (!ScenePicker.RayPlane(ray.origin, ray.direction, _pressHit.Point, _pressHit.Normal, out Vector3 reached))
+                return;
+            Vector3 along = reached - _pressHit.Point;
+            along -= _pressHit.Normal * Vector3.Dot(along, _pressHit.Normal);
+            if (along.sqrMagnitude < 1e-8f)
+                return;
+            JsonValue command = JsonValue.NewObject().Set("action", _hints.DragAction).Set("id", _pressHit.Id)
+                .Set("point", ModVector(_pressHit.Point)).Set("normal", ModVector(_pressHit.Normal)).Set("drag", ModVector(along.normalized));
+            SubmitHuman(command);
+        }
+
+        private static JsonValue ModVector(Vector3 scene)
+        {
+            Vector3 v = Frame.Flip(scene);
+            return JsonValue.NewArray().Add(Math.Round(v.x, 4)).Add(Math.Round(v.y, 4)).Add(Math.Round(v.z, 4));
+        }
+
+        private static string KeyName(KeyCode key)
+        {
+            if (key >= KeyCode.Alpha0 && key <= KeyCode.Alpha9)
+                return ((int)(key - KeyCode.Alpha0)).ToString();
+            return key == KeyCode.None ? string.Empty : key.ToString();
         }
 
         // GUI coordinates have their origin at the top left, the screen's at the bottom left.

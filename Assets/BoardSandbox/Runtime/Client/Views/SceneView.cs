@@ -3,15 +3,17 @@ using System.Collections.Generic;
 using BoardSandbox.Client.Geometry;
 using BoardSandbox.Client.Rendering;
 using BoardSandbox.Core.Game;
+using BoardSandbox.Core.Json;
 using BoardSandbox.Core.Mods;
 using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace BoardSandbox.Client.Views
 {
-    // Draws a game that lives on a grid: the board, the pieces with their animations, the last move,
-    // the winning line and a preview where a click would place a piece. It reads a ViewModel and never writes one.
-    public sealed class GridBoardView : IDisposable
+    // Draws a game: the table and the board as the stage describes them, the objects with their animations,
+    // the last move, the winning line and a preview where a click would place a piece. It reads a ViewModel
+    // and never writes one.
+    public sealed class SceneView : IDisposable
     {
         public const int MaxPieces = 6000;
 
@@ -19,22 +21,18 @@ namespace BoardSandbox.Client.Views
         private const float SpawnSeconds = 0.3f;
         private const float RemoveSeconds = 0.18f;
         private const float MoveArc = 0.5f;
-        private const float TableHalfExtent = 400f;
         private const float MarkerRise = 0.008f;
         private const float RingRise = 0.012f;
         private const int MaxWinningRings = 64;
 
-        private static readonly Color32 MarkerColor = new Color32(0xe5, 0x3d, 0x2f, 255);
-        private static readonly Color32 WinColor = new Color32(0xf2, 0xc2, 0x3a, 235);
-        private static readonly Color32 ShadowColor = new Color32(0, 0, 0, 80);
-        private static readonly Color32 CursorColor = new Color32(255, 255, 255, 190);
+        private static readonly Color32 White = new Color32(255, 255, 255, 255);
 
         private sealed class Visual
         {
             public int Id;
             public double X;
             public double Y;
-            public PieceStyle Style;
+            public ObjectLook Look;
             public GameObject Body;
             public GameObject Shade;
             public MeshFilter Filter;
@@ -43,6 +41,7 @@ namespace BoardSandbox.Client.Views
             public Vector3 MoveFrom;
             public float MoveElapsed;
             public float MoveSeconds;
+            public bool Arc;
             public float Age;
             public float Lift;
             public float Scale = 1f;
@@ -58,50 +57,61 @@ namespace BoardSandbox.Client.Views
         private readonly Transform _pieces;
         private readonly Dictionary<int, Visual> _byId = new Dictionary<int, Visual>();
         private readonly List<Visual> _visuals = new List<Visual>();
-        private readonly Dictionary<PieceShape, Mesh> _pieceMeshes = new Dictionary<PieceShape, Mesh>();
+        private readonly Dictionary<string, Mesh> _meshes = new Dictionary<string, Mesh>(StringComparer.Ordinal);
         private readonly List<GameObject> _rings = new List<GameObject>();
         private readonly List<Mesh> _ownedMeshes = new List<Mesh>();
+        private readonly HashSet<int> _effectIds = new HashSet<int>();
 
-        private Mesh _shadowMesh;
-        private Mesh _markerMesh;
-        private Mesh _ringMesh;
         private GameObject _boardObject;
         private GameObject _tableObject;
-        private GameObject _lastMarker;
-        private GameObject _ghost;
-        private MeshFilter _ghostFilter;
-        private MeshRenderer _ghostRenderer;
-        private GameObject _cursor;
+        private readonly GameObject _lastMarker;
+        private readonly GameObject _ghost;
+        private readonly MeshFilter _ghostFilter;
+        private readonly MeshRenderer _ghostRenderer;
+        private readonly GameObject _cursor;
 
         private BoardLayout _layout;
         private BoardState _state;
+        private StageSettings _stage;
+        private ViewEvent _stageEvent;
         private ViewHints _hints = new ViewHints(null);
         private ModManifest _manifest;
         private long _syncedVersion = -1;
         private float _time;
         private bool _relayout;
+        private bool _boardDirty;
         private bool _disposed;
 
-        public GridBoardView(MaterialSet materials)
+        private ViewEvent _effect;
+        private bool _effectTurns;
+        private Vector3 _effectAxis;
+        private Vector3 _effectPivot;
+        private float _effectDegrees;
+        private Rot3 _effectRotation = Rot3.Identity;
+
+        public SceneView(MaterialSet materials)
         {
             _materials = materials ?? throw new ArgumentNullException(nameof(materials));
-            _root = new GameObject("Board Sandbox Board");
+            _root = new GameObject("Board Sandbox Scene");
             _pieces = new GameObject("Pieces").transform;
             _pieces.SetParent(_root.transform, false);
 
-            _tableObject = CreateSolid("Table", BoardShapes.Table(TableHalfExtent), "Table", _materials.Vertex);
-            _lastMarker = CreateOverlay("Last Move", MarkerMesh(), MarkerColor);
-            _cursor = CreateOverlay("Cursor", RingMesh(), CursorColor);
-            _ghost = CreateOverlay("Preview", null, new Color32(255, 255, 255, 110));
+            _lastMarker = CreateOverlay("Last Move", SharedMesh("marker", BoardShapes.Marker), White);
+            _cursor = CreateOverlay("Cursor", SharedMesh("ring", BoardShapes.Highlight), White);
+            _ghost = CreateOverlay("Preview", null, White);
             _ghostFilter = _ghost.GetComponent<MeshFilter>();
             _ghostRenderer = _ghost.GetComponent<MeshRenderer>();
             HideMarkers();
+            ApplyStage(new StageSettings());
         }
 
-        public BoardLayout Layout => _layout;
+        public StageSettings Stage => _stage;
 
-        // Grows whenever the board is rebuilt, so a camera knows when to frame it again.
-        public int LayoutVersion { get; private set; }
+        // The board the camera should frame; null while the stage shows none.
+        public BoardLayout Layout => _stage.Board.Visible ? _layout : null;
+
+        // Grows whenever the board or the camera of the stage changes, so a camera knows when to frame again.
+        public int FrameVersion { get; private set; }
 
         // Set when a game has more pieces than the view is willing to draw.
         public bool Overflowed { get; private set; }
@@ -110,6 +120,8 @@ namespace BoardSandbox.Client.Views
         {
             get
             {
+                if (_effect != null)
+                    return true;
                 foreach (Visual v in _visuals)
                 {
                     if (v.Spawning || v.Moving || v.Removing)
@@ -126,9 +138,12 @@ namespace BoardSandbox.Client.Views
             _manifest = manifest;
             _syncedVersion = -1;
             _state = null;
+            _stageEvent = null;
             Overflowed = false;
             ClearPieces();
             HideMarkers();
+            SetEffect(null, 0f);
+            ApplyStage(StageSettings.Resolve(_hints.Client, null));
         }
 
         // Brings the drawing up to date with the model; cheap when nothing has changed.
@@ -138,8 +153,17 @@ namespace BoardSandbox.Client.Views
                 return;
             _syncedVersion = model.Version;
 
-            BoardState state = BoardState.Read(model, _hints);
-            if (_layout == null || _layout.Columns != state.Columns || _layout.Rows != state.Rows || _layout.Style != _hints.Style)
+            ViewEvent stageEvent = model.GetCustom(ViewEvent.StageType);
+            if (!ReferenceEquals(stageEvent, _stageEvent))
+            {
+                _stageEvent = stageEvent;
+                StageSettings next = StageSettings.Resolve(_hints.Client, stageEvent);
+                if (!next.SameAs(_stage))
+                    ApplyStage(next);
+            }
+
+            BoardState state = BoardState.Read(model, _stage);
+            if (_layout == null || _boardDirty || _layout.Columns != state.Columns || _layout.Rows != state.Rows)
                 RebuildBoard(state);
             _state = state;
 
@@ -154,11 +178,11 @@ namespace BoardSandbox.Client.Views
                 }
                 drawn++;
                 present.Add(piece.Id);
-                PieceStyle style = PieceStyle.For(piece, _hints, _manifest);
+                ObjectLook look = ObjectLook.For(piece, _hints, _manifest);
                 if (_byId.TryGetValue(piece.Id, out Visual visual) && !visual.Removing)
-                    Update(visual, piece, style);
+                    Update(visual, piece, look);
                 else
-                    Add(piece, style);
+                    Add(piece, look);
             }
             for (int i = 0; i < _visuals.Count; i++)
             {
@@ -170,6 +194,31 @@ namespace BoardSandbox.Client.Views
                 }
             }
             UpdateRings();
+        }
+
+        // Shows an effect of the presentation at the given point between 0 and 1; null ends it.
+        public void SetEffect(ViewEvent effect, float progress)
+        {
+            if (_disposed)
+                return;
+            if (!ReferenceEquals(effect, _effect))
+            {
+                _effect = effect;
+                _relayout = true;
+                _effectIds.Clear();
+                _effectTurns = false;
+                if (effect != null && effect.Raw["kind"].AsString() == "rotate" && Frame.TryReadVector(effect.Raw["axis"], out _effectAxis))
+                {
+                    _effectTurns = true;
+                    Frame.TryReadVector(effect.Raw["pivot"], out Vector3 pivot);
+                    _effectPivot = Frame.Flip(pivot);
+                    _effectDegrees = StageSettings.ReadFloat(effect.Raw["degrees"], 0f, -3600f, 3600f);
+                    foreach (JsonValue id in effect.Raw["ids"].Items)
+                        _effectIds.Add(id.AsInt());
+                }
+            }
+            if (_effectTurns)
+                _effectRotation = Frame.TurnToScene(_effectAxis, _effectDegrees * EaseInOut(Mathf.Clamp01(progress)));
         }
 
         public void Tick(float deltaTime)
@@ -189,7 +238,7 @@ namespace BoardSandbox.Client.Views
                     _visuals.RemoveAt(i);
                     continue;
                 }
-                if (busy || relayout || visual.NeedsPlace)
+                if (busy || relayout || visual.NeedsPlace || (_effectTurns && _effectIds.Contains(visual.Id)))
                 {
                     Place(visual);
                     visual.NeedsPlace = false;
@@ -210,24 +259,48 @@ namespace BoardSandbox.Client.Views
 
             Vector3 at = _layout.CellToWorld(x, y, BoardShapes.RestHeight);
             _cursor.transform.position = at + new Vector3(0f, RingRise, 0f);
-            _cursor.SetActive(true);
+            _cursor.SetActive(_stage.Cursor.Visible);
 
-            if (_hints.PreviewKind == null || (_state != null && _state.IsOccupied(x, y)))
+            if (_hints.PreviewKind == null || !_stage.Preview.Visible || (_state != null && _state.IsOccupied(x, y)))
             {
                 _ghost.SetActive(false);
                 return;
             }
-            _ghostFilter.sharedMesh = PieceMesh(_hints.ShapeFor(_hints.PreviewKind));
-            _ghostRenderer.sharedMaterial = _materials.Overlay(new Color32(color.r, color.g, color.b, 120));
+            PieceShape shape = _hints.ShapeFor(_hints.PreviewKind);
+            _ghostFilter.sharedMesh = SharedMesh(shape + ":f", () => BoardShapes.Piece(shape));
+            _ghostRenderer.sharedMaterial = _materials.Overlay(new Color32(color.r, color.g, color.b, _stage.Preview.Color.a));
             _ghost.transform.position = at;
             _ghost.SetActive(true);
         }
 
-        public bool TryPick(Ray ray, out int x, out int y)
+        public bool TryPickCell(Ray ray, out int x, out int y)
         {
             x = 0;
             y = 0;
             return _layout != null && _layout.TryPick(ray, out x, out y);
+        }
+
+        // The nearest object under the ray that lets itself be picked.
+        public bool TryPickObject(Ray ray, out PickHit hit)
+        {
+            hit = default(PickHit);
+            bool found = false;
+            foreach (Visual visual in _visuals)
+            {
+                ObjectLook look = visual.Look;
+                if (visual.Removing || !look.Visible || !look.Pick)
+                    continue;
+                Vector3 half = look.HalfExtents;
+                Vector3 center = visual.Position + (look.Centered ? Vector3.zero : look.Rotation.Rotate(new Vector3(0f, half.y, 0f)));
+                bool met = BoardShapes.IsRound(look.Shape)
+                    ? ScenePicker.RayEllipsoid(ray.origin, ray.direction, center, look.Rotation, half, out float distance, out Vector3 normal)
+                    : ScenePicker.RayBox(ray.origin, ray.direction, center, look.Rotation, half, out distance, out normal);
+                if (!met || (found && distance >= hit.Distance))
+                    continue;
+                found = true;
+                hit = new PickHit { Id = visual.Id, Distance = distance, Point = ray.origin + ray.direction * distance, Normal = normal };
+            }
+            return found;
         }
 
         public void Dispose()
@@ -239,13 +312,46 @@ namespace BoardSandbox.Client.Views
             foreach (Mesh mesh in _ownedMeshes)
                 ObjectUtil.Destroy(mesh);
             _ownedMeshes.Clear();
-            _pieceMeshes.Clear();
+            _meshes.Clear();
             _visuals.Clear();
             _byId.Clear();
             _rings.Clear();
         }
 
-        private void Add(ViewObject piece, PieceStyle style)
+        private void ApplyStage(StageSettings next)
+        {
+            StageSettings old = _stage;
+            _stage = next;
+            _boardDirty = true;
+            _relayout = true;
+            _syncedVersion = -1;
+            if (old == null || !old.Source["camera"].StructurallyEquals(next.Source["camera"]) || old.Board.Visible != next.Board.Visible)
+                FrameVersion++;
+
+            MaterialSet.SetLight(Frame.Flip(next.Light.Direction), (Color)next.Light.Color, next.Light.Ambient, next.Light.Intensity);
+            _lastMarker.GetComponent<MeshRenderer>().sharedMaterial = _materials.Overlay(next.LastMove.Color);
+            _cursor.GetComponent<MeshRenderer>().sharedMaterial = _materials.Overlay(next.Cursor.Color);
+            _cursor.transform.localScale = new Vector3(next.Cursor.Size, 1f, next.Cursor.Size);
+            foreach (GameObject ring in _rings)
+                StyleRing(ring);
+            foreach (Visual visual in _visuals)
+                visual.Shade.GetComponent<MeshRenderer>().sharedMaterial = _materials.Overlay(next.Shadow.Color);
+
+            DestroyWithMesh(ref _tableObject);
+            if (next.Table.Visible)
+                _tableObject = CreateSolid("Table", BoardShapes.Table(next.Table.Size * 0.5f, next.Table.Color), "Table", _materials.Vertex);
+            PlaceTable();
+        }
+
+        private void PlaceTable()
+        {
+            if (_tableObject == null)
+                return;
+            float y = !float.IsNaN(_stage.Table.Y) ? _stage.Table.Y : _stage.Board.Visible && _layout != null ? -_layout.Thickness - 0.01f : -0.01f;
+            _tableObject.transform.position = new Vector3(0f, y, 0f);
+        }
+
+        private void Add(ViewObject piece, ObjectLook look)
         {
             if (_byId.TryGetValue(piece.Id, out Visual old))
             {
@@ -261,9 +367,9 @@ namespace BoardSandbox.Client.Views
 
             GameObject shade = new GameObject("Shade");
             shade.transform.SetParent(_pieces, false);
-            shade.AddComponent<MeshFilter>().sharedMesh = ShadowMesh();
+            shade.AddComponent<MeshFilter>().sharedMesh = SharedMesh("shadow", BoardShapes.Shadow);
             MeshRenderer shadeRenderer = shade.AddComponent<MeshRenderer>();
-            shadeRenderer.sharedMaterial = _materials.Overlay(ShadowColor);
+            shadeRenderer.sharedMaterial = _materials.Overlay(_stage.Shadow.Color);
             Unlit(shadeRenderer);
 
             Visual visual = new Visual
@@ -271,45 +377,54 @@ namespace BoardSandbox.Client.Views
                 Id = piece.Id,
                 X = piece.X,
                 Y = piece.Y,
+                Look = look,
                 Body = body,
                 Shade = shade,
                 Filter = filter,
                 Renderer = renderer,
-                Spawning = true,
-                Lift = SpawnHeight,
-                Scale = 0.7f
+                Spawning = !look.Free,
+                Lift = look.Free ? 0f : SpawnHeight,
+                Scale = look.Free ? 1f : 0.7f
             };
             visual.Position = Target(visual);
-            Restyle(visual, style);
+            Restyle(visual);
             _byId[piece.Id] = visual;
             _visuals.Add(visual);
             Place(visual);
         }
 
-        private void Update(Visual visual, ViewObject piece, PieceStyle style)
+        private void Update(Visual visual, ViewObject piece, ObjectLook look)
         {
-            if (!style.Equals(visual.Style))
-                Restyle(visual, style);
-            if (visual.X == piece.X && visual.Y == piece.Y)
-                return;
-
-            visual.MoveFrom = visual.Position;
+            Vector3 before = Target(visual);
+            bool restyle = !look.SameAppearance(visual.Look);
+            visual.Look = look;
             visual.X = piece.X;
             visual.Y = piece.Y;
-            float distance = (Target(visual) - visual.MoveFrom).magnitude;
-            visual.MoveElapsed = 0f;
-            visual.MoveSeconds = Mathf.Min(0.5f, 0.15f + 0.04f * distance);
+            visual.NeedsPlace = true;
+            if (restyle)
+                Restyle(visual);
+
+            Vector3 target = Target(visual);
+            if (target == before)
+                return;
             visual.Spawning = false;
             visual.Lift = 0f;
             visual.Scale = 1f;
+            visual.MoveFrom = visual.Position;
+            visual.MoveElapsed = 0f;
+            visual.Arc = !look.Free;
+            visual.MoveSeconds = look.Free ? look.Tween : Mathf.Min(0.5f, 0.15f + 0.04f * (target - visual.MoveFrom).magnitude);
+            if (!visual.Moving)
+                visual.Position = target;
         }
 
-        private void Restyle(Visual visual, PieceStyle style)
+        private void Restyle(Visual visual)
         {
-            visual.Style = style;
+            ObjectLook look = visual.Look;
             visual.NeedsPlace = true;
-            visual.Filter.sharedMesh = PieceMesh(style.Shape);
-            visual.Renderer.sharedMaterial = _materials.Piece(style.Color);
+            visual.Filter.sharedMesh = SharedMesh(look.MeshKey, look.BuildMesh);
+            Color32 tint = look.Stickers == null ? look.Color : new Color32(255, 255, 255, look.Color.a);
+            visual.Renderer.sharedMaterial = look.Transparent ? _materials.Overlay(tint) : _materials.Piece(tint, look.Gloss);
         }
 
         // Returns false once the piece has finished shrinking away.
@@ -344,7 +459,7 @@ namespace BoardSandbox.Client.Views
                 visual.MoveElapsed += deltaTime;
                 float t = Mathf.Clamp01(visual.MoveElapsed / visual.MoveSeconds);
                 visual.Position = Vector3.Lerp(visual.MoveFrom, target, EaseInOut(t));
-                visual.Lift = Mathf.Sin(Mathf.PI * t) * MoveArc;
+                visual.Lift = visual.Arc ? Mathf.Sin(Mathf.PI * t) * MoveArc : 0f;
                 if (t >= 1f)
                 {
                     visual.MoveSeconds = 0f;
@@ -360,18 +475,36 @@ namespace BoardSandbox.Client.Views
 
         private void Place(Visual visual)
         {
-            float size = visual.Style.Scale * Mathf.Max(0f, visual.Scale);
-            visual.Body.transform.position = visual.Position + new Vector3(0f, visual.Lift, 0f);
-            visual.Body.transform.localScale = new Vector3(size, size, size);
+            ObjectLook look = visual.Look;
+            float grow = Mathf.Max(0f, visual.Scale);
+            Vector3 position = visual.Position + new Vector3(0f, visual.Lift, 0f);
+            Rot3 rotation = look.Rotation;
+            if (_effectTurns && _effectIds.Contains(visual.Id))
+            {
+                position = _effectPivot + _effectRotation.Rotate(position - _effectPivot);
+                rotation = _effectRotation * rotation;
+            }
+            Transform body = visual.Body.transform;
+            body.position = position;
+            body.rotation = rotation.ToQuaternion();
+            body.localScale = look.Size * grow;
+            if (visual.Body.activeSelf != look.Visible)
+                visual.Body.SetActive(look.Visible);
 
-            float spread = Mathf.Lerp(0.6f, 1f, 1f / (1f + visual.Lift * 2f));
-            float shade = visual.Style.Scale * Mathf.Max(0f, visual.Scale) * spread;
-            visual.Shade.transform.position = new Vector3(visual.Position.x + 0.05f * visual.Style.Scale, 0.006f, visual.Position.z + 0.06f * visual.Style.Scale);
-            visual.Shade.transform.localScale = new Vector3(shade, 1f, shade);
+            bool shaded = look.Visible && look.Shadow && _stage.Shadow.Visible;
+            if (visual.Shade.activeSelf != shaded)
+                visual.Shade.SetActive(shaded);
+            if (!shaded)
+                return;
+            float spread = Mathf.Lerp(0.6f, 1f, 1f / (1f + visual.Lift * 2f)) * grow * _stage.Shadow.Size;
+            visual.Shade.transform.position = new Vector3(visual.Position.x + 0.05f * look.Size.x, 0.006f, visual.Position.z + 0.06f * look.Size.z);
+            visual.Shade.transform.localScale = new Vector3(look.Size.x * spread, 1f, look.Size.z * spread);
         }
 
         private Vector3 Target(Visual visual)
         {
+            if (visual.Look.Free || _layout == null)
+                return visual.Look.Position;
             return _layout.CellToWorld(visual.X, visual.Y, BoardShapes.RestHeight);
         }
 
@@ -396,31 +529,44 @@ namespace BoardSandbox.Client.Views
 
         private void RebuildBoard(BoardState state)
         {
-            _layout = new BoardLayout(state.Columns, state.Rows, _hints.Style);
-            if (_boardObject != null)
-            {
-                MeshFilter old = _boardObject.GetComponent<MeshFilter>();
-                if (old != null && old.sharedMesh != null)
-                {
-                    _ownedMeshes.Remove(old.sharedMesh);
-                    ObjectUtil.Destroy(old.sharedMesh);
-                }
-                ObjectUtil.Destroy(_boardObject);
-            }
-            _boardObject = CreateSolid("Board", BoardShapes.Board(_layout), "Board", _materials.Vertex);
-            _tableObject.transform.position = new Vector3(0f, -_layout.Thickness - 0.01f, 0f);
+            _boardDirty = false;
+            BoardLayout old = _layout;
+            _layout = _stage.Layout(state.Columns, state.Rows);
+            if (old == null || old.Columns != _layout.Columns || old.Rows != _layout.Rows || old.CellSize != _layout.CellSize || old.Margin != _layout.Margin)
+                FrameVersion++;
+            DestroyWithMesh(ref _boardObject);
+            if (_stage.Board.Visible)
+                _boardObject = CreateSolid("Board", BoardShapes.Board(_layout, _stage.Board.Palette), "Board", _materials.Vertex);
+            PlaceTable();
             _relayout = true;
-            LayoutVersion++;
+        }
+
+        private void DestroyWithMesh(ref GameObject item)
+        {
+            if (item == null)
+                return;
+            MeshFilter filter = item.GetComponent<MeshFilter>();
+            if (filter != null && filter.sharedMesh != null)
+            {
+                _ownedMeshes.Remove(filter.sharedMesh);
+                ObjectUtil.Destroy(filter.sharedMesh);
+            }
+            ObjectUtil.Destroy(item);
+            item = null;
         }
 
         private void UpdateRings()
         {
             int wanted = 0;
-            if (_state != null && _layout != null)
+            if (_state != null && _layout != null && _stage.Win.Visible)
             {
                 wanted = Mathf.Min(_state.WinningCells.Count, MaxWinningRings);
                 while (_rings.Count < wanted)
-                    _rings.Add(CreateOverlay("Winning Cell", RingMesh(), WinColor));
+                {
+                    GameObject ring = CreateOverlay("Winning Cell", SharedMesh("ring", BoardShapes.Highlight), White);
+                    StyleRing(ring);
+                    _rings.Add(ring);
+                }
                 for (int i = 0; i < wanted; i++)
                 {
                     Point2 cell = _state.WinningCells[i];
@@ -432,17 +578,23 @@ namespace BoardSandbox.Client.Views
                 _rings[i].SetActive(false);
         }
 
+        private void StyleRing(GameObject ring)
+        {
+            ring.GetComponent<MeshRenderer>().sharedMaterial = _materials.Overlay(_stage.Win.Color);
+            ring.transform.localScale = new Vector3(_stage.Win.Size, 1f, _stage.Win.Size);
+        }
+
         private void UpdateLastMarker()
         {
             bool show = false;
-            if (_state != null && _state.HasLastMove)
+            if (_state != null && _state.HasLastMove && _stage.LastMove.Visible)
             {
                 ViewObject occupant = _state.ObjectAt(_state.LastX, _state.LastY);
                 if (occupant != null && _byId.TryGetValue(occupant.Id, out Visual visual) && !visual.Removing)
                 {
-                    float top = BoardShapes.PieceHeight(visual.Style.Shape) * visual.Style.Scale * visual.Scale;
+                    float top = BoardShapes.PieceHeight(visual.Look.Shape) * visual.Look.Size.y * visual.Scale;
                     _lastMarker.transform.position = visual.Position + new Vector3(0f, visual.Lift + top + MarkerRise, 0f);
-                    float pulse = visual.Style.Scale * (1f + 0.12f * Mathf.Sin(_time * 4f));
+                    float pulse = visual.Look.Size.x * _stage.LastMove.Size * (1f + 0.12f * Mathf.Sin(_time * 4f));
                     _lastMarker.transform.localScale = new Vector3(pulse, 1f, pulse);
                     show = true;
                 }
@@ -490,29 +642,14 @@ namespace BoardSandbox.Client.Views
             renderer.reflectionProbeUsage = ReflectionProbeUsage.Off;
         }
 
-        private Mesh PieceMesh(PieceShape shape)
+        private Mesh SharedMesh(string key, Func<MeshBuilder> build)
         {
-            if (!_pieceMeshes.TryGetValue(shape, out Mesh mesh))
+            if (!_meshes.TryGetValue(key, out Mesh mesh))
             {
-                mesh = Own(MeshFactory.Create(BoardShapes.Piece(shape), "Piece " + shape));
-                _pieceMeshes[shape] = mesh;
+                mesh = Own(MeshFactory.Create(build(), key));
+                _meshes[key] = mesh;
             }
             return mesh;
-        }
-
-        private Mesh ShadowMesh()
-        {
-            return _shadowMesh != null ? _shadowMesh : (_shadowMesh = Own(MeshFactory.Create(BoardShapes.Shadow(), "Shadow")));
-        }
-
-        private Mesh MarkerMesh()
-        {
-            return _markerMesh != null ? _markerMesh : (_markerMesh = Own(MeshFactory.Create(BoardShapes.Marker(), "Marker")));
-        }
-
-        private Mesh RingMesh()
-        {
-            return _ringMesh != null ? _ringMesh : (_ringMesh = Own(MeshFactory.Create(BoardShapes.Highlight(), "Ring")));
         }
 
         private Mesh Own(Mesh mesh)

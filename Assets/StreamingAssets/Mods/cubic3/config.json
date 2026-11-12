@@ -1,0 +1,34 @@
+{
+  "id": "cubic3",
+  "name": "Cubic 3x3",
+  "version": "2.0.0",
+  "description": "A 3x3 cube puzzle in 3D. Click a face to turn it clockwise, right-click or Shift+click to turn it counter-clockwise, or drag a sticker to turn its layer. Keys U R F D L B turn a face, with Shift the other way. Drag the background to look around. Console: play move move=R' | play alg moves=\"R U R' U'\".",
+  "api": 1,
+  "entry": "logic.luau",
+  "players": { "min": 1, "max": 1 },
+  "seats": [
+    { "name": "Solver", "color": "#46c8f2" }
+  ],
+  "options": { "scramble": 25, "seed": 0 },
+  "client": {
+    "click": { "action": "turn_face", "target": "object" },
+    "drag": { "action": "turn_drag" },
+    "keys": {
+      "u": { "action": "move", "move": "U" },
+      "shift+u": { "action": "move", "move": "U'" },
+      "r": { "action": "move", "move": "R" },
+      "shift+r": { "action": "move", "move": "R'" },
+      "f": { "action": "move", "move": "F" },
+      "shift+f": { "action": "move", "move": "F'" },
+      "d": { "action": "move", "move": "D" },
+      "shift+d": { "action": "move", "move": "D'" },
+      "l": { "action": "move", "move": "L" },
+      "shift+l": { "action": "move", "move": "L'" },
+      "b": { "action": "move", "move": "B" },
+      "shift+b": { "action": "move", "move": "B'" }
+    },
+    "pieces": {
+      "cubie": { "shape": "box", "size": 0.97, "color": "#0d0f13", "gloss": 0.35, "face_inset": 0.07 }
+    }
+  }
+}

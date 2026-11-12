@@ -39,15 +39,17 @@ namespace BoardSandbox.Client.Views
             return _cells.ContainsKey(Key(x, y));
         }
 
-        // The board announces its size with a "board" event, otherwise the mod's hints decide, otherwise
+        // The board announces its size with a "board" event, otherwise the stage decides, otherwise
         // it is as large as the pieces on it require.
-        public static BoardState Read(ViewModel view, ViewHints hints)
+        public static BoardState Read(ViewModel view, StageSettings stage)
         {
             BoardState state = new BoardState();
             int widest = 0;
             int deepest = 0;
             foreach (ViewObject piece in view.Objects)
             {
+                if (piece.Props["pos"].IsArray)
+                    continue;
                 int x = Cell(piece.X);
                 int y = Cell(piece.Y);
                 long key = Key(x, y);
@@ -66,9 +68,9 @@ namespace BoardSandbox.Client.Views
                 rows = board.Raw["rows"].AsInt(0);
             }
             if (columns <= 0)
-                columns = hints.Columns > 0 ? hints.Columns : Math.Max(DefaultSize, widest);
+                columns = stage.Board.Columns > 0 ? stage.Board.Columns : Math.Max(DefaultSize, widest);
             if (rows <= 0)
-                rows = hints.Rows > 0 ? hints.Rows : Math.Max(DefaultSize, deepest);
+                rows = stage.Board.Rows > 0 ? stage.Board.Rows : Math.Max(DefaultSize, deepest);
             state.Columns = Math.Min(columns, BoardLayout.MaxSize);
             state.Rows = Math.Min(rows, BoardLayout.MaxSize);
 

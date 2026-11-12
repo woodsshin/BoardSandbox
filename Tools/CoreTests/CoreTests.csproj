@@ -26,7 +26,8 @@
   <ItemGroup Condition="Exists('$(UnityEngineDll)')">
     <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Geometry/**/*.cs" />
     <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/ViewHints.cs" />
-    <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/PieceStyle.cs" />
+    <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/ObjectLook.cs" />
+    <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/StageSettings.cs" />
     <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/BoardState.cs" />
     <Compile Include="../../Assets/BoardSandbox/Tests/Editor/Client/**/*.cs" />
     <Reference Include="UnityEngine">

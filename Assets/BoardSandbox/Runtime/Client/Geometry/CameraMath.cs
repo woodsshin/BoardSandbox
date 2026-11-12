@@ -40,9 +40,26 @@ namespace BoardSandbox.Client.Geometry
             up = new Vector3(0f, Mathf.Cos(pitch), 0f) + ground * Mathf.Sin(pitch);
         }
 
+        public const float PitchLimit = 89f;
+
         public static float ClampPitch(float pitchDegrees)
         {
             return Mathf.Clamp(pitchDegrees, MinPitch, MaxPitch);
+        }
+
+        public static float ClampPitch(float pitchDegrees, float min, float max)
+        {
+            min = Mathf.Clamp(min, -PitchLimit, PitchLimit);
+            max = Mathf.Clamp(max, min, PitchLimit);
+            return Mathf.Clamp(pitchDegrees, min, max);
+        }
+
+        // How far a camera has to be for a ball around its target to fit on screen.
+        public static float FitSphere(float radius, float verticalFovDegrees, float aspect, float padding = 1.15f)
+        {
+            float halfY = Mathf.Clamp(verticalFovDegrees, 5f, 170f) * 0.5f * Mathf.Deg2Rad;
+            float halfX = Mathf.Atan(Mathf.Tan(halfY) * Mathf.Max(0.1f, aspect));
+            return Mathf.Max(0.01f, radius) * padding / Mathf.Sin(Mathf.Min(halfX, halfY));
         }
 
         public static float WrapDegrees(float degrees)
@@ -56,7 +73,7 @@ namespace BoardSandbox.Client.Geometry
         public static Vector3 PanOffset(float yawDegrees, float pitchDegrees, Vector2 mouseDelta, float distance, float verticalFovDegrees, float screenHeight)
         {
             float unitsPerPixel = 2f * distance * Mathf.Tan(verticalFovDegrees * 0.5f * Mathf.Deg2Rad) / Mathf.Max(1f, screenHeight);
-            float sinPitch = Mathf.Sin(Mathf.Clamp(pitchDegrees, MinPitch, 90f) * Mathf.Deg2Rad);
+            float sinPitch = Mathf.Sin(Mathf.Clamp(Mathf.Abs(pitchDegrees), MinPitch, 90f) * Mathf.Deg2Rad);
             GroundAxes(yawDegrees, out Vector3 right, out Vector3 forward);
             return (-right * mouseDelta.x + forward * (mouseDelta.y / sinPitch)) * unitsPerPixel;
         }

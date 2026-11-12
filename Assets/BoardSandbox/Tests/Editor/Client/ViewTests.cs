@@ -16,12 +16,13 @@ namespace BoardSandbox.Tests
         {
             foreach (ViewHints hints in new[] { new ViewHints(null), new ViewHints(JsonValue.NewObject()) })
             {
-                Assert.AreEqual(BoardStyle.Lines, hints.Style);
-                Assert.AreEqual(0, hints.Columns);
-                Assert.AreEqual(0, hints.Rows);
                 Assert.AreEqual("", hints.ClickAction);
                 Assert.IsFalse(hints.CanClick);
+                Assert.IsFalse(hints.ClickObjects);
+                Assert.IsFalse(hints.CanDrag);
+                Assert.AreEqual(0, hints.KeyCount);
                 Assert.IsNull(hints.PreviewKind);
+                Assert.IsNull(hints.KeyCommand("u", false));
                 Assert.AreEqual(PieceShape.Stone, hints.ShapeFor("stone"));
                 Assert.AreEqual(PieceShape.Disc, hints.ShapeFor("pawn"));
                 Assert.AreEqual(PieceShape.Disc, hints.ShapeFor(null));
@@ -32,17 +33,25 @@ namespace BoardSandbox.Tests
         public void EverySettingIsRead()
         {
             ViewHints hints = new ViewHints(JsonValue.Parse(
-                "{\"board\":{\"style\":\"CHECKER\",\"columns\":10,\"rows\":6},\"click\":{\"action\":\"move\",\"preview\":\"pawn\"}," +
-                "\"pieces\":{\"pawn\":{\"shape\":\"cube\"},\"king\":{\"shape\":\"Stone\"},\"coin\":{\"shape\":\"disc\"}}}"));
-            Assert.AreEqual(BoardStyle.Checker, hints.Style);
-            Assert.AreEqual(10, hints.Columns);
-            Assert.AreEqual(6, hints.Rows);
+                "{\"click\":{\"action\":\"move\",\"preview\":\"pawn\",\"target\":\"Object\"},\"drag\":{\"action\":\"pull\"}," +
+                "\"keys\":{\"U\":{\"action\":\"a\",\"n\":1},\"Shift + u\":{\"action\":\"b\"},\"x\":{\"n\":1},\"y\":5}," +
+                "\"pieces\":{\"pawn\":{\"shape\":\"cube\"},\"king\":{\"shape\":\"Stone\"},\"coin\":{\"shape\":\"disc\"},\"die\":{\"shape\":\"box\"}}}"));
             Assert.AreEqual("move", hints.ClickAction);
             Assert.IsTrue(hints.CanClick);
+            Assert.IsTrue(hints.ClickObjects);
+            Assert.AreEqual("pull", hints.DragAction);
+            Assert.IsTrue(hints.CanDrag);
             Assert.AreEqual("pawn", hints.PreviewKind);
+            Assert.AreEqual(2, hints.KeyCount);
+            Assert.AreEqual("a", hints.KeyCommand("U", false)["action"].AsString());
+            Assert.AreEqual("b", hints.KeyCommand("u", true)["action"].AsString());
+            Assert.IsNull(hints.KeyCommand("x", false));
+            Assert.IsNull(hints.KeyCommand("y", false));
+            Assert.IsNull(hints.KeyCommand("", false));
             Assert.AreEqual(PieceShape.Cube, hints.ShapeFor("pawn"));
             Assert.AreEqual(PieceShape.Stone, hints.ShapeFor("king"));
             Assert.AreEqual(PieceShape.Disc, hints.ShapeFor("coin"));
+            Assert.AreEqual(PieceShape.Box, hints.ShapeFor("die"));
             Assert.AreEqual(PieceShape.Disc, hints.ShapeFor("other"));
         }
 
@@ -58,11 +67,7 @@ namespace BoardSandbox.Tests
         public void HintsThatAreNotAnObjectAreIgnored()
         {
             foreach (string json in new[] { "[1]", "5", "\"x\"", "null" })
-            {
-                ViewHints hints = new ViewHints(JsonValue.Parse(json));
-                Assert.IsFalse(hints.CanClick, json);
-                Assert.AreEqual(BoardStyle.Lines, hints.Style, json);
-            }
+                Assert.IsFalse(new ViewHints(JsonValue.Parse(json)).CanClick, json);
         }
 
         [Test]
@@ -75,15 +80,16 @@ namespace BoardSandbox.Tests
         public void GomokuDeclaresItsHints()
         {
             ViewHints hints = new ViewHints(TestSupport.LoadGomoku().Manifest.Client);
-            Assert.AreEqual(BoardStyle.Lines, hints.Style);
             Assert.AreEqual("place_stone", hints.ClickAction);
+            Assert.IsFalse(hints.ClickObjects);
             Assert.AreEqual("stone", hints.PreviewKind);
             Assert.AreEqual(PieceShape.Stone, hints.ShapeFor("stone"));
+            Assert.AreEqual(BoardStyle.Lines, StageSettings.Resolve(hints.Client, null).Board.Style);
         }
     }
 
     [TestFixture]
-    public class PieceStyleTests
+    public class ObjectLookTests
     {
         private static ModManifest Manifest()
         {
@@ -93,6 +99,11 @@ namespace BoardSandbox.Tests
         private static ViewObject Piece(int owner, string props, string kind = "pawn")
         {
             return new ViewObject(1, kind, 3, 4, owner, JsonValue.Parse(props));
+        }
+
+        private static ObjectLook Look(string props, string client = "{}", int owner = 1, string kind = "pawn")
+        {
+            return ObjectLook.For(Piece(owner, props, kind), new ViewHints(JsonValue.Parse(client)), Manifest());
         }
 
         private static void AssertColor(Color32 color, int r, int g, int b)
@@ -106,73 +117,186 @@ namespace BoardSandbox.Tests
         [Test]
         public void TheColorPropertyWins()
         {
-            PieceStyle style = PieceStyle.For(Piece(2, "{\"color\":\"#0000ff\"}"), new ViewHints(null), Manifest());
-            AssertColor(style.Color, 0, 0, 255);
+            AssertColor(Look("{\"color\":\"#0000ff\"}", "{}", 2).Color, 0, 0, 255);
         }
 
         [Test]
         public void TheSeatColorIsTheFallback()
         {
-            AssertColor(PieceStyle.For(Piece(1, "{}"), new ViewHints(null), Manifest()).Color, 255, 0, 0);
-            AssertColor(PieceStyle.For(Piece(2, "{}"), new ViewHints(null), Manifest()).Color, 0, 255, 0);
-            AssertColor(PieceStyle.For(Piece(2, "{\"color\":\"nonsense\"}"), new ViewHints(null), Manifest()).Color, 0, 255, 0);
+            AssertColor(Look("{}").Color, 255, 0, 0);
+            AssertColor(Look("{}", "{}", 2).Color, 0, 255, 0);
+            AssertColor(Look("{\"color\":\"nonsense\"}", "{}", 2).Color, 0, 255, 0);
         }
 
         [Test]
         public void PiecesWithoutASeatAreNeutral()
         {
-            AssertColor(PieceStyle.For(Piece(0, "{}"), new ViewHints(null), Manifest()).Color, 0x8a, 0x8a, 0x8a);
-            AssertColor(PieceStyle.For(Piece(9, "{}"), new ViewHints(null), Manifest()).Color, 0x8a, 0x8a, 0x8a);
-            AssertColor(PieceStyle.For(Piece(1, "{}"), new ViewHints(null), null).Color, 0x8a, 0x8a, 0x8a);
+            AssertColor(Look("{}", "{}", 0).Color, 0x8a, 0x8a, 0x8a);
+            AssertColor(Look("{}", "{}", 9).Color, 0x8a, 0x8a, 0x8a);
+            AssertColor(ObjectLook.For(Piece(1, "{}"), new ViewHints(null), null).Color, 0x8a, 0x8a, 0x8a);
         }
 
         [Test]
         public void ColorNamesAreUnderstood()
         {
-            PieceStyle black = PieceStyle.For(Piece(1, "{\"color\":\"black\"}"), new ViewHints(null), Manifest());
-            PieceStyle white = PieceStyle.For(Piece(1, "{\"color\":\"white\"}"), new ViewHints(null), Manifest());
-            Assert.IsTrue(black.Color.r < 64 && white.Color.r > 192);
+            Assert.IsTrue(Look("{\"color\":\"black\"}").Color.r < 64 && Look("{\"color\":\"white\"}").Color.r > 192);
         }
 
         [Test]
         public void TheScaleIsClamped()
         {
-            Assert.AreEqual(1f, PieceStyle.For(Piece(1, "{}"), new ViewHints(null), null).Scale, 1e-6);
-            Assert.AreEqual(1.5f, PieceStyle.For(Piece(1, "{\"scale\":1.5}"), new ViewHints(null), null).Scale, 1e-6);
-            Assert.AreEqual(PieceStyle.MaxScale, PieceStyle.For(Piece(1, "{\"scale\":10}"), new ViewHints(null), null).Scale, 1e-6);
-            Assert.AreEqual(PieceStyle.MinScale, PieceStyle.For(Piece(1, "{\"scale\":0.01}"), new ViewHints(null), null).Scale, 1e-6);
-            Assert.AreEqual(PieceStyle.MinScale, PieceStyle.For(Piece(1, "{\"scale\":-3}"), new ViewHints(null), null).Scale, 1e-6);
-            Assert.AreEqual(1f, PieceStyle.For(Piece(1, "{\"scale\":\"big\"}"), new ViewHints(null), null).Scale, 1e-6);
+            Assert.AreEqual(1f, Look("{}").Size.x, 1e-6);
+            Assert.AreEqual(1.5f, Look("{\"scale\":1.5}").Size.y, 1e-6);
+            Assert.AreEqual(ObjectLook.MaxScale, Look("{\"scale\":10}").Size.z, 1e-6);
+            Assert.AreEqual(ObjectLook.MinScale, Look("{\"scale\":0.01}").Size.x, 1e-6);
+            Assert.AreEqual(ObjectLook.MinScale, Look("{\"scale\":-3}").Size.x, 1e-6);
+            Assert.AreEqual(1f, Look("{\"scale\":\"big\"}").Size.x, 1e-6);
         }
 
         [Test]
-        public void TheShapeComesFromTheHints()
+        public void TheSizeIsANumberOrOnePerAxis()
         {
-            ViewHints hints = new ViewHints(JsonValue.Parse("{\"pieces\":{\"pawn\":{\"shape\":\"cube\"}}}"));
-            Assert.AreEqual(PieceShape.Cube, PieceStyle.For(Piece(1, "{}", "pawn"), hints, null).Shape);
-            Assert.AreEqual(PieceShape.Disc, PieceStyle.For(Piece(1, "{}", "rook"), hints, null).Shape);
+            GeometryAssert.Near(new Vector3(2f, 2f, 2f), Look("{\"size\":2}").Size, 1e-6f);
+            GeometryAssert.Near(new Vector3(1f, 2f, 3f), Look("{\"size\":[1,2,3]}").Size, 1e-6f);
+            GeometryAssert.Near(new Vector3(2f, 4f, 6f), Look("{\"size\":[1,2,3],\"scale\":2}").Size, 1e-6f);
+            GeometryAssert.Near(new Vector3(ObjectLook.MinSize, ObjectLook.MaxSize, 1f), Look("{\"size\":[-1,1e9,1]}").Size, 1e-6f);
+            GeometryAssert.Near(Vector3.one, Look("{\"size\":[1,2]}").Size, 1e-6f);
         }
 
         [Test]
-        public void StylesCompareEveryField()
+        public void TheKindSuppliesWhatThePieceDoesNotSay()
         {
-            PieceStyle a = new PieceStyle(PieceShape.Disc, new Color32(1, 2, 3, 4), 1f);
-            Assert.IsTrue(a.Equals(new PieceStyle(PieceShape.Disc, new Color32(1, 2, 3, 4), 1f)));
-            Assert.IsFalse(a.Equals(new PieceStyle(PieceShape.Cube, new Color32(1, 2, 3, 4), 1f)));
-            Assert.IsFalse(a.Equals(new PieceStyle(PieceShape.Disc, new Color32(9, 2, 3, 4), 1f)));
-            Assert.IsFalse(a.Equals(new PieceStyle(PieceShape.Disc, new Color32(1, 9, 3, 4), 1f)));
-            Assert.IsFalse(a.Equals(new PieceStyle(PieceShape.Disc, new Color32(1, 2, 9, 4), 1f)));
-            Assert.IsFalse(a.Equals(new PieceStyle(PieceShape.Disc, new Color32(1, 2, 3, 9), 1f)));
-            Assert.IsFalse(a.Equals(new PieceStyle(PieceShape.Disc, new Color32(1, 2, 3, 4), 2f)));
+            string client = "{\"pieces\":{\"pawn\":{\"shape\":\"cube\",\"color\":\"#0000ff\",\"size\":2,\"gloss\":0.2,\"shadow\":false}}}";
+            ObjectLook fromKind = Look("{}", client);
+            Assert.AreEqual(PieceShape.Cube, fromKind.Shape);
+            AssertColor(fromKind.Color, 0, 0, 255);
+            Assert.AreEqual(2f, fromKind.Size.x, 1e-6);
+            Assert.AreEqual(0.2f, fromKind.Gloss, 1e-6);
+            Assert.IsFalse(fromKind.Shadow);
+
+            ObjectLook own = Look("{\"shape\":\"sphere\",\"color\":\"#00ff00\",\"size\":3,\"shadow\":true}", client);
+            Assert.AreEqual(PieceShape.Sphere, own.Shape);
+            AssertColor(own.Color, 0, 255, 0);
+            Assert.AreEqual(3f, own.Size.x, 1e-6);
+            Assert.IsTrue(own.Shadow);
+            Assert.AreEqual(PieceShape.Disc, Look("{}", client, 1, "rook").Shape);
+        }
+
+        [Test]
+        public void PiecesOfTheBoardStandOnTheirFootAndCastAShade()
+        {
+            ObjectLook look = Look("{}");
+            Assert.IsFalse(look.Free);
+            Assert.IsFalse(look.Centered);
+            Assert.IsTrue(look.Shadow);
+            Assert.IsTrue(look.Visible);
+            Assert.IsTrue(look.Pick);
+            Assert.IsNull(look.Stickers);
+            Assert.AreEqual(0f, look.Tween, 1e-6);
+            Assert.IsFalse(look.Transparent);
+        }
+
+        [Test]
+        public void APositionMakesAnObjectFreeAndFlipsZForTheScene()
+        {
+            ObjectLook look = Look("{\"pos\":[1,2,3],\"shape\":\"box\",\"tween\":0.5,\"pick\":false,\"visible\":false}");
+            Assert.IsTrue(look.Free);
+            Assert.IsTrue(look.Centered);
+            Assert.IsFalse(look.Shadow);
+            Assert.IsFalse(look.Pick);
+            Assert.IsFalse(look.Visible);
+            Assert.AreEqual(0.5f, look.Tween, 1e-6);
+            GeometryAssert.Near(new Vector3(1f, 2f, -3f), look.Position, 1e-6f);
+            GeometryAssert.Near(look.Position, look.Center, 1e-6f);
+
+            ObjectLook standing = Look("{\"pos\":[1,2,3],\"shape\":\"box\",\"anchor\":\"bottom\",\"size\":2}");
+            Assert.IsFalse(standing.Centered);
+            GeometryAssert.Near(new Vector3(1f, 3f, -3f), standing.Center, 1e-6f);
+            Assert.IsFalse(Look("{\"pos\":[1,2]}").Free);
+            Assert.IsFalse(Look("{\"pos\":\"here\"}").Free);
+        }
+
+        [Test]
+        public void ARotationTurnsTheObjectInTheScene()
+        {
+            // A quarter turn around y takes the x axis of a mod to its -z axis, which is +z in the scene.
+            ObjectLook look = Look("{\"pos\":[0,0,0],\"rot\":[0,90,0]}");
+            GeometryAssert.Near(new Vector3(0f, 0f, 1f), look.Rotation.Rotate(new Vector3(1f, 0f, 0f)), 1e-5f);
+            ObjectLook matrix = Look("{\"pos\":[0,0,0],\"rot\":[0,0,1, 0,1,0, -1,0,0]}");
+            GeometryAssert.Near(new Vector3(0f, 0f, 1f), matrix.Rotation.Rotate(new Vector3(1f, 0f, 0f)), 1e-5f);
+            GeometryAssert.Near(new Vector3(1f, 0f, 0f), Look("{\"rot\":[1,2]}").Rotation.Rotate(new Vector3(1f, 0f, 0f)), 1e-6f);
+        }
+
+        [Test]
+        public void StickersAreNamedBySideAndTheFrontLooksAtTheViewer()
+        {
+            ObjectLook look = Look("{\"shape\":\"box\",\"color\":\"#000000\",\"faces\":{\"px\":\"#ff0000\",\"pz\":\"#00ff00\",\"ny\":\"#0000ff\",\"nz\":\"junk\"}}");
+            Assert.IsNotNull(look.Stickers);
+            AssertColor(look.Stickers[0].Value, 255, 0, 0);
+            Assert.IsNull(look.Stickers[1]);
+            Assert.IsNull(look.Stickers[2]);
+            AssertColor(look.Stickers[3].Value, 0, 0, 255);
+            Assert.IsNull(look.Stickers[4]);
+            AssertColor(look.Stickers[5].Value, 0, 255, 0);
+
+            MeshBuilder mesh = look.BuildMesh();
+            GeometryAssert.Oriented(mesh);
+            bool found = false;
+            for (int i = 0; i < mesh.VertexCount; i++)
+            {
+                Color32 c = mesh.ColorList[i];
+                if (c.g == 255 && c.r == 0)
+                {
+                    found = true;
+                    GeometryAssert.Near(new Vector3(0f, 0f, -1f), mesh.NormalList[i], 1e-5f);
+                    Assert.Less(mesh.VertexList[i].z, -0.5f);
+                }
+            }
+            Assert.IsTrue(found);
+            Assert.IsNull(Look("{\"shape\":\"sphere\",\"faces\":{\"px\":\"#ff0000\"}}").Stickers);
+            Assert.IsNull(Look("{\"shape\":\"box\",\"faces\":{\"up\":\"#ff0000\"}}").Stickers);
+        }
+
+        [Test]
+        public void ObjectsThatLookAlikeShareAMesh()
+        {
+            Assert.AreEqual(Look("{\"color\":\"#ff0000\"}").MeshKey, Look("{\"color\":\"#00ff00\",\"size\":2}").MeshKey);
+            Assert.AreNotEqual(Look("{\"shape\":\"box\"}").MeshKey, Look("{\"shape\":\"cube\"}").MeshKey);
+            Assert.AreNotEqual(Look("{\"shape\":\"box\"}").MeshKey, Look("{\"shape\":\"box\",\"pos\":[0,0,0]}").MeshKey);
+            string faces = "{\"shape\":\"box\",\"faces\":{\"px\":\"#ff0000\"}}";
+            Assert.AreEqual(Look(faces).MeshKey, Look(faces).MeshKey);
+            Assert.AreNotEqual(Look(faces).MeshKey, Look("{\"shape\":\"box\",\"faces\":{\"nx\":\"#ff0000\"}}").MeshKey);
+            Assert.AreNotEqual(Look(faces).MeshKey, Look("{\"shape\":\"box\",\"color\":\"#000000\",\"faces\":{\"px\":\"#ff0000\"}}").MeshKey);
+        }
+
+        [Test]
+        public void AppearanceIgnoresWhereAnObjectIs()
+        {
+            ObjectLook a = Look("{\"pos\":[0,0,0],\"color\":\"#ff0000\"}");
+            Assert.IsTrue(a.SameAppearance(Look("{\"pos\":[5,5,5],\"rot\":[0,90,0],\"size\":2,\"color\":\"#ff0000\"}")));
+            Assert.IsFalse(a.SameAppearance(Look("{\"pos\":[0,0,0],\"color\":\"#ff0001\"}")));
+            Assert.IsFalse(a.SameAppearance(Look("{\"pos\":[0,0,0],\"color\":\"#ff0000\",\"gloss\":0.1}")));
+            Assert.IsFalse(a.SameAppearance(Look("{\"pos\":[0,0,0],\"color\":\"#ff0000\",\"visible\":false}")));
+            Assert.IsFalse(a.SameAppearance(Look("{\"pos\":[0,0,0],\"color\":\"#ff0000\",\"shape\":\"box\"}")));
+            Assert.IsFalse(a.SameAppearance(null));
+        }
+
+        [Test]
+        public void AlphaMakesAnObjectSeeThrough()
+        {
+            ObjectLook look = Look("{\"color\":\"#ff0000\",\"alpha\":0.5}");
+            Assert.IsTrue(look.Transparent);
+            Assert.AreEqual(128, (int)look.Color.a);
+            Assert.IsTrue(Look("{\"color\":\"#ff000080\"}").Transparent);
         }
 
         [Test]
         public void SeatColorsComeFromTheManifest()
         {
-            AssertColor(PieceStyle.SeatColor(Manifest(), 1), 255, 0, 0);
-            AssertColor(PieceStyle.SeatColor(Manifest(), 2), 0, 255, 0);
-            AssertColor(PieceStyle.SeatColor(Manifest(), 3), 0x8a, 0x8a, 0x8a);
-            AssertColor(PieceStyle.SeatColor(null, 1), 0x8a, 0x8a, 0x8a);
+            AssertColor(ObjectLook.SeatColor(Manifest(), 1), 255, 0, 0);
+            AssertColor(ObjectLook.SeatColor(Manifest(), 2), 0, 255, 0);
+            AssertColor(ObjectLook.SeatColor(Manifest(), 3), 0x8a, 0x8a, 0x8a);
+            AssertColor(ObjectLook.SeatColor(null, 1), 0x8a, 0x8a, 0x8a);
         }
     }
 
@@ -196,7 +320,7 @@ namespace BoardSandbox.Tests
         public void ABoardEventDecidesTheSize()
         {
             ViewModel model = Model("{\"t\":\"board\",\"columns\":10,\"rows\":6}", "{\"t\":\"spawn\",\"id\":1,\"kind\":\"a\",\"x\":3,\"y\":4}");
-            BoardState state = BoardState.Read(model, new ViewHints(JsonValue.Parse("{\"board\":{\"columns\":5,\"rows\":5}}")));
+            BoardState state = BoardState.Read(model, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"columns\":5,\"rows\":5}}")));
             Assert.AreEqual(10, state.Columns);
             Assert.AreEqual(6, state.Rows);
         }
@@ -204,7 +328,7 @@ namespace BoardSandbox.Tests
         [Test]
         public void HintsDecideWhenThereIsNoBoardEvent()
         {
-            BoardState state = BoardState.Read(Model(), new ViewHints(JsonValue.Parse("{\"board\":{\"columns\":5,\"rows\":4}}")));
+            BoardState state = BoardState.Read(Model(), StageSettings.Parse(JsonValue.Parse("{\"board\":{\"columns\":5,\"rows\":4}}")));
             Assert.AreEqual(5, state.Columns);
             Assert.AreEqual(4, state.Rows);
         }
@@ -212,11 +336,11 @@ namespace BoardSandbox.Tests
         [Test]
         public void TheBoardGrowsToHoldItsPiecesWhenNothingSaysHowBigItIs()
         {
-            Assert.AreEqual(BoardState.DefaultSize, BoardState.Read(Model(), new ViewHints(null)).Columns);
-            Assert.AreEqual(BoardState.DefaultSize, BoardState.Read(Model(), new ViewHints(null)).Rows);
+            Assert.AreEqual(BoardState.DefaultSize, BoardState.Read(Model(), new StageSettings()).Columns);
+            Assert.AreEqual(BoardState.DefaultSize, BoardState.Read(Model(), new StageSettings()).Rows);
 
             ViewModel model = Model("{\"t\":\"spawn\",\"id\":1,\"kind\":\"a\",\"x\":12,\"y\":3}", "{\"t\":\"spawn\",\"id\":2,\"kind\":\"a\",\"x\":2.5,\"y\":9.5}");
-            BoardState state = BoardState.Read(model, new ViewHints(null));
+            BoardState state = BoardState.Read(model, new StageSettings());
             Assert.AreEqual(12, state.Columns);
             Assert.AreEqual(10, state.Rows);
         }
@@ -224,11 +348,11 @@ namespace BoardSandbox.Tests
         [Test]
         public void TheSizeIsLimited()
         {
-            BoardState big = BoardState.Read(Model("{\"t\":\"board\",\"columns\":1000,\"rows\":65}"), new ViewHints(null));
+            BoardState big = BoardState.Read(Model("{\"t\":\"board\",\"columns\":1000,\"rows\":65}"), new StageSettings());
             Assert.AreEqual(BoardLayout.MaxSize, big.Columns);
             Assert.AreEqual(BoardLayout.MaxSize, big.Rows);
 
-            BoardState far = BoardState.Read(Model("{\"t\":\"spawn\",\"id\":1,\"kind\":\"a\",\"x\":1e300,\"y\":-1e300}"), new ViewHints(null));
+            BoardState far = BoardState.Read(Model("{\"t\":\"spawn\",\"id\":1,\"kind\":\"a\",\"x\":1e300,\"y\":-1e300}"), new StageSettings());
             Assert.AreEqual(BoardLayout.MaxSize, far.Columns);
             Assert.AreEqual(BoardState.DefaultSize, far.Rows);
         }
@@ -237,7 +361,7 @@ namespace BoardSandbox.Tests
         public void PiecesAreFoundByTheirNearestCell()
         {
             ViewModel model = Model("{\"t\":\"spawn\",\"id\":1,\"kind\":\"a\",\"x\":3,\"y\":4}", "{\"t\":\"spawn\",\"id\":2,\"kind\":\"a\",\"x\":5.4,\"y\":6.6}");
-            BoardState state = BoardState.Read(model, new ViewHints(null));
+            BoardState state = BoardState.Read(model, new StageSettings());
             Assert.AreEqual(1, state.ObjectAt(3, 4).Id);
             Assert.AreEqual(2, state.ObjectAt(5, 7).Id);
             Assert.IsTrue(state.IsOccupied(3, 4));
@@ -246,10 +370,19 @@ namespace BoardSandbox.Tests
         }
 
         [Test]
+        public void FreeObjectsAreNotOnTheBoard()
+        {
+            ViewModel model = Model("{\"t\":\"spawn\",\"id\":1,\"kind\":\"a\",\"x\":30,\"y\":2,\"props\":{\"pos\":[0,0,0]}}");
+            BoardState state = BoardState.Read(model, new StageSettings());
+            Assert.AreEqual(BoardState.DefaultSize, state.Columns);
+            Assert.IsFalse(state.IsOccupied(30, 2));
+        }
+
+        [Test]
         public void TheNewerPieceWinsASharedCell()
         {
             ViewModel model = Model("{\"t\":\"spawn\",\"id\":7,\"kind\":\"a\",\"x\":2,\"y\":2}", "{\"t\":\"spawn\",\"id\":3,\"kind\":\"a\",\"x\":2,\"y\":2}");
-            Assert.AreEqual(7, BoardState.Read(model, new ViewHints(null)).ObjectAt(2, 2).Id);
+            Assert.AreEqual(7, BoardState.Read(model, new StageSettings()).ObjectAt(2, 2).Id);
         }
 
         [TestCase(2.5, 3)]
@@ -265,13 +398,13 @@ namespace BoardSandbox.Tests
         [Test]
         public void TheLastMoveIsReadFromItsEvent()
         {
-            BoardState none = BoardState.Read(Model(), new ViewHints(null));
+            BoardState none = BoardState.Read(Model(), new StageSettings());
             Assert.IsFalse(none.HasLastMove);
-            BoardState state = BoardState.Read(Model("{\"t\":\"last_move\",\"x\":4,\"y\":7,\"seat\":1}"), new ViewHints(null));
+            BoardState state = BoardState.Read(Model("{\"t\":\"last_move\",\"x\":4,\"y\":7,\"seat\":1}"), new StageSettings());
             Assert.IsTrue(state.HasLastMove);
             Assert.AreEqual(4, state.LastX);
             Assert.AreEqual(7, state.LastY);
-            Assert.IsFalse(BoardState.Read(Model("{\"t\":\"last_move\",\"x\":0,\"y\":7}"), new ViewHints(null)).HasLastMove);
+            Assert.IsFalse(BoardState.Read(Model("{\"t\":\"last_move\",\"x\":0,\"y\":7}"), new StageSettings()).HasLastMove);
         }
 
         [Test]
@@ -279,7 +412,7 @@ namespace BoardSandbox.Tests
         {
             using (GameSession session = TestSupport.StartGomoku(TestSupport.Options("{\"size\":9}")))
             {
-                ViewHints hints = new ViewHints(session.Mod.Manifest.Client);
+                StageSettings hints = StageSettings.Resolve(session.Mod.Manifest.Client, null);
                 BoardState fresh = BoardState.Read(session.View, hints);
                 Assert.AreEqual(9, fresh.Columns);
                 Assert.AreEqual(9, fresh.Rows);
@@ -307,7 +440,7 @@ namespace BoardSandbox.Tests
                 }
                 TestSupport.PlaceOk(session, 1, 5, 5);
 
-                BoardState won = BoardState.Read(session.View, new ViewHints(session.Mod.Manifest.Client));
+                BoardState won = BoardState.Read(session.View, StageSettings.Resolve(session.Mod.Manifest.Client, null));
                 Assert.AreEqual(5, won.WinningCells.Count);
                 foreach (Point2 cell in won.WinningCells)
                 {

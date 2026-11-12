@@ -260,6 +260,7 @@ namespace BoardSandbox.Tests
             using (GameHost host = new GameHost(catalog))
             {
                 GameLibrary library = new GameLibrary(host);
+                library.Select("gomoku");
                 Assert.AreEqual("gomoku", library.SelectedId);
                 Assert.IsFalse(library.IsRunning(library.Selected));
 

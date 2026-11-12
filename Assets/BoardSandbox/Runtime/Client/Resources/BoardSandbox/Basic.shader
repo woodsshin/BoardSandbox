@@ -20,6 +20,9 @@ Shader "BoardSandbox/Basic"
 
             fixed4 _Color;
             half _Glossiness;
+            float4 _BseLightDirection;
+            fixed4 _BseLightColor;
+            float4 _BseLightLevels;
 
             struct appdata
             {
@@ -54,12 +57,22 @@ Shader "BoardSandbox/Basic"
             {
                 float3 n = normalize(i.normal);
                 float3 lightDir = normalize(float3(-0.35, 0.85, -0.4));
+                float3 lightColor = float3(1, 1, 1);
+                float ambient = 0.45;
+                float strength = 0.65;
+                if (_BseLightLevels.w > 0.5)
+                {
+                    lightDir = normalize(_BseLightDirection.xyz);
+                    lightColor = _BseLightColor.rgb;
+                    ambient = _BseLightLevels.x;
+                    strength = _BseLightLevels.y;
+                }
                 float3 viewDir = normalize(_WorldSpaceCameraPos - i.world);
                 float diffuse = saturate(dot(n, lightDir));
                 float3 halfDir = normalize(lightDir + viewDir);
                 float specular = pow(saturate(dot(n, halfDir)), 48.0) * _Glossiness;
                 fixed3 albedo = i.color.rgb * _Color.rgb;
-                fixed3 lit = albedo * (0.45 + 0.65 * diffuse) + specular;
+                fixed3 lit = albedo * (ambient + strength * diffuse * lightColor) + specular * lightColor;
                 return fixed4(lit, 1);
             }
             ENDCG

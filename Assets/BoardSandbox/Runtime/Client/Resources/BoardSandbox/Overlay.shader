@@ -22,6 +22,8 @@ Shader "BoardSandbox/Overlay"
             #include "UnityCG.cginc"
 
             fixed4 _Color;
+            float4 _BseLightDirection;
+            float4 _BseLightLevels;
 
             struct appdata
             {
@@ -49,6 +51,8 @@ Shader "BoardSandbox/Overlay"
             fixed4 frag (v2f i) : SV_Target
             {
                 float3 lightDir = normalize(float3(-0.35, 0.85, -0.4));
+                if (_BseLightLevels.w > 0.5)
+                    lightDir = normalize(_BseLightDirection.xyz);
                 float diffuse = saturate(dot(normalize(i.normal), lightDir));
                 fixed3 rgb = _Color.rgb * i.color.rgb * (0.6 + 0.4 * diffuse);
                 return fixed4(rgb, _Color.a * i.color.a);

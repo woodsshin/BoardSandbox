@@ -144,6 +144,61 @@ namespace BoardSandbox.Client.Geometry
             AddDisc(baseCenter, radius, segments, color, false);
         }
 
+        public void Translate(Vector3 offset)
+        {
+            for (int i = 0; i < _vertices.Count; i++)
+                _vertices[i] += offset;
+        }
+
+        // An upright cone whose base disc is centred on baseCenter.
+        public void AddCone(Vector3 baseCenter, float radius, float height, int segments, Color32 color)
+        {
+            segments = Mathf.Max(segments, MinSegments);
+            Vector3 tip = baseCenter + new Vector3(0f, height, 0f);
+            for (int i = 0; i < segments; i++)
+            {
+                float a0 = 2f * Mathf.PI * i / segments;
+                float a1 = 2f * Mathf.PI * (i + 1) / segments;
+                float mid = (a0 + a1) * 0.5f;
+                Vector3 r0 = new Vector3(Mathf.Cos(a0), 0f, Mathf.Sin(a0));
+                Vector3 r1 = new Vector3(Mathf.Cos(a1), 0f, Mathf.Sin(a1));
+                Vector3 rm = new Vector3(Mathf.Cos(mid), 0f, Mathf.Sin(mid));
+                int b0 = AddVertex(baseCenter + r0 * radius, r0 * height + Vector3.up * radius, color);
+                int b1 = AddVertex(baseCenter + r1 * radius, r1 * height + Vector3.up * radius, color);
+                int top = AddVertex(tip, rm * height + Vector3.up * radius, color);
+                AddTriangle(b0, top, b1);
+            }
+            AddDisc(baseCenter, radius, segments, color, false);
+        }
+
+        // A box with a smaller colored square on each of the given sides, like the stickers of a puzzle cube.
+        // The sides are listed as +x, -x, +y, -y, +z, -z; a null leaves the side plain.
+        public void AddStickerBox(Vector3 center, Vector3 size, Color32 body, Color32?[] stickers, float inset, float rise)
+        {
+            AddBox(center, size, body);
+            if (stickers == null)
+                return;
+            Vector3 half = size * 0.5f;
+            inset = Mathf.Clamp(inset, 0f, 0.45f);
+            for (int side = 0; side < 6 && side < stickers.Length; side++)
+            {
+                if (stickers[side] == null)
+                    continue;
+                int axis = side / 2;
+                float sign = side % 2 == 0 ? 1f : -1f;
+                int uAxis = (axis + 1) % 3;
+                int vAxis = (axis + 2) % 3;
+                Vector3 normal = Vector3.zero;
+                normal[axis] = sign;
+                Vector3 u = Vector3.zero;
+                u[uAxis] = half[uAxis] * (1f - 2f * inset);
+                Vector3 v = Vector3.zero;
+                v[vAxis] = half[vAxis] * (1f - 2f * inset);
+                Vector3 middle = center + normal * (half[axis] + rise);
+                AddQuad(middle - u - v, middle + u - v, middle + u + v, middle - u + v, normal, stickers[side].Value);
+            }
+        }
+
         // A flattened sphere standing on baseCenter; the shape of a go stone.
         public void AddStone(Vector3 baseCenter, float radius, float height, int segments, int rings, Color32 color)
         {
