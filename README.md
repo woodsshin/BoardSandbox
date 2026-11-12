@@ -66,12 +66,12 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 
 화면 문자열은 영어이고, 모드가 보내는 문자열(좌석 이름, 상태 메시지 등)은 한글 글꼴(맑은 고딕 등)이 설치돼 있으면 한글로 표시됩니다.
 
-![오목 플레이 화면: 상단 배너, 왼쪽 패널, 오른쪽 도구 열, 3D 보드](Images/Gomoku.png)
+![오목 플레이 화면: 상단 배너, 왼쪽 패널, 오른쪽 도구 열, 3D 보드](Image/Gomoku.png)
 
 - **상단 배너**: 차례(`<좌석> to move`, 컴퓨터 차례면 `(computer)` 추가) 또는 결과(`<좌석> wins`, `Draw`)를 좌석 색 표시와 함께 보여 줍니다.
 - **왼쪽 패널**: 모드 이름과 설명, `Games (G)` 버튼(게임 선택 화면 열기), 좌석별 `Human | Computer`, `New game` / `Undo` / `Redo`, 기록 슬라이더(기록이 2단계 이상일 때), `Options (apply to the next game)`.
 
-  ![Cubic 3x3 화면: 왼쪽 패널에 모드 설명, Games (G) 버튼, 숫자 옵션 입력란이 보입니다](Images/Cube.png)
+  ![Cubic 3x3 화면: 왼쪽 패널에 모드 설명, Games (G) 버튼, 숫자 옵션 입력란이 보입니다](Image/Cube.png)
 
   - 옵션은 모드의 `options` 기본값을 보여 줍니다. 불리언은 체크박스, 숫자와 문자열은 입력란이고, 그 밖의 값은 읽기 전용입니다. 바꾼 값은 다음 새 게임과 Simulation 패널에 적용됩니다.
   - `Computer` 좌석은 모드의 무작위 합법 수를 0.45초 간격으로 둡니다. 모드가 `random_command` 또는 `legal_commands`를 제공하지 않으면 선택할 수 없습니다(안내 토스트). 컴퓨터가 둘 수를 못 찾거나 수가 거부되면 그 좌석은 `Human`으로 돌아갑니다. 되돌린 시점이 컴퓨터 차례면 컴퓨터가 다시 둡니다.
@@ -81,7 +81,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 - **토스트**: 규칙이 거부한 입력(`메시지 [CODE]`), 스크립트 오류, 모드 로드 오류, 모드의 `bse.status` 메시지.
 - **게임 선택 화면**: 화면 전체를 덮는 창입니다. 왼쪽 패널의 `Games (G)` 버튼이나 `G`로 열고, 시작할 게임이 정해지지 않았으면 앱이 시작할 때 저절로 열립니다.
 
-  ![게임 선택 화면: 검색란, 게임 목록, 선택한 게임의 상세 정보](Images/gamelist.png)
+  ![게임 선택 화면: 검색란, 게임 목록, 선택한 게임의 상세 정보](Image/gamelist.png)
 
   - 검색란은 이름, id, 설명에서 찾으며 공백으로 나눈 단어가 모두 들어 있어야 합니다(대소문자 무시). 게임이 둘 이상의 출처에 있으면 `All`과 게임이 있는 출처(`Built-in`, `Local`, `Workshop`)로 거르는 필터가 나타납니다.
   - 목록은 `Built-in`, `Local`, `Workshop` 순서이고 출처 안에서는 이름순입니다. 행에는 색 타일, 이름, 인원과 출처가 보이고 진행 중인 게임에는 `Playing`이 붙습니다. 행이 60개를 넘으면 보이는 행만 그립니다.
@@ -419,20 +419,29 @@ THIRD_PARTY_NOTICES.txt
 
 ## 구조 개요
 
-```
-입력 (마우스, 콘솔, 컴퓨터 플레이어)
-  │  InputPacket(seat, command, source)
-  ▼
-GameSession.Submit ─ 인터셉터 BeforeSubmit (막을 수 있음)
-  │
-  ▼
-Luau VM: rules.command(seat, cmd) ─ 이벤트 (spawn, move, set, remove, turn, over, status, 사용자 정의)
-  │
-  ▼
-ViewModel (이벤트로 갱신되는 미러) ─ 기록(스냅샷) ─ 인터셉터 AfterSubmit (RejectionLog)
-  │
-  ▼
-SubmitResult (수락 / 거부 / 차단 / 무효 / 오류)   Client(GridBoardView, HUD)는 ViewModel만 읽어 그립니다
+```mermaid
+flowchart TD
+    Input["입력<br/>마우스, 콘솔, 컴퓨터 플레이어"]
+    Submit["GameSession.Submit"]
+    Before{"인터셉터 BeforeSubmit<br/>막을 수 있음"}
+    Rules["Luau VM<br/>rules.command(seat, cmd)"]
+    Events["이벤트<br/>spawn, move, set, remove, turn, over, status, 사용자 정의"]
+    View["ViewModel<br/>이벤트로 갱신되는 미러"]
+    History["기록 (스냅샷)"]
+    After["인터셉터 AfterSubmit<br/>RejectionLog"]
+    Result["SubmitResult<br/>수락 / 거부 / 차단 / 무효 / 오류"]
+    Client["Client<br/>GridBoardView, HUD"]
+
+    Input -->|"InputPacket(seat, command, source)"| Submit
+    Submit --> Before
+    Before -->|"통과"| Rules
+    Before -.->|"차단"| Result
+    Rules --> Events
+    Events --> View
+    View --> History
+    History --> After
+    After --> Result
+    View -.->|"ViewModel만 읽어 그림"| Client
 ```
 
 - **bse_luau** (네이티브): Luau VM을 C ABI(버전 1)로 감쌉니다. 모든 호출은 JSON 문자열 입출력(`bse_vm_call`)이고 메모리·시간 한도와 로그 수집을 제공합니다. 내보내는 함수는 `bse_*` 10개이며 헤더는 `Native/bse_luau/include/bse_luau.h`입니다.
