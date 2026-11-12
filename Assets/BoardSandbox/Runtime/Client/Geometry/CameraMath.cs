@@ -62,6 +62,21 @@ namespace BoardSandbox.Client.Geometry
             return Mathf.Max(0.01f, radius) * padding / Mathf.Sin(Mathf.Min(halfX, halfY));
         }
 
+        // The pitch after a drag. A camera that is free to go around is not held back, and while it hangs upside
+        // down a sideways drag turns it the other way so that the scene still follows the cursor.
+        public static void Orbit(ref float yawDegrees, ref float pitchDegrees, Vector2 deltaDegrees, bool freePitch, float minPitch, float maxPitch)
+        {
+            if (!freePitch)
+            {
+                yawDegrees = WrapDegrees(yawDegrees + deltaDegrees.x);
+                pitchDegrees = ClampPitch(pitchDegrees + deltaDegrees.y, minPitch, maxPitch);
+                return;
+            }
+            bool upsideDown = Mathf.Cos(pitchDegrees * Mathf.Deg2Rad) < 0f;
+            yawDegrees = WrapDegrees(yawDegrees + (upsideDown ? -deltaDegrees.x : deltaDegrees.x));
+            pitchDegrees = WrapDegrees(pitchDegrees + deltaDegrees.y);
+        }
+
         public static float WrapDegrees(float degrees)
         {
             degrees %= 360f;

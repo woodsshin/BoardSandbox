@@ -64,6 +64,9 @@ namespace BoardSandbox.Client.Views
         public float MaxDistance;
         public float MinPitch = CameraMath.MinPitch;
         public float MaxPitch = CameraMath.MaxPitch;
+
+        // The camera may go all the way around over the top and under the scene.
+        public bool FreePitch;
         public DragMode LeftDrag = DragMode.Pan;
         public DragMode RightDrag = DragMode.Orbit;
         public DragMode MiddleDrag = DragMode.Pan;
@@ -160,7 +163,10 @@ namespace BoardSandbox.Client.Views
             c.Yaw = ReadFloat(camera["yaw"], 0f, -36000f, 36000f);
             c.MinPitch = ReadFloat(camera["min_pitch"], c.MinPitch, -CameraMath.PitchLimit, CameraMath.PitchLimit);
             c.MaxPitch = ReadFloat(camera["max_pitch"], c.MaxPitch, c.MinPitch, CameraMath.PitchLimit);
-            c.Pitch = ReadFloat(camera["pitch"], Mathf.Clamp(c.Pitch, c.MinPitch, c.MaxPitch), c.MinPitch, c.MaxPitch);
+            c.FreePitch = camera["free_pitch"].AsBool(false);
+            c.Pitch = c.FreePitch
+                ? ReadFloat(camera["pitch"], c.Pitch, -36000f, 36000f)
+                : ReadFloat(camera["pitch"], Mathf.Clamp(c.Pitch, c.MinPitch, c.MaxPitch), c.MinPitch, c.MaxPitch);
             c.Fov = ReadFloat(camera["fov"], c.Fov, 10f, 100f);
             if (Frame.TryReadVector(camera["target"], out Vector3 target))
                 c.Target = target;
@@ -247,6 +253,7 @@ namespace BoardSandbox.Client.Views
         public float MaxDistance;
         public float MinPitch;
         public float MaxPitch;
+        public bool FreePitch;
 
         // How far the target may be moved away from where it starts.
         public Vector3 Reach;
@@ -261,7 +268,8 @@ namespace BoardSandbox.Client.Views
                 Fov = settings.Fov,
                 Target = Frame.Flip(settings.Target),
                 MinPitch = settings.MinPitch,
-                MaxPitch = settings.MaxPitch
+                MaxPitch = settings.MaxPitch,
+                FreePitch = settings.FreePitch
             };
             float extent;
             if (settings.Distance > 0f)

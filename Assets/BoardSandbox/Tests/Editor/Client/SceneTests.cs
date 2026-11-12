@@ -420,6 +420,54 @@ namespace BoardSandbox.Tests
         }
 
         [Test]
+        public void AFreeCameraGoesAllTheWayAround()
+        {
+            StageSettings stage = StageSettings.Parse(JsonValue.Parse("{\"camera\":{\"free_pitch\":true,\"pitch\":200}}"));
+            Assert.IsTrue(stage.Camera.FreePitch);
+            Assert.AreEqual(200f, stage.Camera.Pitch);
+            Assert.IsTrue(CameraPlan.Resolve(stage.Camera, null, 1.5f).FreePitch);
+            Assert.IsFalse(new CameraSettings().FreePitch);
+
+            float yaw = 10f;
+            float pitch = 80f;
+            CameraMath.Orbit(ref yaw, ref pitch, new Vector2(5f, 30f), true, -10f, 10f);
+            Assert.AreEqual(15f, yaw, 1e-4f);
+            Assert.AreEqual(110f, pitch, 1e-4f);
+            CameraMath.Orbit(ref yaw, ref pitch, new Vector2(5f, 300f), true, -10f, 10f);
+            Assert.AreEqual(10f, yaw, 1e-4f);
+            Assert.AreEqual(50f, pitch, 1e-4f);
+            CameraMath.Orbit(ref yaw, ref pitch, new Vector2(0f, -80f), true, -10f, 10f);
+            Assert.AreEqual(330f, pitch, 1e-4f);
+
+            yaw = 10f;
+            pitch = 80f;
+            CameraMath.Orbit(ref yaw, ref pitch, new Vector2(5f, 30f), false, 12f, 89f);
+            Assert.AreEqual(15f, yaw, 1e-4f);
+            Assert.AreEqual(89f, pitch, 1e-4f);
+        }
+
+        [TestCase(0f, 30f)]
+        [TestCase(40f, 89.9f)]
+        [TestCase(40f, 90.1f)]
+        [TestCase(200f, 135f)]
+        [TestCase(75f, 180f)]
+        [TestCase(75f, 269f)]
+        [TestCase(310f, 300f)]
+        public void TheCameraKeepsLookingAtItsTargetOverTheTop(float yaw, float pitch)
+        {
+            CameraMath.Basis(yaw, pitch, out Vector3 right, out Vector3 up, out Vector3 forward);
+            GeometryAssert.Near(-CameraMath.Direction(yaw, pitch), forward, 1e-5f);
+            Assert.AreEqual(1f, up.magnitude, 1e-5f);
+            Assert.AreEqual(0f, Vector3.Dot(up, forward), 1e-5f);
+            Assert.AreEqual(0f, Vector3.Dot(up, right), 1e-5f);
+            GeometryAssert.Near(right, Vector3.Cross(up, forward), 1e-5f);
+
+            // A little more pitch moves the view the same little bit everywhere: nothing flips at the poles.
+            CameraMath.Basis(yaw, pitch + 0.2f, out _, out Vector3 nextUp, out _);
+            Assert.Greater(Vector3.Dot(up, nextUp), 0.999f);
+        }
+
+        [Test]
         public void PitchLimitsCanReachBelowTheTable()
         {
             Assert.AreEqual(-80f, CameraMath.ClampPitch(-120f, -80f, 80f));
