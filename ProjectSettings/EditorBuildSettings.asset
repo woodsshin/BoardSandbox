@@ -4,6 +4,9 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/BoardSandbox/Scene/Intro.unity
+    guid: b12f7325cac7f5549819b272321f66c2
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0
