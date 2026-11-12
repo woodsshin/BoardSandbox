@@ -5,6 +5,7 @@ using System.Text;
 using BoardSandbox.Core.App;
 using BoardSandbox.Core.Json;
 using BoardSandbox.Core.Mods;
+using BoardSandbox.Core.Net;
 using UnityEngine;
 
 namespace BoardSandbox.Client.UI
@@ -25,8 +26,10 @@ namespace BoardSandbox.Client.UI
         private const int MaxSeatNames = 8;
         private const int MaxOptions = 8;
         private const int MaxProblems = 40;
+        private const int MaxRooms = 30;
 
         private readonly GameHost _host;
+        private readonly Multiplayer _multiplayer;
         private readonly GuiTheme _theme;
         private readonly GameLibrary _library;
         private readonly Action<Action> _defer;
@@ -52,10 +55,13 @@ namespace BoardSandbox.Client.UI
         private string _detailDescription = string.Empty;
         private string _detailSeats = string.Empty;
         private string _detailOptions = string.Empty;
+        private string _roomsFor = string.Empty;
+        private Vector2 _roomScroll;
 
-        public GameLibraryPanel(GameHost host, GuiTheme theme, Action<Action> defer, Action releaseFocus)
+        public GameLibraryPanel(GameHost host, Multiplayer multiplayer, GuiTheme theme, Action<Action> defer, Action releaseFocus)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
+            _multiplayer = multiplayer ?? throw new ArgumentNullException(nameof(multiplayer));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _defer = defer ?? throw new ArgumentNullException(nameof(defer));
             _releaseFocus = releaseFocus ?? throw new ArgumentNullException(nameof(releaseFocus));
@@ -72,6 +78,7 @@ namespace BoardSandbox.Client.UI
             _listScroll = Vector2.zero;
             _showProblems = false;
             _detailFor = null;
+            _roomsFor = string.Empty;
             _focusSearch = true;
             _revealSelected = true;
             RefreshFilter();
@@ -394,9 +401,14 @@ namespace BoardSandbox.Client.UI
             ModEntry entry = _library.Selected;
             GUILayout.BeginVertical(_theme.Card, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
             if (entry != null)
+            {
                 DrawEntry(entry);
+                DrawRooms(entry);
+            }
             else
+            {
                 DrawNothingSelected();
+            }
             DrawActions(entry);
             GUILayout.EndVertical();
         }
@@ -424,6 +436,59 @@ namespace BoardSandbox.Client.UI
                 GUILayout.Label(_detailSeats, _theme.Muted);
             if (_detailOptions.Length > 0)
                 GUILayout.Label(_detailOptions, _theme.Muted);
+            GUILayout.EndScrollView();
+        }
+
+        // The rooms that play the selected game. The list is fetched whenever another game is selected.
+        private void DrawRooms(ModEntry entry)
+        {
+            GUILayout.Space(_theme.Sf(6f));
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Online rooms", _theme.Label, GUILayout.ExpandWidth(true));
+            bool available = _multiplayer.Available;
+            if (available)
+            {
+                string id = entry.Id;
+                if (Event.current.type == EventType.Layout && _roomsFor != id && !_multiplayer.Busy)
+                {
+                    _roomsFor = id;
+                    _defer(() => _multiplayer.Refresh(id));
+                }
+                GUI.enabled = !_multiplayer.Busy;
+                if (GUILayout.Button("Refresh", _theme.Button, GUILayout.Width(_theme.Sf(80f))))
+                    _defer(() => _multiplayer.Refresh(id));
+                if (GUILayout.Button("Host", _theme.Button, GUILayout.Width(_theme.Sf(80f))))
+                {
+                    ModPackage mod = entry.Mod;
+                    _defer(() => _multiplayer.HostGame(mod));
+                }
+                GUI.enabled = true;
+            }
+            GUILayout.EndHorizontal();
+
+            if (!available)
+            {
+                GUILayout.Label(DisplayText.Clip(_multiplayer.Status, 200), _theme.Muted);
+                return;
+            }
+
+            IReadOnlyList<LobbyInfo> rooms = _multiplayer.Lobbies(entry.Id);
+            _roomScroll = GUILayout.BeginScrollView(_roomScroll, GUILayout.Height(_theme.Sf(132f)));
+            if (rooms.Count == 0)
+                GUILayout.Label(_multiplayer.Busy ? "Looking for rooms…" : "Nobody hosts this game right now. Press Host to open a room.", _theme.Muted);
+            for (int i = 0; i < rooms.Count && i < MaxRooms; i++)
+            {
+                LobbyInfo room = rooms[i];
+                bool same = room.ModHash == entry.Mod.ContentHash;
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(DisplayText.Clip(room.Name.Length > 0 ? room.Name : "Room", 40), _theme.Label, GUILayout.ExpandWidth(true));
+                GUILayout.Label(same ? room.Players + " / " + room.Capacity : "v" + DisplayText.Clip(room.ModVersion, 12) + " differs", _theme.Muted, GUILayout.ExpandWidth(false));
+                GUI.enabled = same && !_multiplayer.Busy && room.Players < room.Capacity;
+                if (GUILayout.Button("Join", _theme.Button, GUILayout.Width(_theme.Sf(64f))))
+                    _defer(() => _multiplayer.Join(room));
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
             GUILayout.EndScrollView();
         }
 

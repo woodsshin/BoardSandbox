@@ -10,7 +10,17 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <UnityEngineDll Condition="'$(UnityEngineDll)' == ''">$(MSBuildThisFileDirectory).reference/UnityEngine.dll</UnityEngineDll>
     <RepositoryRoot>$(MSBuildThisFileDirectory)../../</RepositoryRoot>
+    <SteamworksDir Condition="'$(SteamworksDir)' == ''">$(MSBuildThisFileDirectory).reference/Steamworks.NET/</SteamworksDir>
   </PropertyGroup>
+
+  <!-- With the sources of Steamworks.NET in place the Steam code is checked as well. -->
+  <PropertyGroup Condition="Exists('$(SteamworksDir)Steam.cs')">
+    <DefineConstants>$(DefineConstants);BSE_STEAM;UNITY_STANDALONE_WIN;UNITY_2017_1_OR_NEWER;UNITY_EDITOR_WIN;UNITY_EDITOR;UNITY_STANDALONE;UNITY_5_3_OR_NEWER</DefineConstants>
+    <NoWarn>$(NoWarn);CS0618;CS0649;CS0169;CS0414</NoWarn>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(SteamworksDir)Steam.cs')">
+    <Compile Include="$(SteamworksDir)**/*.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Include="$(RepositoryRoot)Assets/BoardSandbox/Runtime/Core/**/*.cs" />

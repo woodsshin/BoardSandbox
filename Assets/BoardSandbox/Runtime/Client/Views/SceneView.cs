@@ -53,6 +53,7 @@ namespace BoardSandbox.Client.Views
         }
 
         private readonly MaterialSet _materials;
+        private readonly int _layer;
         private readonly GameObject _root;
         private readonly Transform _pieces;
         private readonly Dictionary<int, Visual> _byId = new Dictionary<int, Visual>();
@@ -89,9 +90,11 @@ namespace BoardSandbox.Client.Views
         private float _effectDegrees;
         private Rot3 _effectRotation = Rot3.Identity;
 
-        public SceneView(MaterialSet materials)
+        // Everything the view makes is put on the given layer, so that a camera can be told to show this view only.
+        public SceneView(MaterialSet materials, int layer = 0)
         {
             _materials = materials ?? throw new ArgumentNullException(nameof(materials));
+            _layer = layer;
             _root = new GameObject("Board Sandbox Scene");
             _pieces = new GameObject("Pieces").transform;
             _pieces.SetParent(_root.transform, false);
@@ -106,6 +109,7 @@ namespace BoardSandbox.Client.Views
         }
 
         public StageSettings Stage => _stage;
+        public ModManifest Manifest => _manifest;
 
         // The board the camera should frame; null while the stage shows none.
         public BoardLayout Layout => _stage.Board.Visible ? _layout : null;
@@ -359,13 +363,13 @@ namespace BoardSandbox.Client.Views
                 _visuals.Remove(old);
             }
 
-            GameObject body = new GameObject("Piece");
+            GameObject body = new GameObject("Piece") { layer = _layer };
             body.transform.SetParent(_pieces, false);
             MeshFilter filter = body.AddComponent<MeshFilter>();
             MeshRenderer renderer = body.AddComponent<MeshRenderer>();
             Unlit(renderer);
 
-            GameObject shade = new GameObject("Shade");
+            GameObject shade = new GameObject("Shade") { layer = _layer };
             shade.transform.SetParent(_pieces, false);
             shade.AddComponent<MeshFilter>().sharedMesh = SharedMesh("shadow", BoardShapes.Shadow);
             MeshRenderer shadeRenderer = shade.AddComponent<MeshRenderer>();
@@ -614,7 +618,7 @@ namespace BoardSandbox.Client.Views
 
         private GameObject CreateSolid(string name, MeshBuilder shape, string meshName, Material material)
         {
-            GameObject item = new GameObject(name);
+            GameObject item = new GameObject(name) { layer = _layer };
             item.transform.SetParent(_root.transform, false);
             item.AddComponent<MeshFilter>().sharedMesh = Own(MeshFactory.Create(shape, meshName));
             MeshRenderer renderer = item.AddComponent<MeshRenderer>();
@@ -625,7 +629,7 @@ namespace BoardSandbox.Client.Views
 
         private GameObject CreateOverlay(string name, Mesh mesh, Color32 color)
         {
-            GameObject item = new GameObject(name);
+            GameObject item = new GameObject(name) { layer = _layer };
             item.transform.SetParent(_root.transform, false);
             item.AddComponent<MeshFilter>().sharedMesh = mesh;
             MeshRenderer renderer = item.AddComponent<MeshRenderer>();

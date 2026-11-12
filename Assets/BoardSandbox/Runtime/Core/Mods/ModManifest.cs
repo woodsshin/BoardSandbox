@@ -37,6 +37,7 @@ namespace BoardSandbox.Core.Mods
     {
         public const int SupportedApi = 1;
         public const int MaxSeats = 16;
+        public const int MaxRoomPlayers = 8;
 
         private static readonly string[] DefaultSeatColors =
         {
@@ -57,6 +58,15 @@ namespace BoardSandbox.Core.Mods
         public int MaxPlayers { get; private set; }
         public IReadOnlyList<SeatInfo> Seats { get; private set; }
         public JsonValue DefaultOptions { get; private set; }
+
+        // Every player of a networked game has a table of their own instead of a seat at a shared one.
+        public bool SplitScreen { get; private set; }
+
+        // How many players a networked game takes.
+        public int RoomPlayers { get; private set; }
+
+        // The option that makes the tables of a split game start alike; empty when the mod names none.
+        public string SeedOption { get; private set; }
 
         // Presentation hints for a client; the core never interprets them.
         public JsonValue Client { get; private set; }
@@ -122,6 +132,11 @@ namespace BoardSandbox.Core.Mods
             if (!options.IsNull && !options.IsObjectLike)
                 throw new ModException("'options' must be an object.");
             manifest.DefaultOptions = options.IsObject ? options : JsonValue.NewObject();
+
+            JsonValue multiplayer = root["multiplayer"];
+            manifest.SplitScreen = multiplayer["mode"].AsString() == "split";
+            manifest.RoomPlayers = manifest.SplitScreen ? Math.Max(1, Math.Min(MaxRoomPlayers, multiplayer["players"].AsInt(4))) : max;
+            manifest.SeedOption = multiplayer["seed_option"].AsString();
 
             JsonValue client = root["client"];
             if (!client.IsNull && !client.IsObject)

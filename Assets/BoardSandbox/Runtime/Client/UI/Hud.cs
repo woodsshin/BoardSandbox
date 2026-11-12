@@ -8,6 +8,7 @@ using BoardSandbox.Core.Commands;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
 using BoardSandbox.Core.Mods;
+using BoardSandbox.Core.Net;
 using BoardSandbox.Core.Sim;
 using UnityEngine;
 
@@ -26,6 +27,7 @@ namespace BoardSandbox.Client.UI
         private static readonly string[] SeatModeNames = { "Human", "Computer" };
 
         private readonly GameHost _host;
+        private readonly Multiplayer _multiplayer;
         private readonly GuiTheme _theme;
         private readonly GameLibraryPanel _library;
         private readonly Action _fitView;
@@ -59,13 +61,25 @@ namespace BoardSandbox.Client.UI
         private SimulationProgress _simProgress;
         private SimulationResult _simResult;
 
-        public Hud(GameHost host, GuiTheme theme, Action fitView)
+        public Hud(GameHost host, Multiplayer multiplayer, GuiTheme theme, Action fitView)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
+            _multiplayer = multiplayer ?? throw new ArgumentNullException(nameof(multiplayer));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _fitView = fitView;
-            _library = new GameLibraryPanel(host, theme, Defer, () => _releaseFocus = true);
+            _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true);
             _host.SessionReplaced += OnSessionReplaced;
+            _multiplayer.RoomChanged += OnRoomChanged;
+        }
+
+        // The room of a game that somebody else hosts; null when the local player hosts or plays alone.
+        private NetRoom GuestRoom => _multiplayer.Room != null && !_multiplayer.Room.IsHost ? _multiplayer.Room : null;
+
+        // Entering a room puts its game on the table, so the list of games gets out of the way.
+        private void OnRoomChanged()
+        {
+            if (_multiplayer.Room != null && _library.IsOpen)
+                _library.Close();
         }
 
         // True while a text field has the keyboard, so that shortcuts leave the typed characters alone.
@@ -169,6 +183,14 @@ namespace BoardSandbox.Client.UI
                 return;
             }
 
+            if (GuestRoom != null)
+            {
+                DrawBanner();
+                DrawGuestPanel(GuestRoom);
+                DrawToasts();
+                return;
+            }
+
             HandleKeys(e);
             DrawBanner();
             DrawGamePanel();
@@ -181,19 +203,37 @@ namespace BoardSandbox.Client.UI
         {
             GameSession session = _host.Session;
             _hasSwatch = false;
-            if (session == null)
+            NetRoom room = _multiplayer.Room;
+            NetRoom guest = GuestRoom;
+            ViewModel view;
+            ModManifest manifest;
+            if (guest != null)
             {
-                _status = _host.Catalog.Mods.Count == 0 ? "No games found" : "Pick a game";
-                return;
+                NetBoard board = guest.LocalBoard ?? (guest.Boards.Count > 0 ? guest.Boards[0] : null);
+                if (board == null || board.Queue.Display.Turn <= 0 && !board.Queue.Display.IsOver)
+                {
+                    _status = board == null ? "Joining…" : "Waiting for the host to start";
+                    return;
+                }
+                view = board.Queue.Display;
+                manifest = guest.Mod.Manifest;
             }
-            if (!session.IsStarted)
+            else
             {
-                _status = "Press New game";
-                return;
+                if (session == null)
+                {
+                    _status = _host.Catalog.Mods.Count == 0 ? "No games found" : "Pick a game";
+                    return;
+                }
+                if (!session.IsStarted)
+                {
+                    _status = "Press New game";
+                    return;
+                }
+                view = session.View;
+                manifest = session.Mod.Manifest;
             }
 
-            ViewModel view = session.View;
-            ModManifest manifest = session.Mod.Manifest;
             if (view.IsOver)
             {
                 OverInfo over = view.Over;
@@ -212,7 +252,10 @@ namespace BoardSandbox.Client.UI
             }
             if (view.Turn > 0)
             {
-                _status = SeatName(manifest, view.Turn) + " to move" + (_host.AcceptsHumanInput ? string.Empty : " (computer)");
+                string who = room == null ? (_host.AcceptsHumanInput ? string.Empty : " (computer)")
+                    : room.SplitScreen ? string.Empty
+                    : room.CanAct ? " (you)" : guest == null && !_host.AcceptsHumanInput ? " (computer)" : string.Empty;
+                _status = SeatName(manifest, view.Turn) + " to move" + who;
                 _hasSwatch = true;
                 _swatch = SeatColor(manifest, view.Turn);
                 return;
@@ -348,9 +391,54 @@ namespace BoardSandbox.Client.UI
                 DrawTimeline(session);
                 DrawOptions();
             }
+            if (_multiplayer.Room != null)
+                DrawRoom(_multiplayer.Room);
 
             EndBox();
             EndArea();
+        }
+
+        // What somebody who joined a room sees instead of the controls of a game.
+        private void DrawGuestPanel(NetRoom room)
+        {
+            float width = _theme.Sf(310);
+            BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
+            BeginBox(width);
+            ModManifest manifest = room.Mod.Manifest;
+            GUILayout.Label(DisplayText.Clip(manifest.Name, 40), _theme.Heading);
+            if (manifest.Description.Length > 0)
+                GUILayout.Label(DisplayText.Clip(manifest.Description, 600, false), _theme.Muted);
+            if (GUILayout.Button("Fit view (F)", _theme.Button))
+                Defer(() => _fitView?.Invoke());
+            DrawRoom(room);
+            EndBox();
+            EndArea();
+        }
+
+        private void DrawRoom(NetRoom room)
+        {
+            ModManifest manifest = room.Mod.Manifest;
+            GUILayout.Space(_theme.Sf(8));
+            GUILayout.Label(room.IsHost ? "Online room (you host)" : "Online room", _theme.Muted);
+            IReadOnlyList<NetPlayer> players = room.Players;
+            for (int i = 0; i < players.Count && i < 16; i++)
+            {
+                NetPlayer player = players[i];
+                string role = room.SplitScreen ? (player.Board > 0 ? "plays" : "watches") : player.Seat > 0 ? SeatName(manifest, player.Seat) : "watches";
+                GUILayout.BeginHorizontal();
+                if (!room.SplitScreen && player.Seat > 0)
+                {
+                    Color previous = GUI.color;
+                    GUI.color = SeatColor(manifest, player.Seat);
+                    GUILayout.Box(GUIContent.none, _theme.Swatch);
+                    GUI.color = previous;
+                }
+                GUILayout.Label(DisplayText.Clip(player.Name, 24) + (player.Id == room.LocalId ? " (you)" : string.Empty), _theme.Label, GUILayout.ExpandWidth(true));
+                GUILayout.Label(role, _theme.Muted, GUILayout.ExpandWidth(false));
+                GUILayout.EndHorizontal();
+            }
+            if (GUILayout.Button(room.IsHost ? "Close room" : "Leave room", _theme.Button))
+                Defer(_multiplayer.Leave);
         }
 
         private void DrawGamesButton()

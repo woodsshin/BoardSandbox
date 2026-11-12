@@ -63,6 +63,7 @@ namespace BoardSandbox.Client.UI
         public GUIStyle RowInfo { get; private set; }
         public GUIStyle TileLetter { get; private set; }
         public GUIStyle Badge { get; private set; }
+        public GUIStyle PanelTitle { get; private set; }
         public GUIStyle InfoToast { get; private set; }
         public GUIStyle WarningToast { get; private set; }
         public GUIStyle ErrorToast { get; private set; }
@@ -242,6 +243,8 @@ namespace BoardSandbox.Client.UI
             RowName.fontStyle = FontStyle.Bold;
             RowInfo = Line(11, MutedColor, TextAnchor.MiddleLeft);
             Badge = Line(11, Color.Lerp(AccentColor, Color.white, 0.45f), TextAnchor.MiddleRight);
+            PanelTitle = Line(15, TextColor, TextAnchor.MiddleCenter);
+            PanelTitle.fontStyle = FontStyle.Bold;
             TileLetter = Line(20, Color.white, TextAnchor.MiddleCenter);
             TileLetter.fontStyle = FontStyle.Bold;
 

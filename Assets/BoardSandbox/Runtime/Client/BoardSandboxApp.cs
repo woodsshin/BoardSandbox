@@ -11,6 +11,7 @@ using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
 using BoardSandbox.Core.Luau;
 using BoardSandbox.Core.Mods;
+using BoardSandbox.Core.Net;
 using UnityEngine;
 
 namespace BoardSandbox.Client
@@ -31,19 +32,39 @@ namespace BoardSandbox.Client
         // 0 follows the height of the screen.
         [SerializeField] private float uiScale = 0f;
 
+        // One table on screen: a view of it, the camera that looks at it and the part of the screen it gets.
+        private sealed class Panel
+        {
+            public SceneView View;
+            public CameraRig Rig;
+            public GameObject OwnedCamera;
+            public PlaybackQueue Queue;
+            public string Title = string.Empty;
+            public Rect Area;
+            public int FramedVersion = -1;
+            public bool OverflowReported;
+        }
+
+        private const int MaxPanels = 8;
+        private const int FirstPanelLayer = 31;
+
         private GameHost _host;
+        private Multiplayer _multiplayer;
         private MaterialSet _materials;
-        private SceneView _view;
+        private readonly List<Panel> _panels = new List<Panel>();
+        private Panel _active;
+        private Panel _pressPanel;
         private PlaybackQueue _queue;
-        private CameraRig _rig;
+        private PlaybackQueue _statusSource;
+        private ModManifest _manifest;
+        private int _boardsVersion = -1;
+        private int _mainMask;
         private GuiTheme _theme;
         private Hud _hud;
         private GameObject _ownedCamera;
 
         private GameSession _boundSession;
         private ViewHints _hints = new ViewHints(null);
-        private int _framedVersion = -1;
-        private bool _overflowReported;
         private string _failure;
 
         private bool _pressing;
@@ -88,7 +109,16 @@ namespace BoardSandbox.Client
             Unbind();
             if (_host != null)
                 _host.SessionReplaced -= OnSessionReplaced;
-            _view?.Dispose();
+            if (_multiplayer != null)
+                _multiplayer.RoomChanged -= OnRoomChanged;
+            _multiplayer?.Dispose();
+            foreach (Panel panel in _panels)
+            {
+                panel.View.Dispose();
+                if (panel.OwnedCamera != null)
+                    ObjectUtil.Destroy(panel.OwnedCamera);
+            }
+            _panels.Clear();
             _materials?.Dispose();
             _theme?.Dispose();
             _host?.Dispose();
@@ -100,14 +130,18 @@ namespace BoardSandbox.Client
         {
             _theme = new GuiTheme();
             _materials = new MaterialSet();
-            _view = new SceneView(_materials);
             _queue = new PlaybackQueue();
-            _queue.Played += OnEvent;
-            _rig = new CameraRig(ResolveCamera());
+            Camera main = ResolveCamera();
+            _mainMask = main.cullingMask;
+            _panels.Add(new Panel { View = new SceneView(_materials), Rig = new CameraRig(main), Queue = _queue });
+            _active = _panels[0];
+            Listen(_queue);
 
             _host = new GameHost(new ModCatalog(ModSources()), new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds });
             _host.SessionReplaced += OnSessionReplaced;
-            _hud = new Hud(_host, _theme, () => _rig.Reframe());
+            _multiplayer = new Multiplayer(_host, CreateLobbyBackend());
+            _multiplayer.RoomChanged += OnRoomChanged;
+            _hud = new Hud(_host, _multiplayer, _theme, () => (_active ?? _panels[0]).Rig.Reframe());
 
             foreach (ModLoadError error in _host.Catalog.Errors)
                 _host.Toasts.Add("Could not load " + Path.GetFileName(error.Directory) + ": " + error.Message, ToastLevel.Error, _host.Now);
@@ -125,6 +159,15 @@ namespace BoardSandbox.Client
             }
             if (_host.Session == null)
                 _hud.OpenLibrary();
+        }
+
+        private static ILobbyBackend CreateLobbyBackend()
+        {
+#if BSE_STEAM && UNITY_STANDALONE_WIN
+            return new Steam.SteamBackend();
+#else
+            return null;
+#endif
         }
 
         private Camera ResolveCamera()
@@ -173,17 +216,124 @@ namespace BoardSandbox.Client
             Unbind();
             _boundSession = _host.Session;
             _queue.Reset(_boundSession?.View);
-            if (_boundSession == null)
-                return;
-            _boundSession.EventApplied += _queue.Enqueue;
-            _boundSession.ScriptLog += OnScriptLog;
-            _boundSession.HandlerFailed += OnHandlerFailed;
+            if (_boundSession != null)
+            {
+                _boundSession.EventApplied += _queue.Enqueue;
+                _boundSession.ScriptLog += OnScriptLog;
+                _boundSession.HandlerFailed += OnHandlerFailed;
+            }
+            // Choosing a game of one's own while being a guest somewhere means leaving there.
+            if (_multiplayer != null && _multiplayer.Room != null && !_multiplayer.Room.IsHost)
+                _multiplayer.Leave();
+            else
+                Arrange();
+        }
 
-            ModManifest manifest = _boundSession.Mod.Manifest;
-            _hints = new ViewHints(manifest.Client);
-            _overflowReported = false;
-            _hud.Note = _hints.CanClick || _hints.CanDrag || _hints.KeyCount > 0 ? string.Empty : "Clicks do nothing in this game: its config.json has no client.click.action. Use the console command 'play'.";
-            _view.Bind(_hints, manifest);
+        private void OnRoomChanged()
+        {
+            Arrange();
+        }
+
+        // Decides which tables are on screen: the one of the local game, the one a room shares, or one per player
+        // of a split game with the local player's first.
+        private void Arrange()
+        {
+            NetRoom room = _multiplayer?.Room;
+            _boardsVersion = room != null ? room.BoardsVersion : -1;
+            _manifest = room != null ? room.Mod.Manifest : _boundSession?.Mod.Manifest;
+            _hints = new ViewHints(_manifest?.Client);
+            _hud.Note = _manifest == null || _hints.CanClick || _hints.CanDrag || _hints.KeyCount > 0 ? string.Empty
+                : "Clicks do nothing in this game: its config.json has no client.click.action. Use the console command 'play'.";
+
+            List<PlaybackQueue> queues = new List<PlaybackQueue>();
+            List<string> titles = new List<string>();
+            PlaybackQueue acting = _queue;
+            if (room == null)
+            {
+                queues.Add(_queue);
+                titles.Add(string.Empty);
+            }
+            else
+            {
+                NetBoard own = room.LocalBoard;
+                acting = own?.Queue;
+                if (own != null)
+                {
+                    queues.Add(own.Queue);
+                    titles.Add(room.SplitScreen ? own.Title + " (you)" : string.Empty);
+                }
+                foreach (NetBoard board in room.Boards)
+                {
+                    if (board != own && queues.Count < MaxPanels)
+                    {
+                        queues.Add(board.Queue);
+                        titles.Add(board.Title);
+                    }
+                }
+                if (queues.Count == 0)
+                {
+                    queues.Add(_queue);
+                    titles.Add(string.Empty);
+                    acting = null;
+                }
+            }
+
+            while (_panels.Count > queues.Count)
+            {
+                Panel last = _panels[_panels.Count - 1];
+                last.View.Dispose();
+                ObjectUtil.Destroy(last.OwnedCamera);
+                _panels.RemoveAt(_panels.Count - 1);
+            }
+            Camera main = _panels[0].Rig.Camera;
+            while (_panels.Count < queues.Count)
+            {
+                int layer = FirstPanelLayer + 1 - _panels.Count;
+                GameObject holder = new GameObject("Board Camera " + (_panels.Count + 1));
+                Camera camera = holder.AddComponent<Camera>();
+                camera.depth = main.depth;
+                camera.cullingMask = 1 << layer;
+                _panels.Add(new Panel { View = new SceneView(_materials, layer), Rig = new CameraRig(camera), OwnedCamera = holder });
+            }
+
+            int extraLayers = 0;
+            for (int i = 1; i < _panels.Count; i++)
+                extraLayers |= 1 << (FirstPanelLayer + 1 - i);
+            main.cullingMask = _mainMask & ~extraLayers;
+
+            int columns = Mathf.CeilToInt(Mathf.Sqrt(_panels.Count));
+            int rows = Mathf.CeilToInt(_panels.Count / (float)columns);
+            _active = null;
+            for (int i = 0; i < _panels.Count; i++)
+            {
+                Panel panel = _panels[i];
+                panel.Title = titles[i];
+                panel.Rig.Camera.rect = new Rect((i % columns) / (float)columns, 1f - (i / columns + 1) / (float)rows, 1f / columns, 1f / rows);
+                if (!ReferenceEquals(panel.Queue, queues[i]) || !ReferenceEquals(panel.View.Manifest, _manifest))
+                {
+                    panel.Queue = queues[i];
+                    panel.FramedVersion = -1;
+                    panel.OverflowReported = false;
+                    panel.View.Bind(_hints, _manifest);
+                }
+                if (ReferenceEquals(panel.Queue, acting))
+                    _active = panel;
+            }
+            Listen(acting);
+            _pressing = false;
+            _pressPanel = null;
+        }
+
+        // The messages of the game the local player plays become toasts.
+        private void Listen(PlaybackQueue queue)
+        {
+            if (ReferenceEquals(queue, _statusSource))
+                return;
+            if (_statusSource != null)
+                _statusSource.Played -= OnEvent;
+            _statusSource = queue;
+            if (queue != null)
+                queue.Played += OnEvent;
         }
 
         private void Unbind()
@@ -221,30 +371,42 @@ namespace BoardSandbox.Client
             try
             {
                 _hud.RunDeferred();
-                _host.AiPaused = _hud.ModalOpen;
+                _multiplayer.Update();
+                NetRoom room = _multiplayer.Room;
+                _host.AiPaused = _hud.ModalOpen || (room != null && !room.IsHost);
                 _host.Update();
+                if (room != null)
+                {
+                    // The room shows the local game through a queue of its own.
+                    _queue.Finish();
+                    if (room.BoardsVersion != _boardsVersion)
+                        Arrange();
+                }
 
-                GameSession session = _host.Session;
                 float delta = Time.unscaledDeltaTime;
-                _queue.Update(delta);
-                _view.Sync(_queue.Display);
-                _view.SetEffect(_queue.ActiveEffect, _queue.Progress);
-                if (_view.Overflowed && !_overflowReported)
+                foreach (Panel panel in _panels)
                 {
-                    _overflowReported = true;
-                    _host.Toasts.Add("This game has more than " + SceneView.MaxPieces + " pieces; the rest are not drawn.", ToastLevel.Warning, _host.Now);
+                    panel.Queue.Update(delta);
+                    panel.View.Sync(panel.Queue.Display);
+                    panel.View.SetEffect(panel.Queue.ActiveEffect, panel.Queue.Progress);
+                    if (panel.View.Overflowed && !panel.OverflowReported)
+                    {
+                        panel.OverflowReported = true;
+                        _host.Toasts.Add("This game has more than " + SceneView.MaxPieces + " pieces; the rest are not drawn.", ToastLevel.Warning, _host.Now);
+                    }
+                    panel.Rig.Background = panel.View.Stage.Background;
+                    if (panel.View.FrameVersion != panel.FramedVersion)
+                    {
+                        bool first = panel.FramedVersion < 0;
+                        panel.FramedVersion = panel.View.FrameVersion;
+                        panel.Rig.Frame(panel.View.Stage.Camera, panel.View.Layout, first);
+                    }
+                    panel.View.Tick(delta);
+                    panel.Rig.Tick(delta);
+                    Rect pixels = panel.Rig.Camera.pixelRect;
+                    panel.Area = new Rect(pixels.x, Screen.height - pixels.yMax, pixels.width, pixels.height);
                 }
-                _rig.Background = _view.Stage.Background;
-                if (_view.FrameVersion != _framedVersion)
-                {
-                    bool first = _framedVersion < 0;
-                    _framedVersion = _view.FrameVersion;
-                    _rig.Frame(_view.Stage.Camera, _view.Layout, first);
-                }
-
-                _view.Tick(delta);
-                _rig.Tick(delta);
-                UpdatePreview(session);
+                UpdatePreview();
                 _hud.Snapshot(_host.Now);
             }
             catch (Exception e)
@@ -253,11 +415,46 @@ namespace BoardSandbox.Client
             }
         }
 
-        private void UpdatePreview(GameSession session)
+        private void UpdatePreview()
         {
-            bool show = _hovering && _hints.CanClick && !_hints.ClickObjects && InputOpen && !_pressing;
-            Color32 color = show ? ObjectLook.SeatColor(session.Mod.Manifest, session.View.Turn) : new Color32(255, 255, 255, 255);
-            _view.SetPreview(show, _hoverX, _hoverY, color);
+            foreach (Panel panel in _panels)
+            {
+                bool show = panel == _active && _hovering && _hints.CanClick && !_hints.ClickObjects && InputOpen && !_pressing;
+                Color32 color = show ? ObjectLook.SeatColor(_manifest, ActingSeat) : new Color32(255, 255, 255, 255);
+                panel.View.SetPreview(show, _hoverX, _hoverY, color);
+            }
+        }
+
+        private int ActingSeat
+        {
+            get
+            {
+                NetRoom room = _multiplayer.Room;
+                if (room != null)
+                    return room.ActingSeat;
+                return _host.Session != null ? _host.Session.View.Turn : 0;
+            }
+        }
+
+        private Panel PanelAt(Vector2 guiPoint)
+        {
+            foreach (Panel panel in _panels)
+            {
+                if (panel.Area.Contains(guiPoint))
+                    return panel;
+            }
+            return null;
+        }
+
+        private void DrawTitles()
+        {
+            if (_panels.Count < 2 || Event.current.type != EventType.Repaint)
+                return;
+            foreach (Panel panel in _panels)
+            {
+                Rect area = panel.Area;
+                GUI.Label(new Rect(area.x, area.yMax - _theme.Sf(34f), area.width, _theme.Sf(30f)), DisplayText.Clip(panel.Title, 40), _theme.PanelTitle);
+            }
         }
 
         private void OnGUI()
@@ -271,6 +468,7 @@ namespace BoardSandbox.Client
             {
                 _theme.Ensure(uiScale > 0f ? uiScale : Mathf.Round(Mathf.Clamp(Screen.height / 900f, 1f, 2.5f) * 4f) / 4f);
                 Event e = Event.current;
+                DrawTitles();
                 _hud.Draw();
                 if (e.type == EventType.Repaint)
                     UpdateHover(e.mousePosition);
@@ -290,19 +488,22 @@ namespace BoardSandbox.Client
                 case EventType.MouseDown:
                     if (_hud.Contains(e.mousePosition))
                         return;
+                    _pressPanel = PanelAt(e.mousePosition);
+                    if (_pressPanel == null)
+                        return;
                     GUI.FocusControl(null);
                     _pressing = true;
                     _dragged = false;
                     _pressButton = e.button;
                     _pressPosition = e.mousePosition;
                     _gestureSent = false;
-                    _pressOnObject = e.button == 0 && _hints.CanDrag && InputOpen
-                        && _view.TryPickObject(_rig.RayFromScreen(GuiToScreen(e.mousePosition)), out _pressHit);
+                    _pressOnObject = e.button == 0 && _pressPanel == _active && _hints.CanDrag && InputOpen
+                        && _active.View.TryPickObject(_active.Rig.RayFromScreen(GuiToScreen(e.mousePosition)), out _pressHit);
                     e.Use();
                     break;
 
                 case EventType.MouseDrag:
-                    if (!_pressing)
+                    if (!_pressing || _pressPanel == null)
                         return;
                     if ((e.mousePosition - _pressPosition).magnitude > DragThreshold)
                         _dragged = true;
@@ -317,8 +518,9 @@ namespace BoardSandbox.Client
                     }
                     else if (_dragged || _pressButton != 0)
                     {
-                        CameraSettings camera = _view.Stage.Camera;
-                        _rig.Drag(_pressButton == 0 ? camera.LeftDrag : _pressButton == 1 ? camera.RightDrag : camera.MiddleDrag, e.delta, Screen.height);
+                        CameraSettings camera = _pressPanel.View.Stage.Camera;
+                        _pressPanel.Rig.Drag(_pressButton == 0 ? camera.LeftDrag : _pressButton == 1 ? camera.RightDrag : camera.MiddleDrag, e.delta,
+                            _pressPanel.Area.height);
                     }
                     e.Use();
                     break;
@@ -327,7 +529,7 @@ namespace BoardSandbox.Client
                     if (!_pressing || e.button != _pressButton)
                         return;
                     _pressing = false;
-                    if (!_dragged && (_pressButton == 0 || (_pressButton == 1 && _hints.ClickObjects)))
+                    if (!_dragged && _pressPanel == _active && (_pressButton == 0 || (_pressButton == 1 && _hints.ClickObjects)))
                     {
                         Vector2 at = e.mousePosition;
                         int button = _pressButton;
@@ -340,7 +542,10 @@ namespace BoardSandbox.Client
                 case EventType.ScrollWheel:
                     if (_hud.Contains(e.mousePosition))
                         return;
-                    _rig.Zoom(e.delta.y > 0f ? 1f : -1f);
+                    Panel under = PanelAt(e.mousePosition);
+                    if (under == null)
+                        return;
+                    under.Rig.Zoom(e.delta.y > 0f ? 1f : -1f);
                     e.Use();
                     break;
             }
@@ -351,6 +556,7 @@ namespace BoardSandbox.Client
             if (e.type != EventType.KeyDown || _hud.TextFocused || _hud.ModalOpen)
                 return;
             bool modifier = e.control || e.command;
+            bool guest = _multiplayer.Room != null && !_multiplayer.Room.IsHost;
             JsonValue bound = modifier || e.alt ? null : _hints.KeyCommand(KeyName(e.keyCode), e.shift);
             if (bound != null)
             {
@@ -361,21 +567,22 @@ namespace BoardSandbox.Client
             switch (e.keyCode)
             {
                 case KeyCode.F:
-                    _rig.Reframe();
+                    foreach (Panel panel in _panels)
+                        panel.Rig.Reframe();
                     break;
                 case KeyCode.G:
                     _hud.Defer(_hud.OpenLibrary);
                     break;
-                case KeyCode.N:
+                case KeyCode.N when !guest:
                     _hud.Defer(() => _host.StartNewGame());
                     break;
-                case KeyCode.Z when modifier && !e.shift:
-                case KeyCode.LeftArrow:
+                case KeyCode.Z when modifier && !e.shift && !guest:
+                case KeyCode.LeftArrow when !guest:
                     _hud.Defer(() => _host.Undo());
                     break;
-                case KeyCode.Y when modifier:
-                case KeyCode.Z when modifier && e.shift:
-                case KeyCode.RightArrow:
+                case KeyCode.Y when modifier && !guest:
+                case KeyCode.Z when modifier && e.shift && !guest:
+                case KeyCode.RightArrow when !guest:
                     _hud.Defer(() => _host.Redo());
                     break;
                 default:
@@ -389,18 +596,33 @@ namespace BoardSandbox.Client
             _hovering = false;
             if (_pressing && _dragged)
                 return;
-            if (_hints.ClickObjects || _hud.Contains(mouse) || !_view.TryPickCell(_rig.RayFromScreen(GuiToScreen(mouse)), out int x, out int y))
+            if (_active == null || _hints.ClickObjects || _hud.Contains(mouse) || !_active.Area.Contains(mouse)
+                || !_active.View.TryPickCell(_active.Rig.RayFromScreen(GuiToScreen(mouse)), out int x, out int y))
                 return;
             _hovering = true;
             _hoverX = x;
             _hoverY = y;
         }
 
-        private bool InputOpen => _host.AcceptsHumanInput && !_queue.IsBusy;
+        private bool InputOpen
+        {
+            get
+            {
+                if (_active == null || _active.Queue.IsBusy)
+                    return false;
+                NetRoom room = _multiplayer.Room;
+                return room != null ? room.CanAct : _host.AcceptsHumanInput;
+            }
+        }
 
         private void SubmitHuman(JsonValue command)
         {
-            if (InputOpen)
+            if (!InputOpen)
+                return;
+            NetRoom room = _multiplayer.Room;
+            if (room != null)
+                room.Submit(command);
+            else
                 _host.Submit(_host.Session.View.Turn, command, "human");
         }
 
@@ -408,17 +630,17 @@ namespace BoardSandbox.Client
         {
             if (!_hints.CanClick || !InputOpen)
                 return;
-            Ray ray = _rig.RayFromScreen(GuiToScreen(guiPoint));
+            Ray ray = _active.Rig.RayFromScreen(GuiToScreen(guiPoint));
             JsonValue command = JsonValue.NewObject().Set("action", _hints.ClickAction);
             if (_hints.ClickObjects)
             {
-                if (!_view.TryPickObject(ray, out PickHit hit))
+                if (!_active.View.TryPickObject(ray, out PickHit hit))
                     return;
                 command.Set("id", hit.Id).Set("point", ModVector(hit.Point)).Set("normal", ModVector(hit.Normal)).Set("button", button).Set("shift", shift);
             }
             else
             {
-                if (button != 0 || !_view.TryPickCell(ray, out int x, out int y))
+                if (button != 0 || !_active.View.TryPickCell(ray, out int x, out int y))
                     return;
                 command.Set("x", x).Set("y", y);
             }
@@ -431,7 +653,7 @@ namespace BoardSandbox.Client
         {
             if (!_hints.CanDrag || !InputOpen)
                 return;
-            Ray ray = _rig.RayFromScreen(GuiToScreen(guiPoint));
+            Ray ray = _active.Rig.RayFromScreen(GuiToScreen(guiPoint));
             if (!ScenePicker.RayPlane(ray.origin, ray.direction, _pressHit.Point, _pressHit.Normal, out Vector3 reached))
                 return;
             Vector3 along = reached - _pressHit.Point;

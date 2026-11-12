@@ -83,6 +83,13 @@ namespace BoardSandbox.Core.App
         // Raised after the session was replaced; the table of the previous session is gone.
         public event Action SessionReplaced;
 
+        // Raised right before a game starts with the options it is about to get, which a listener may change,
+        // and right after it has started.
+        public event Action<JsonValue> GameStarting;
+        public event Action GameStarted;
+
+        public SessionOptions SessionOptions => _options.Session;
+
         public bool SelectMod(string id)
         {
             ModPackage mod = Catalog.Find(id);
@@ -154,6 +161,7 @@ namespace BoardSandbox.Core.App
                 return false;
             try
             {
+                GameStarting?.Invoke(NewGameOptions);
                 Session.NewGame(NewGameOptions);
             }
             catch (Exception e) when (e is GameSessionException || e is LuauException)
@@ -162,6 +170,7 @@ namespace BoardSandbox.Core.App
                 return false;
             }
             _aiDue = -1;
+            GameStarted?.Invoke();
             return true;
         }
 

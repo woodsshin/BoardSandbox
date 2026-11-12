@@ -10,6 +10,7 @@
     { "name": "Solver", "color": "#46c8f2" }
   ],
   "options": { "scramble": 25, "seed": 0 },
+  "multiplayer": { "mode": "split", "players": 4, "seed_option": "seed" },
   "client": {
     "click": { "action": "turn_face", "target": "object" },
     "drag": { "action": "turn_drag" },

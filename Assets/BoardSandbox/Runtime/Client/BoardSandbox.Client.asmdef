@@ -2,7 +2,8 @@
   "name": "BoardSandbox.Client",
   "rootNamespace": "BoardSandbox.Client",
   "references": [
-    "BoardSandbox.Core"
+    "BoardSandbox.Core",
+    "com.rlabrecque.steamworks.net"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
@@ -11,6 +12,12 @@
   "precompiledReferences": [],
   "autoReferenced": true,
   "defineConstraints": [],
-  "versionDefines": [],
+  "versionDefines": [
+    {
+      "name": "com.rlabrecque.steamworks.net",
+      "expression": "",
+      "define": "BSE_STEAM"
+    }
+  ],
   "noEngineReferences": false
 }
