@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using BoardSandbox.Client.Geometry;
+using BoardSandbox.Core.Agents;
 using BoardSandbox.Core.App;
 using BoardSandbox.Core.Commands;
 using BoardSandbox.Core.Game;
@@ -30,6 +31,7 @@ namespace BoardSandbox.Client.UI
         private readonly Multiplayer _multiplayer;
         private readonly GuiTheme _theme;
         private readonly GameLibraryPanel _library;
+        private readonly AgentConsolePanel _agents;
         private readonly Action _fitView;
         private readonly Queue<Action> _deferred = new Queue<Action>();
         private readonly List<Rect> _rects = new List<Rect>();
@@ -61,13 +63,14 @@ namespace BoardSandbox.Client.UI
         private SimulationProgress _simProgress;
         private SimulationResult _simResult;
 
-        public Hud(GameHost host, Multiplayer multiplayer, GuiTheme theme, Action fitView)
+        public Hud(GameHost host, Multiplayer multiplayer, ModStudio studio, GuiTheme theme, Action fitView)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _multiplayer = multiplayer ?? throw new ArgumentNullException(nameof(multiplayer));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _fitView = fitView;
-            _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true);
+            _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true, OpenStudio);
+            _agents = new AgentConsolePanel(studio, theme, () => _host.Now, Defer, () => _releaseFocus = true);
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer.RoomChanged += OnRoomChanged;
             _multiplayer.RoomLost += OpenLibrary;
@@ -121,6 +124,33 @@ namespace BoardSandbox.Client.UI
             _rects.Add(new Rect(0f, 0f, Width, Height));
         }
 
+        // Opens the AI console beside the table: for a new game, or for the game of the entry when it can be edited.
+        // Call it between two frames, not from inside OnGUI.
+        public void OpenStudio(ModEntry entry)
+        {
+            if (_library.IsOpen)
+                _library.Close();
+            if (entry == null)
+                _agents.OpenNew();
+            else
+                _agents.OpenEdit(entry.Mod);
+        }
+
+        // How much of the width of the screen the AI console takes at the right edge, from 0 to 1. The owner keeps
+        // the table out of that part.
+        public float DockFraction
+        {
+            get
+            {
+                if (!_agents.IsOpen || ModalOpen || Width <= 0f)
+                    return 0f;
+                return Mathf.Clamp((Width - _agents.Area.x + Margin * 0.5f) / Width, 0f, 0.7f);
+            }
+        }
+
+        // The width that is left for the table and what is centered over it.
+        private float FreeWidth => _agents.IsOpen && _agents.Area.width > 0f ? _agents.Area.x : Width;
+
         public void Defer(Action action)
         {
             _deferred.Enqueue(action);
@@ -160,6 +190,7 @@ namespace BoardSandbox.Client.UI
             _now = now;
             _toasts.Clear();
             _toasts.AddRange(_host.Toasts.Active(now));
+            _agents.Snapshot();
 
             _simRunning = _host.Simulation.IsRunning;
             _simProgress = _host.Simulation.Progress;
@@ -214,8 +245,21 @@ namespace BoardSandbox.Client.UI
             else
             {
                 DrawGamePanel();
-                DrawToolColumn();
+                if (!_agents.IsOpen)
+                    DrawToolColumn();
                 DrawConsole();
+            }
+            if (_agents.IsOpen)
+            {
+                // No camera draws into the strip that the console takes, so it gets a background of its own.
+                if (e.type == EventType.Repaint && _agents.Area.width > 0f)
+                {
+                    float left = _agents.Area.x - Margin * 0.5f;
+                    GUI.DrawTexture(new Rect(left, 0f, Width - left, Height), _theme.TrackTexture);
+                }
+                _agents.Draw();
+                if (e.type == EventType.Repaint)
+                    _rects.Add(_agents.Area);
             }
             DrawToasts();
         }
@@ -425,7 +469,7 @@ namespace BoardSandbox.Client.UI
             if (_status.Length == 0)
                 return;
             float width = _theme.Sf(420);
-            BeginArea(new Rect((Width - width) * 0.5f, Margin, width, _theme.Sf(64)));
+            BeginArea(new Rect((FreeWidth - width) * 0.5f, Margin, width, _theme.Sf(64)));
             GUILayout.BeginHorizontal(_theme.Banner);
             GUILayout.FlexibleSpace();
             if (_hasSwatch)
@@ -517,8 +561,18 @@ namespace BoardSandbox.Client.UI
 
         private void DrawGamesButton()
         {
-            if (GUILayout.Button("Games (G)", _theme.Button))
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Games (G)", _theme.Button, GUILayout.ExpandWidth(true)))
                 Defer(OpenLibrary);
+            bool open = GUILayout.Toggle(_agents.IsOpen, "AI console", _theme.Button, GUILayout.ExpandWidth(true));
+            if (open != _agents.IsOpen)
+            {
+                if (open)
+                    Defer(_agents.Show);
+                else
+                    Defer(_agents.Close);
+            }
+            GUILayout.EndHorizontal();
         }
 
         private void DrawSeats(ModManifest manifest)
@@ -741,7 +795,7 @@ namespace BoardSandbox.Client.UI
                 HandleConsoleKey(e);
 
             float height = _theme.Sf(240);
-            float width = Width - 2f * Margin;
+            float width = FreeWidth - 2f * Margin;
             BeginArea(new Rect(Margin, Height - height - Margin, width, height));
             BeginBox(width);
 
@@ -846,7 +900,8 @@ namespace BoardSandbox.Client.UI
                 return;
             float width = _theme.Sf(520);
             float reserved = _showConsole ? _theme.Sf(240) + Margin : 0f;
-            BeginArea(new Rect((Width - width) * 0.5f, 0f, width, Height - reserved - Margin));
+            float free = _library.IsOpen || _multiplayer.Loading != null ? Width : FreeWidth;
+            BeginArea(new Rect((free - width) * 0.5f, 0f, width, Height - reserved - Margin));
             GUILayout.FlexibleSpace();
             Color previous = GUI.color;
             foreach (Toast toast in _toasts)

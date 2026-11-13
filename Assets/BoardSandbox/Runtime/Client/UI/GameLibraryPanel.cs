@@ -34,6 +34,7 @@ namespace BoardSandbox.Client.UI
         private readonly GameLibrary _library;
         private readonly Action<Action> _defer;
         private readonly Action _releaseFocus;
+        private readonly Action<ModEntry> _openStudio;
 
         private string _queryText = string.Empty;
         private Vector2 _listScroll;
@@ -58,8 +59,11 @@ namespace BoardSandbox.Client.UI
         private string _roomsFor = string.Empty;
         private Vector2 _roomScroll;
 
-        public GameLibraryPanel(GameHost host, Multiplayer multiplayer, GuiTheme theme, Action<Action> defer, Action releaseFocus)
+        // openStudio opens the AI console for a new game (null) or for the game of an entry; without it the buttons
+        // for that are left out.
+        public GameLibraryPanel(GameHost host, Multiplayer multiplayer, GuiTheme theme, Action<Action> defer, Action releaseFocus, Action<ModEntry> openStudio = null)
         {
+            _openStudio = openStudio;
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _multiplayer = multiplayer ?? throw new ArgumentNullException(nameof(multiplayer));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
@@ -500,7 +504,7 @@ namespace BoardSandbox.Client.UI
                 GUILayout.Label("Board Sandbox looked in:", _theme.Wrapped);
                 foreach (IModSource source in _host.Catalog.Sources)
                     GUILayout.Label(source.Origin.Label() + ": " + DisplayText.Clip(source.Description, 120), _theme.Muted);
-                GUILayout.Label("A game is a folder with a config.json and its .luau files. Put such a folder into one of the places above and press Rescan.", _theme.Wrapped);
+                GUILayout.Label("A game is a folder with a config.json and its .luau files. Put such a folder into one of the places above and press Rescan, or press Create to have an AI agent write one.", _theme.Wrapped);
             }
             GUILayout.FlexibleSpace();
         }
@@ -512,18 +516,30 @@ namespace BoardSandbox.Client.UI
             if (entry != null)
             {
                 bool running = _library.IsRunning(entry);
-                if (GUILayout.Button(running ? "Resume" : "Play", _theme.Button, GUILayout.Width(_theme.Sf(130f)), GUILayout.Height(_theme.Sf(34f))))
+                if (GUILayout.Button(running ? "Resume" : "Play", _theme.Button, GUILayout.Width(_theme.Sf(110f)), GUILayout.Height(_theme.Sf(34f))))
                 {
                     if (running)
                         _defer(Close);
                     else
                         _defer(Play);
                 }
-                if (running && GUILayout.Button("New game", _theme.Button, GUILayout.Width(_theme.Sf(110f)), GUILayout.Height(_theme.Sf(34f))))
+                if (running && GUILayout.Button("New game", _theme.Button, GUILayout.Width(_theme.Sf(96f)), GUILayout.Height(_theme.Sf(34f))))
                     _defer(Play);
             }
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Rescan", _theme.Button, GUILayout.Width(_theme.Sf(100f)), GUILayout.Height(_theme.Sf(34f))))
+            if (_openStudio != null)
+            {
+                // Only games in a folder of the player can be changed; the ones that come with the app cannot.
+                if (entry != null && entry.Origin == ModOrigin.Local && entry.Mod.Directory != null
+                    && GUILayout.Button("Edit with AI", _theme.Button, GUILayout.Width(_theme.Sf(100f)), GUILayout.Height(_theme.Sf(34f))))
+                {
+                    ModEntry edited = entry;
+                    _defer(() => _openStudio(edited));
+                }
+                if (GUILayout.Button("Create", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(34f))))
+                    _defer(() => _openStudio(null));
+            }
+            if (GUILayout.Button("Rescan", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(34f))))
                 _defer(Rescan);
             GUILayout.EndHorizontal();
         }

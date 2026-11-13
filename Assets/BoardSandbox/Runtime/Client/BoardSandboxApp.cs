@@ -6,6 +6,7 @@ using BoardSandbox.Client.Geometry;
 using BoardSandbox.Client.Rendering;
 using BoardSandbox.Client.UI;
 using BoardSandbox.Client.Views;
+using BoardSandbox.Core.Agents;
 using BoardSandbox.Core.App;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
@@ -50,6 +51,8 @@ namespace BoardSandbox.Client
 
         private GameHost _host;
         private Multiplayer _multiplayer;
+        private ModStudio _studio;
+        private float _dock;
         private MaterialSet _materials;
         private readonly List<Panel> _panels = new List<Panel>();
         private Panel _active;
@@ -112,6 +115,7 @@ namespace BoardSandbox.Client
             if (_multiplayer != null)
                 _multiplayer.RoomChanged -= OnRoomChanged;
             _multiplayer?.Dispose();
+            _studio?.Dispose();
             foreach (Panel panel in _panels)
             {
                 panel.View.Dispose();
@@ -141,7 +145,14 @@ namespace BoardSandbox.Client
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer = new Multiplayer(_host, CreateLobbyBackend());
             _multiplayer.RoomChanged += OnRoomChanged;
-            _hud = new Hud(_host, _multiplayer, _theme, () => (_active ?? _panels[0]).Rig.Reframe());
+
+            // Games written in the AI console go into the player's own folder of games, which ModSources lists.
+            AgentSettings agents = new AgentSettings(Path.Combine(Application.persistentDataPath, "agents.json"));
+            agents.Load();
+            if (agents.Problem.Length > 0)
+                _host.Toasts.Add(agents.Problem, ToastLevel.Warning, _host.Now);
+            _studio = new ModStudio(_host, LocalModsFolder, agents);
+            _hud = new Hud(_host, _multiplayer, _studio, _theme, () => (_active ?? _panels[0]).Rig.Reframe());
 
             foreach (ModLoadError error in _host.Catalog.Errors)
                 _host.Toasts.Add("Could not load " + Path.GetFileName(error.Directory) + ": " + error.Message, ToastLevel.Error, _host.Now);
@@ -201,9 +212,11 @@ namespace BoardSandbox.Client
                 foreach (string folder in extraModFolders)
                     AddLocalFolder(sources, folder);
             }
-            AddLocalFolder(sources, Path.Combine(Application.persistentDataPath, "Mods"));
+            AddLocalFolder(sources, LocalModsFolder);
             return sources;
         }
+
+        private static string LocalModsFolder => Path.Combine(Application.persistentDataPath, "Mods");
 
         private static void AddLocalFolder(List<IModSource> sources, string folder)
         {
@@ -301,14 +314,12 @@ namespace BoardSandbox.Client
                 extraLayers |= 1 << (FirstPanelLayer + 1 - i);
             main.cullingMask = _mainMask & ~extraLayers;
 
-            int columns = Mathf.CeilToInt(Mathf.Sqrt(_panels.Count));
-            int rows = Mathf.CeilToInt(_panels.Count / (float)columns);
+            Place();
             _active = null;
             for (int i = 0; i < _panels.Count; i++)
             {
                 Panel panel = _panels[i];
                 panel.Title = titles[i];
-                panel.Rig.Camera.rect = new Rect((i % columns) / (float)columns, 1f - (i / columns + 1) / (float)rows, 1f / columns, 1f / rows);
                 if (!ReferenceEquals(panel.Queue, queues[i]) || !ReferenceEquals(panel.View.Manifest, _manifest))
                 {
                     panel.Queue = queues[i];
@@ -322,6 +333,16 @@ namespace BoardSandbox.Client
             Listen(acting);
             _pressing = false;
             _pressPanel = null;
+        }
+
+        // Gives every table its part of the screen: a grid in what the AI console leaves free at the right edge.
+        private void Place()
+        {
+            float free = 1f - _dock;
+            int columns = Mathf.CeilToInt(Mathf.Sqrt(_panels.Count));
+            int rows = Mathf.CeilToInt(_panels.Count / (float)columns);
+            for (int i = 0; i < _panels.Count; i++)
+                _panels[i].Rig.Camera.rect = new Rect((i % columns) / (float)columns * free, 1f - (i / columns + 1) / (float)rows, free / columns, 1f / rows);
         }
 
         // The messages of the game the local player plays become toasts.
@@ -371,6 +392,7 @@ namespace BoardSandbox.Client
             try
             {
                 _hud.RunDeferred();
+                _studio.Update();
                 _multiplayer.Update();
                 NetRoom room = _multiplayer.Room;
                 _host.AiPaused = _hud.ModalOpen || (room != null && !room.IsHost);
@@ -381,6 +403,13 @@ namespace BoardSandbox.Client
                     _queue.Finish();
                     if (room.BoardsVersion != _boardsVersion)
                         Arrange();
+                }
+
+                float dock = _hud.DockFraction;
+                if (!Mathf.Approximately(dock, _dock))
+                {
+                    _dock = dock;
+                    Place();
                 }
 
                 float delta = Time.unscaledDeltaTime;

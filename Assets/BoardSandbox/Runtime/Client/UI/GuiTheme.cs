@@ -68,6 +68,15 @@ namespace BoardSandbox.Client.UI
         public GUIStyle WarningToast { get; private set; }
         public GUIStyle ErrorToast { get; private set; }
 
+        // The lines of the AI console: wrapped, in the fixed-width font, one color per kind of line.
+        public GUIStyle ConsoleAgent { get; private set; }
+        public GUIStyle ConsolePrompt { get; private set; }
+        public GUIStyle ConsoleInfo { get; private set; }
+        public GUIStyle ConsoleError { get; private set; }
+
+        // A text field of several lines.
+        public GUIStyle Area { get; private set; }
+
         public Texture2D TrackTexture { get; private set; }
         public Texture2D FillTexture { get; private set; }
 
@@ -248,6 +257,12 @@ namespace BoardSandbox.Client.UI
             TileLetter = Line(20, Color.white, TextAnchor.MiddleCenter);
             TileLetter.fontStyle = FontStyle.Bold;
 
+            ConsoleAgent = ConsoleLine(TextColor);
+            ConsolePrompt = ConsoleLine(Color.Lerp(AccentColor, Color.white, 0.45f));
+            ConsoleInfo = ConsoleLine(MutedColor);
+            ConsoleError = ConsoleLine(ErrorColor);
+            Area = new GUIStyle(Field) { wordWrap = true };
+
             InfoToast = Toast(InfoColor, TextColor);
             WarningToast = Toast(WarningBackColor, WarningColor);
             ErrorToast = Toast(ErrorBackColor, ErrorColor);
@@ -266,6 +281,13 @@ namespace BoardSandbox.Client.UI
                 margin = new RectOffset(0, 0, 0, S(6))
             };
             Paint(style.normal, background, text);
+            return style;
+        }
+
+        private GUIStyle ConsoleLine(Color color)
+        {
+            GUIStyle style = new GUIStyle(Mono) { wordWrap = true, clipping = TextClipping.Overflow };
+            ColorText(style, color);
             return style;
         }
 

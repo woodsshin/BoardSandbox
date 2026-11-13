@@ -13,6 +13,10 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 - [화면 구성](#화면-구성)
 - [멀티플레이](#멀티플레이)
 - [콘솔 명령](#콘솔-명령)
+- [AI 콘솔](#ai-콘솔)
+  - [에이전트](#에이전트)
+  - [AI 콘솔 명령](#ai-콘솔-명령)
+  - [에이전트 설정 파일](#에이전트-설정-파일)
 - [모드](#모드)
   - [시작 규칙](#시작-규칙)
   - [config.json](#configjson)
@@ -33,7 +37,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 ```
 Assets/
 ├─ BoardSandbox/
-│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜)
+│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜), Agents(AI 콘솔)
 │  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동
 │  ├─ Editor/            메뉴, 네이티브 플러그인 설정
 │  ├─ Plugins/Windows/x86_64/   bse_luau.dll
@@ -240,6 +244,68 @@ sim 1000 seed=1
 ```
 
 `query state`는 오목 모드가 제공하는 질의입니다. 시뮬레이션 결과는 `<N> games in <초> s (<초당 게임 수> games/s), seat 1 won <a>, seat 2 won <b>, draws <d>, aborted <x>, rejected <r>, avg moves <m>` 형식입니다. `aborted`는 결과 없이 끝난 게임(둘 곳이 없거나 `max_moves`에 닿음), `rejected`는 무작위 명령을 규칙이 거부해 멈춘 게임입니다.
+
+## AI 콘솔
+
+AI 에이전트에게 말로 게임을 설명하면 에이전트가 `config.json`과 Luau 규칙을 쓰고, 그 결과가 바로 판에 올라옵니다.
+
+1. 게임 선택 화면(G)에서 **Create**를 누르면 화면 오른쪽에 AI 콘솔이 열립니다. 직접 만든(`Local`) 게임을 고르면 **Edit with AI**로 그 게임을 이어서 고칠 수 있습니다. 게임 패널의 **AI console** 버튼으로 창을 닫았다가 다시 열 수 있습니다.
+2. **Agent**에서 쓸 에이전트를 고릅니다. 준비되지 않은 에이전트는 이유(프로그램이 없음, 키가 없음)와 설치·로그인 방법을 보여 줍니다.
+3. 아래 입력란에 만들 게임을 적고 Enter를 누릅니다(Shift+Enter는 줄 바꿈). 첫 요청에서 `persistentDataPath/Mods/my-game-N` 폴더가 만들어지고, 두 사람이 번갈아 말을 놓는 작은 게임이 출발점으로 들어갑니다.
+4. 에이전트가 끝나면 앱이 게임을 읽어 새 게임을 시작하고 무작위 수를 최대 60수 두어 봅니다. 통과하면 판이 새 규칙으로 다시 시작되고, 콘솔 옆에 남은 화면에서 바로 두어 볼 수 있습니다. 실패하면 오류를 에이전트에게 돌려보내 고치게 하며(최대 2번), 그래도 안 되면 판은 그대로 두고 오류를 보여 줍니다.
+5. 이어지는 요청은 같은 게임을 고칩니다. `/undo`는 마지막 요청 이전의 파일로 되돌립니다.
+
+### 에이전트
+
+| id | 종류 | 실행 방식 | 준비 |
+|---|---|---|---|
+| `claude` | 프로그램 | `claude -p --permission-mode acceptEdits` (요청은 표준 입력) | Claude Code 설치 후 터미널에서 한 번 로그인 |
+| `codex` | 프로그램 | `codex exec --sandbox workspace-write --skip-git-repo-check -` (표준 입력) | Codex CLI 설치 후 ChatGPT 계정으로 로그인 |
+| `gemini` | 프로그램 | `gemini --approval-mode auto_edit` (표준 입력) | Gemini CLI 설치, Gemini API 키(`/key`) |
+| `antigravity` | 프로그램 | `agy --mode accept-edits -p …` (요청은 파일) | Antigravity CLI 설치 후 Google 계정으로 로그인 |
+| `grok` | 프로그램 | `grok --no-auto-update --always-approve -p …` (요청은 파일) | Grok Build 설치 후 로그인. 승인 없이 모든 도구를 실행합니다 |
+| `gemini-api` | 웹 | Gemini의 OpenAI 호환 주소 | AI Studio에서 받은 무료 키(`/key`). 설치할 것 없음 |
+| `openrouter` | 웹 | OpenRouter | 키(`/key`), `:free` 모델은 무료 |
+| `ollama` | 웹 | 이 컴퓨터의 Ollama (`localhost:11434`) | Ollama 설치와 모델 내려받기. 키 없음, 오프라인 |
+| `openai-api`, `grok-api`, `claude-api` | 웹 | 각 회사의 chat completions 주소 | 유료 API 키(`/key`) |
+
+- **프로그램** 에이전트는 이 컴퓨터에 설치된 코딩 에이전트를 게임 폴더에서 자식 프로세스로 실행합니다. 로그인과 요금제는 그 도구의 것을 그대로 쓰고, 파일은 에이전트가 직접 고칩니다. 사용자가 입력한 글은 명령줄에 들어가지 않고 표준 입력이나 게임 폴더의 `.bse/request.md`로만 전달됩니다. 엔진 규약은 요청과 함께 전달되고 폴더의 `AGENTS.md`에도 적힙니다.
+- **웹** 에이전트는 OpenAI chat completions 규격의 주소에 현재 파일과 요청을 보내고, 답에 든 `=== FILE: 경로 ===` … `=== END FILE ===` 블록을 파일로 씁니다. 쓸 수 있는 파일은 게임 폴더 안의 `config.json`과 `.luau`뿐입니다.
+- 무료로 쓰려면: 설치 없이 `gemini-api`(무료 키)나 `openrouter`(`:free` 모델), 완전 로컬은 `ollama`, CLI는 무료 할당량이 있는 `codex`·`antigravity`, 또는 `gemini`에 무료 API 키를 넣는 방법이 있습니다. 각 서비스의 무료 범위와 명령줄 옵션, 모델 이름은 자주 바뀌므로 아래 설정 파일로 고칠 수 있게 했습니다.
+- 키는 프로필의 환경 변수(`GEMINI_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`)가 있으면 그것을 쓰고, 없으면 `/key`로 저장한 값을 씁니다. 저장한 키는 `persistentDataPath/agents.json`에 평문으로 들어갑니다.
+
+### AI 콘솔 명령
+
+`/`로 시작하는 줄은 콘솔 명령이고, 나머지는 에이전트에게 가는 요청입니다.
+
+| 명령 | 동작 |
+|---|---|
+| `/agents`, `/agent <id>` | 에이전트 목록, 에이전트 선택 |
+| `/key <키>`, `/key clear` | 선택한 에이전트의 키 저장, 삭제 (화면에는 가려서 표시) |
+| `/model <이름>`, `/model default` | 웹 에이전트의 모델 변경, 기본값으로 |
+| `/new` | 다른 새 게임 시작 |
+| `/files` | 게임 폴더와 파일 목록 |
+| `/check` | 게임을 검사하고 판에 올리기 (파일을 직접 고친 뒤) |
+| `/undo` | 마지막 요청 이전의 파일로 되돌리기 |
+| `/cancel` | 실행 중인 에이전트 중지 |
+| `/clear`, `/help` | 창 비우기, 도움말 |
+
+### 에이전트 설정 파일
+
+`persistentDataPath/agents.json`의 `profiles`에 프로필을 적으면 같은 id의 기본 프로필을 바꾸거나 새 에이전트를 더합니다.
+
+```json
+{
+  "selected": "my-agent",
+  "profiles": [
+    { "id": "claude", "name": "Claude Code", "kind": "cli", "command": "claude", "args": ["-p", "--permission-mode", "acceptEdits"], "prompt": "stdin" },
+    { "id": "my-agent", "name": "My Agent", "kind": "cli", "command": "my-agent", "args": ["run", "{prompt}"], "prompt": "file" },
+    { "id": "lmstudio", "name": "LM Studio", "kind": "api", "endpoint": "http://localhost:1234/v1/chat/completions", "model": "local-model", "key_optional": true }
+  ]
+}
+```
+
+`prompt`가 `stdin`이면 요청 전체를 표준 입력으로 보내고, `file`이면 `.bse/request.md`에 쓴 뒤 인자의 `{prompt}`를 그 파일을 읽으라는 고정 문장으로 바꿉니다. `key_env`는 키를 읽고 넘겨줄 환경 변수 이름입니다.
 
 ## 모드
 
@@ -619,7 +685,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 | 종류 | 실행 방법 | 범위 |
 |---|---|---|
-| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 기하·장면·오브젝트 계산 |
+| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 기하·장면·오브젝트 계산 |
 | dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 장면)는 빼고 실행합니다 |
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
 
@@ -634,6 +700,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 | 네이티브 라이브러리 | zig로 크로스 빌드한 Windows x64 DLL이 Wine에서 네이티브 테스트를 모두 통과했습니다. 같은 소스를 Linux에서 일반 빌드와 ASan/UBSan 빌드로 돌려도 모두 통과했습니다. MSVC 빌드는 실행해 보지 않았습니다 |
 | C# 코드 | Unity 6000.3.19f1에서 열어 실행해 왔습니다(멀티플레이 추가분은 아래 행). 로직은 dotnet 하네스 테스트(480개)를 통과했고, Unity 코드는 공개 참조 소스로 만든 UnityEngine 어셈블리를 기준으로 컴파일 검사를 합니다 |
 | Steam 멀티플레이 | 방과 동기화 로직은 루프백 전송으로 테스트했고, Steam 연동 코드는 Steamworks.NET 소스와 함께 컴파일 검사만 했습니다. 실제 Steam 로비 생성·검색·참가, P2P 전송, 분할 화면과 로딩 화면의 표시는 확인하지 못했습니다 |
+| AI 콘솔 | 요청 구성, 답의 파일 블록 처리, 검사·자동 수정·되돌리기, 자식 프로세스 실행(가짜 에이전트 스크립트), chat completions 호출(로컬 가짜 서버)은 Linux의 dotnet 하네스 테스트로 확인했습니다. 실제 Claude Code·Codex·Gemini·Antigravity·Grok CLI와 실제 API 호출, Windows에서의 프로세스 실행, Unity 안에서의 창 표시와 한글 입력은 확인하지 못했습니다 |
 | 스크립팅 백엔드 | Mono 기준으로 작성했습니다. IL2CPP 빌드는 확인하지 않았습니다 |
 
 기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 컴퓨터 플레이어는 무작위 수만 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
