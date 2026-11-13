@@ -1,0 +1,22 @@
+{
+  "id": "chess",
+  "name": "Chess",
+  "version": "1.0.0",
+  "description": "Standard chess with castling, en passant, promotion, check and the draw rules.",
+  "api": 1,
+  "entry": "logic.luau",
+  "players": { "min": 2, "max": 2 },
+  "seats": [
+    { "name": "White", "color": "#f3efe6" },
+    { "name": "Black", "color": "#161616" }
+  ],
+  "options": { "fen": "", "promotion": "q", "repetition": 3, "halfmove_limit": 100 },
+  "client": {
+    "board": { "style": "checker", "columns": 8, "rows": 8 },
+    "stage": {
+      "camera": { "pitch": 89, "fov": 26 },
+      "markers": { "last_move": { "visible": false } }
+    },
+    "click": { "action": "click" }
+  }
+}
