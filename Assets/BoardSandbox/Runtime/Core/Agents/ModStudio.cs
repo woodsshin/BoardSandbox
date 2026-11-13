@@ -405,6 +405,95 @@ namespace BoardSandbox.Core.Agents
             Applied?.Invoke(entry.Mod);
         }
 
+        // Whether the game is one of the AI console: a folder directly inside the folder for new games that the
+        // console has worked in. Games that come with the app or lie elsewhere are never deleted from here.
+        public bool CanDelete(ModPackage mod)
+        {
+            if (mod == null || mod.Directory == null)
+                return false;
+            try
+            {
+                string directory = Path.GetFullPath(mod.Directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (!string.Equals(Path.GetDirectoryName(directory), _modsRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), PathComparison))
+                    return false;
+                if (!File.Exists(Path.Combine(directory, ModWorkspace.GuideFileName)) || !File.Exists(Path.Combine(directory, ModLoader.ManifestFileName)))
+                    return false;
+                // A link is not followed: what it points at is not ours to remove.
+                return (File.GetAttributes(directory) & FileAttributes.ReparsePoint) == 0;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is NotSupportedException)
+            {
+                return false;
+            }
+        }
+
+        // Removes the folder of a game for good and takes the game off the list. A game that is on the table keeps
+        // running from memory until another one is started. The message says what happened either way.
+        public bool Delete(ModPackage mod, out string message)
+        {
+            ThrowIfDisposed();
+            if (!CanDelete(mod))
+            {
+                message = "Only games made with the AI console can be deleted.";
+                return false;
+            }
+            string directory = Path.GetFullPath(mod.Directory);
+            bool current = Workspace != null && string.Equals(Path.GetFullPath(Workspace.Directory), directory, PathComparison);
+            if (current && Busy)
+            {
+                message = "The agent is still working on this game. Stop it with /cancel first.";
+                return false;
+            }
+            try
+            {
+                Directory.Delete(directory, true);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                message = "'" + mod.Manifest.Name + "' could not be deleted: " + e.Message;
+                _host.Catalog.Refresh();
+                return false;
+            }
+            _host.Catalog.Refresh();
+            message = "Deleted '" + mod.Manifest.Name + "'.";
+            if (current)
+            {
+                Workspace = null;
+                _earlier.Clear();
+                _undo.Clear();
+                _repairs = 0;
+                Say(message + " The next request starts a new game.");
+            }
+            return true;
+        }
+
+        private void DeleteCurrent(string argument)
+        {
+            if (!HasWorkspace())
+                return;
+            ModEntry entry = _host.Catalog.FindEntry(Workspace.Id);
+            ModPackage mod = entry != null && entry.Mod.Directory != null && string.Equals(Path.GetFullPath(entry.Mod.Directory), Workspace.Directory, PathComparison) ? entry.Mod : null;
+            if (mod == null)
+            {
+                try
+                {
+                    mod = ModLoader.LoadDirectory(Workspace.Directory);
+                }
+                catch (ModException)
+                {
+                    Fail("The game cannot be read, so it is not deleted from here. Its folder is " + Workspace.Directory + ".");
+                    return;
+                }
+            }
+            if (!string.Equals(argument, "confirm", StringComparison.OrdinalIgnoreCase))
+            {
+                Say("This removes '" + mod.Manifest.Name + "' and its folder " + Workspace.Directory + " for good. Type /delete confirm to do it.");
+                return;
+            }
+            if (!Delete(mod, out string message))
+                Fail(message);
+        }
+
         private void Remember(SortedDictionary<string, string> files)
         {
             _undo.Add(files);
@@ -440,6 +529,7 @@ namespace BoardSandbox.Core.Agents
                     Say("/files             list the files of the game");
                     Say("/check             try the game and put it on the table");
                     Say("/undo              bring back the files from before the last change");
+                    Say("/delete            delete this game and its folder for good");
                     Say("/cancel            stop the agent");
                     Say("/clear             empty this window");
                     break;
@@ -472,6 +562,10 @@ namespace BoardSandbox.Core.Agents
                 case "/undo":
                     if (Guard() && HasWorkspace())
                         Undo();
+                    break;
+                case "/delete":
+                    if (Guard())
+                        DeleteCurrent(argument);
                     break;
                 case "/cancel":
                     if (Busy)

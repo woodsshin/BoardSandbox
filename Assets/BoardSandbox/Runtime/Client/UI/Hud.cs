@@ -69,7 +69,10 @@ namespace BoardSandbox.Client.UI
             _multiplayer = multiplayer ?? throw new ArgumentNullException(nameof(multiplayer));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
             _fitView = fitView;
-            _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true, OpenStudio);
+            if (studio == null)
+                throw new ArgumentNullException(nameof(studio));
+            _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true, OpenStudio,
+                entry => studio.CanDelete(entry.Mod), entry => DeleteGame(studio, entry));
             _agents = new AgentConsolePanel(studio, theme, () => _host.Now, Defer, () => _releaseFocus = true);
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer.RoomChanged += OnRoomChanged;
@@ -134,6 +137,14 @@ namespace BoardSandbox.Client.UI
                 _agents.OpenNew();
             else
                 _agents.OpenEdit(entry.Mod);
+        }
+
+        // Removes a game of the AI console for good and says how it went.
+        private bool DeleteGame(ModStudio studio, ModEntry entry)
+        {
+            bool deleted = studio.Delete(entry.Mod, out string message);
+            _host.Toasts.Add(message, deleted ? ToastLevel.Info : ToastLevel.Error, _host.Now);
+            return deleted;
         }
 
         // How much of the width of the screen the AI console takes at the right edge, from 0 to 1. The owner keeps

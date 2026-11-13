@@ -669,6 +669,100 @@ return rules
             Assert.AreEqual("my-game-3", host.Mod.Manifest.Id);
         }
 
+        [Test]
+        public void AGameOfTheConsoleCanBeDeleted()
+        {
+            ModStudio studio = Studio(out GameHost host, out FakeLauncher launcher, out string root);
+            launcher.Work = (request, run) =>
+            {
+                Write(request, "logic.luau", CountingScript);
+                run.End(true);
+            };
+            studio.BeginNew();
+            studio.Submit("a game");
+            studio.Update();
+            ModPackage made = host.Mod;
+            string folder = studio.Workspace.Directory;
+            Assert.IsTrue(studio.CanDelete(made));
+
+            Assert.IsTrue(studio.Delete(made, out string message), message);
+
+            StringAssert.Contains("Deleted", message);
+            Assert.IsFalse(Directory.Exists(folder));
+            Assert.IsNull(host.Catalog.FindEntry("my-game-1"));
+            Assert.IsNull(studio.Workspace);
+            // The game on the table goes on from memory.
+            Assert.AreSame(made, host.Mod);
+            Assert.IsTrue(host.Session.IsStarted);
+            Assert.IsFalse(studio.Delete(made, out string again));
+            Assert.IsTrue(again.Length > 0);
+
+            // The next request starts over with a fresh folder under the same free id.
+            studio.Submit("another game");
+            studio.Update();
+            Assert.AreEqual("my-game-1", studio.Workspace.Id);
+            Assert.IsTrue(Directory.Exists(folder));
+        }
+
+        [Test]
+        public void OnlyGamesOfTheConsoleCanBeDeleted()
+        {
+            ModStudio studio = Studio(out GameHost host, out FakeLauncher _, out string root);
+            string manifest = "{\"id\":\"hand\",\"name\":\"Hand\",\"api\":1,\"entry\":\"logic.luau\"}";
+            TestSupport.WriteFile(Path.Combine(root, "hand"), "config.json", manifest);
+            TestSupport.WriteFile(Path.Combine(root, "hand"), "logic.luau", CountingScript);
+            string elsewhere = NewDirectory();
+            ModWorkspace outside = ModWorkspace.Create(elsewhere, "outside", "Outside");
+            ModWorkspace nested = ModWorkspace.Create(Path.Combine(root, "sub"), "nested", "Nested");
+            host.Catalog.Refresh();
+
+            // Put there by hand, in another folder, deeper than the games of the console, or in no folder at all.
+            Assert.IsFalse(studio.CanDelete(host.Catalog.Find("hand")));
+            Assert.IsFalse(studio.CanDelete(ModLoader.LoadDirectory(outside.Directory)));
+            Assert.IsFalse(studio.CanDelete(ModLoader.LoadDirectory(nested.Directory)));
+            Assert.IsFalse(studio.CanDelete(TestSupport.InlineMod("return {}")));
+            Assert.IsFalse(studio.CanDelete(null));
+
+            Assert.IsFalse(studio.Delete(host.Catalog.Find("hand"), out string message));
+            StringAssert.Contains("AI console", message);
+            Assert.IsTrue(Directory.Exists(Path.Combine(root, "hand")));
+            Assert.IsTrue(Directory.Exists(outside.Directory));
+        }
+
+        [Test]
+        public void TheDeleteCommandAsksBeforeItDeletes()
+        {
+            ModStudio studio = Studio(out GameHost host, out FakeLauncher launcher, out string _);
+            launcher.Work = (request, run) =>
+            {
+                Write(request, "logic.luau", CountingScript);
+                run.End(true);
+            };
+            studio.BeginNew();
+            studio.Submit("/delete");
+            StringAssert.Contains("There is no game yet", Text(studio));
+            studio.Submit("a game");
+            studio.Update();
+            string folder = studio.Workspace.Directory;
+
+            studio.Submit("/delete");
+            Assert.IsTrue(Directory.Exists(folder));
+            StringAssert.Contains("/delete confirm", Text(studio));
+
+            launcher.Work = (request, run) => { };
+            studio.Submit("change it");
+            studio.Submit("/delete confirm");
+            Assert.IsTrue(Directory.Exists(folder), "a game an agent is working on stays");
+            Assert.IsFalse(studio.Delete(host.Mod, out string busy));
+            StringAssert.Contains("/cancel", busy);
+            studio.Submit("/cancel");
+
+            studio.Submit("/delete confirm");
+            Assert.IsFalse(Directory.Exists(folder));
+            Assert.IsNull(studio.Workspace);
+            StringAssert.Contains("Deleted", Text(studio));
+        }
+
         private static bool Wait(AgentRun run, int milliseconds = 15000)
         {
             for (int waited = 0; run.IsRunning && waited < milliseconds; waited += 20)

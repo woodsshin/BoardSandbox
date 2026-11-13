@@ -35,6 +35,8 @@ namespace BoardSandbox.Client.UI
         private readonly Action<Action> _defer;
         private readonly Action _releaseFocus;
         private readonly Action<ModEntry> _openStudio;
+        private readonly Func<ModEntry, bool> _canDelete;
+        private readonly Func<ModEntry, bool> _delete;
 
         private string _queryText = string.Empty;
         private Vector2 _listScroll;
@@ -57,13 +59,19 @@ namespace BoardSandbox.Client.UI
         private string _detailSeats = string.Empty;
         private string _detailOptions = string.Empty;
         private string _roomsFor = string.Empty;
+        private bool _detailDeletable;
+        private bool _confirmDelete;
         private Vector2 _roomScroll;
 
         // openStudio opens the AI console for a new game (null) or for the game of an entry; without it the buttons
-        // for that are left out.
-        public GameLibraryPanel(GameHost host, Multiplayer multiplayer, GuiTheme theme, Action<Action> defer, Action releaseFocus, Action<ModEntry> openStudio = null)
+        // for that are left out. canDelete says whether a game may be removed and delete removes it; without them
+        // nothing can be deleted here.
+        public GameLibraryPanel(GameHost host, Multiplayer multiplayer, GuiTheme theme, Action<Action> defer, Action releaseFocus, Action<ModEntry> openStudio = null,
+            Func<ModEntry, bool> canDelete = null, Func<ModEntry, bool> delete = null)
         {
             _openStudio = openStudio;
+            _canDelete = canDelete;
+            _delete = delete;
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _multiplayer = multiplayer ?? throw new ArgumentNullException(nameof(multiplayer));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
@@ -542,6 +550,45 @@ namespace BoardSandbox.Client.UI
             if (GUILayout.Button("Rescan", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(34f))))
                 _defer(Rescan);
             GUILayout.EndHorizontal();
+            if (entry != null && _detailDeletable)
+                DrawDelete(entry);
+        }
+
+        // Deleting cannot be taken back, so it asks once more before it happens.
+        private void DrawDelete(ModEntry entry)
+        {
+            GUILayout.Space(_theme.Sf(4f));
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (!_confirmDelete)
+            {
+                if (GUILayout.Button("Delete", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(30f))))
+                    _defer(() => _confirmDelete = true);
+            }
+            else
+            {
+                GUILayout.Label("Delete '" + _detailName + "' and its folder for good?", _theme.Label);
+                if (GUILayout.Button("Delete", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(30f))))
+                {
+                    ModEntry deleted = entry;
+                    _defer(() => Delete(deleted));
+                }
+                if (GUILayout.Button("Keep", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(30f))))
+                    _defer(() => _confirmDelete = false);
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        private void Delete(ModEntry entry)
+        {
+            _confirmDelete = false;
+            if (_delete == null || !_delete(entry))
+                return;
+            // The catalog was read again; the list follows it.
+            _library.Rescan();
+            RefreshFilter();
+            _detailFor = null;
+            _revealSelected = true;
         }
 
         // The texts about a game are put together once, not on every pass.
@@ -557,6 +604,8 @@ namespace BoardSandbox.Client.UI
             _detailSeats = SeatsText(manifest);
             _detailOptions = OptionsText(manifest);
             _detailScroll = Vector2.zero;
+            _detailDeletable = _canDelete != null && _canDelete(entry);
+            _confirmDelete = false;
         }
 
         private static string SeatsText(ModManifest manifest)
