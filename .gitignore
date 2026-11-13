@@ -32,3 +32,4 @@ Native/out/
 __pycache__/
 
 !Tools/**/*.csproj
+.vsconfig

@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "com.rlabrecque.steamworks.net": "https://github.com/rlabrecque/Steamworks.NET.git?path=/com.rlabrecque.steamworks.net#2025.165.0",
+    "com.unity.ide.visualstudio": "2.0.29",
     "com.unity.test-framework": "1.6.0",
     "com.unity.modules.accessibility": "1.0.0",
     "com.unity.modules.ai": "1.0.0",

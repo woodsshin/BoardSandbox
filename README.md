@@ -2,6 +2,67 @@
 
 Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 장면으로 보여 줍니다. 기본으로 오목(Gomoku)과 3D 큐브 퍼즐(Cubic 3x3) 모드가 들어 있습니다.
 
+
+## 프로젝트 구조
+
+```
+Assets/
+├─ BoardSandbox/
+│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜)
+│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동
+│  ├─ Editor/            메뉴, 네이티브 플러그인 설정
+│  ├─ Plugins/Windows/x86_64/   bse_luau.dll
+│  └─ Tests/Editor/      NUnit 테스트 (EditMode)
+└─ StreamingAssets/Mods/
+   ├─ gomoku/            오목
+   └─ cubic3/            3D 큐브 퍼즐
+Native/
+├─ bse_luau/             C ABI 래퍼(C++17), CMake, Luau 프렐류드, 네이티브 테스트, 분석 도구
+└─ scripts/build_native.py
+Tools/
+├─ CoreTests/            Unity 없이 테스트를 실행하는 dotnet 하네스
+└─ UnityCheck/           Unity API 대비 컴파일 검사용 프로젝트
+Image/                   README의 화면 그림
+steam_appid.txt          Steam 앱 ID (테스트용 480)
+LICENSE.md
+THIRD_PARTY_NOTICES.txt
+```
+
+## 구조 개요
+
+```mermaid
+flowchart TD
+    Input["입력<br/>마우스, 콘솔, 컴퓨터 플레이어"]
+    Submit["GameSession.Submit"]
+    Before{"인터셉터 BeforeSubmit<br/>막을 수 있음"}
+    Rules["Luau VM<br/>rules.command(seat, cmd)"]
+    Events["이벤트<br/>spawn, move, set, remove, turn, over, status, 사용자 정의"]
+    View["ViewModel<br/>이벤트로 갱신되는 미러"]
+    History["기록 (스냅샷)"]
+    After["인터셉터 AfterSubmit<br/>RejectionLog"]
+    Result["SubmitResult<br/>수락 / 거부 / 차단 / 무효 / 오류"]
+    Queue["PlaybackQueue<br/>fx마다 멈추며 순서대로 재생"]
+    Client["Client<br/>SceneView, HUD"]
+
+    Input -->|"InputPacket(seat, command, source)"| Submit
+    Submit --> Before
+    Before -->|"통과"| Rules
+    Before -.->|"차단"| Result
+    Rules --> Events
+    Events --> View
+    View --> History
+    History --> After
+    After --> Result
+    Events -.->|"EventApplied"| Queue
+    Queue -.->|"Display(ViewModel)만 읽어 그림"| Client
+```
+
+- **bse_luau** (네이티브): Luau VM을 C ABI(버전 1)로 감쌉니다. 모든 호출은 JSON 문자열 입출력(`bse_vm_call`)이고 메모리·시간 한도와 로그 수집을 제공합니다. 내보내는 함수는 `bse_*` 10개이며 헤더는 `Native/bse_luau/include/bse_luau.h`입니다.
+- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, 모드 출처와 카탈로그(`IModSource`, `ModCatalog`), `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `PlaybackQueue`, `CommandConsole`, `SimulationRunner`, `GameHost`, `GameLibrary`, `Net`(`Multiplayer`, `NetHostRoom`, `NetClientRoom`).
+- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(장면 뷰, 카메라, HUD, 게임 선택 화면, Steam 연동)를 구동하는 구성 루트입니다. 화면에 보이는 판마다 `SceneView`, 카메라, `PlaybackQueue`를 하나씩 두며, 분할 화면에서는 판마다 레이어(31번부터 아래로)와 카메라 뷰포트를 나눕니다.
+
+멀티플레이에서는 호스트의 `NetHostRoom`이 세션의 이벤트를 참가자에게 보내고, 참가자의 `NetClientRoom`이 받은 이벤트를 자기 `PlaybackQueue`에 넣습니다. 참가자의 입력은 호스트에서 좌석과 차례를 확인한 뒤 `GameSession.Submit`으로 들어갑니다. 메시지는 JSON이며 `hello`, `welcome`, `roster`, `sync`, `ev`, `cmd`, `note`, `finished`, `bye`가 있습니다.
+
 - **모드로 게임 추가**: `config.json`과 `.luau` 파일이 든 폴더 하나가 게임 하나입니다.
 - **게임 선택 화면**: 앱에 들어 있는 게임과 로컬 폴더의 게임을 한 목록에서 검색하고 고릅니다. 모드는 출처(`Built-in`, `Local`, `Workshop`)를 갖고, 출처별로 모드를 읽어 오는 부분은 `IModSource`로 분리돼 있습니다.
 - **장면도 모드가 정함**: 보드, 테이블, 배경, 조명, 카메라, 표시(마커), 말의 모양·크기·위치·회전·면 색을 `config.json`과 Luau에서 정합니다. 클릭, 드래그, 키 입력도 모드가 명령으로 받습니다.
@@ -500,66 +561,6 @@ using (GameHost host = new GameHost(catalog))
 - `PlaybackQueue`는 세션의 이벤트(`GameSession.EventApplied`)를 두 번째 `ViewModel`에 순서대로 재생하며 `fx`마다 멈춥니다. 화면은 이 `Display`를 그립니다.
 - `Multiplayer`는 방 찾기, 열기, 들어가기와 방의 진행을 맡습니다. 방은 `NetHostRoom`(게임을 실행하는 쪽)과 `NetClientRoom`(보여 주기만 하는 쪽)이고, 로비 서비스는 `ILobbyBackend`, 연결은 `INetTransport`로 분리돼 있습니다. `LoopbackNetwork`는 한 프로세스 안에서 방을 만드는 전송으로 테스트에 쓰입니다.
 - `TurnGuard`는 차례가 아닌 좌석의 입력을 스크립트를 실행하지 않고 막는 인터셉터이며, 앱에는 기본으로 붙어 있지 않습니다. 앱은 `RejectionLog`만 붙입니다.
-
-## 프로젝트 구조
-
-```
-Assets/
-├─ BoardSandbox/
-│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜)
-│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동
-│  ├─ Editor/            메뉴, 네이티브 플러그인 설정
-│  ├─ Plugins/Windows/x86_64/   bse_luau.dll
-│  └─ Tests/Editor/      NUnit 테스트 (EditMode)
-└─ StreamingAssets/Mods/
-   ├─ gomoku/            오목
-   └─ cubic3/            3D 큐브 퍼즐
-Native/
-├─ bse_luau/             C ABI 래퍼(C++17), CMake, Luau 프렐류드, 네이티브 테스트, 분석 도구
-└─ scripts/build_native.py
-Tools/
-├─ CoreTests/            Unity 없이 테스트를 실행하는 dotnet 하네스
-└─ UnityCheck/           Unity API 대비 컴파일 검사용 프로젝트
-Image/                   README의 화면 그림
-steam_appid.txt          Steam 앱 ID (테스트용 480)
-LICENSE.md
-THIRD_PARTY_NOTICES.txt
-```
-
-## 구조 개요
-
-```mermaid
-flowchart TD
-    Input["입력<br/>마우스, 콘솔, 컴퓨터 플레이어"]
-    Submit["GameSession.Submit"]
-    Before{"인터셉터 BeforeSubmit<br/>막을 수 있음"}
-    Rules["Luau VM<br/>rules.command(seat, cmd)"]
-    Events["이벤트<br/>spawn, move, set, remove, turn, over, status, 사용자 정의"]
-    View["ViewModel<br/>이벤트로 갱신되는 미러"]
-    History["기록 (스냅샷)"]
-    After["인터셉터 AfterSubmit<br/>RejectionLog"]
-    Result["SubmitResult<br/>수락 / 거부 / 차단 / 무효 / 오류"]
-    Queue["PlaybackQueue<br/>fx마다 멈추며 순서대로 재생"]
-    Client["Client<br/>SceneView, HUD"]
-
-    Input -->|"InputPacket(seat, command, source)"| Submit
-    Submit --> Before
-    Before -->|"통과"| Rules
-    Before -.->|"차단"| Result
-    Rules --> Events
-    Events --> View
-    View --> History
-    History --> After
-    After --> Result
-    Events -.->|"EventApplied"| Queue
-    Queue -.->|"Display(ViewModel)만 읽어 그림"| Client
-```
-
-- **bse_luau** (네이티브): Luau VM을 C ABI(버전 1)로 감쌉니다. 모든 호출은 JSON 문자열 입출력(`bse_vm_call`)이고 메모리·시간 한도와 로그 수집을 제공합니다. 내보내는 함수는 `bse_*` 10개이며 헤더는 `Native/bse_luau/include/bse_luau.h`입니다.
-- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, 모드 출처와 카탈로그(`IModSource`, `ModCatalog`), `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `PlaybackQueue`, `CommandConsole`, `SimulationRunner`, `GameHost`, `GameLibrary`, `Net`(`Multiplayer`, `NetHostRoom`, `NetClientRoom`).
-- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(장면 뷰, 카메라, HUD, 게임 선택 화면, Steam 연동)를 구동하는 구성 루트입니다. 화면에 보이는 판마다 `SceneView`, 카메라, `PlaybackQueue`를 하나씩 두며, 분할 화면에서는 판마다 레이어(31번부터 아래로)와 카메라 뷰포트를 나눕니다.
-
-멀티플레이에서는 호스트의 `NetHostRoom`이 세션의 이벤트를 참가자에게 보내고, 참가자의 `NetClientRoom`이 받은 이벤트를 자기 `PlaybackQueue`에 넣습니다. 참가자의 입력은 호스트에서 좌석과 차례를 확인한 뒤 `GameSession.Submit`으로 들어갑니다. 메시지는 JSON이며 `hello`, `welcome`, `roster`, `sync`, `ev`, `cmd`, `note`, `finished`, `bye`가 있습니다.
 
 ## 네이티브 라이브러리 빌드
 
