@@ -17,6 +17,10 @@ namespace BoardSandbox.Client.UI
         private const int MaxShownLines = 300;
         private const int MaxInput = 4000;
 
+        // How many frames a request waits after Enter before it is sent. A syllable that the input method was still
+        // putting together is finished by Enter and arrives as a character a moment after the key.
+        private const int SubmitFrames = 2;
+
         private readonly ModStudio _studio;
         private readonly GuiTheme _theme;
         private readonly Func<double> _clock;
@@ -34,6 +38,8 @@ namespace BoardSandbox.Client.UI
         private int _recallIndex;
         private bool _focusInput;
         private bool _inputFocused;
+        private int _submitIn;
+        private bool _drawn;
         private bool _choosing;
         private bool _showSetup;
         private string _state = string.Empty;
@@ -83,6 +89,9 @@ namespace BoardSandbox.Client.UI
         public void Close()
         {
             IsOpen = false;
+            _submitIn = 0;
+            _inputFocused = false;
+            ImeSupport.Prefer(false);
             Area = default;
             _releaseFocus();
         }
@@ -95,11 +104,24 @@ namespace BoardSandbox.Client.UI
                 return;
             _state = _studio.Readiness;
             _busySeconds = _studio.Busy ? Mathf.Max(0, (int)(_clock() - _studio.BusySince)) : 0;
+
+            // While something else covers the console its field cannot have the keyboard.
+            if (!_drawn && _inputFocused)
+            {
+                _inputFocused = false;
+                ImeSupport.Prefer(false);
+            }
+            _drawn = false;
+
+            // The request goes out once the last syllable has become part of the text.
+            if (_submitIn > 0 && !ImeSupport.Composing && --_submitIn == 0)
+                SubmitInput();
         }
 
         public void Draw()
         {
             Event e = Event.current;
+            _drawn = true;
 
             // The text area uses up the keys it understands, so these are looked at before it is drawn.
             if (_inputFocused && e.type == EventType.KeyDown)
@@ -134,6 +156,7 @@ namespace BoardSandbox.Client.UI
                     _focusInput = false;
                 }
                 _inputFocused = GUI.GetNameOfFocusedControl() == InputField;
+                ImeSupport.Prefer(_inputFocused);
             }
         }
 
@@ -297,7 +320,7 @@ namespace BoardSandbox.Client.UI
             _input = GUILayout.TextArea(_input, MaxInput, _theme.Area, GUILayout.MinHeight(_theme.Sf(54f)), GUILayout.MaxHeight(_theme.Sf(140f)));
             GUI.enabled = _input.Trim().Length > 0;
             if (GUILayout.Button("Send", _theme.Button, GUILayout.Width(_theme.Sf(70f)), GUILayout.Height(_theme.Sf(54f))))
-                SubmitInput();
+                RequestSubmit();
             GUI.enabled = true;
             GUILayout.EndHorizontal();
             GUILayout.Label("Enter  send      Shift+Enter  new line      /help  commands", _theme.Muted);
@@ -306,15 +329,20 @@ namespace BoardSandbox.Client.UI
         private void HandleInputKey(Event e)
         {
             bool enter = e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter;
+            bool composing = ImeSupport.Composing;
             if (enter && !e.shift)
             {
                 e.Use();
-                SubmitInput();
+                RequestSubmit();
             }
             else if (e.character == '\n' && !e.shift)
             {
                 // The character that follows the key would put a line break into the emptied field.
                 e.Use();
+            }
+            else if (composing)
+            {
+                // The arrow keys belong to the input method while it puts a syllable together.
             }
             else if (e.keyCode == KeyCode.UpArrow && _input.IndexOf('\n') < 0 && (_input.Length == 0 || _recallIndex < _recalled.Count))
             {
@@ -326,6 +354,13 @@ namespace BoardSandbox.Client.UI
                 e.Use();
                 Recall(1);
             }
+        }
+
+        // Sends what is in the field, a moment later: see SubmitFrames.
+        private void RequestSubmit()
+        {
+            if (_submitIn == 0)
+                _submitIn = SubmitFrames;
         }
 
         private void SubmitInput()
