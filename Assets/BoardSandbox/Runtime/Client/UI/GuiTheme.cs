@@ -9,15 +9,30 @@ namespace BoardSandbox.Client.UI
     // Styles are built from the current skin, so Ensure has to be called from inside OnGUI.
     public sealed class GuiTheme : IDisposable
     {
-        private static readonly string[] ProportionalFonts =
+        // Fonts with Korean glyphs, best first. A Korean Windows lists some of them under their Korean names.
+        private static readonly string[] KoreanFonts =
         {
-            "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", "NanumGothic", "Segoe UI", "Helvetica Neue", "Arial"
+            "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans KR", "NanumGothic", "나눔고딕",
+            "Gulim", "굴림", "Dotum", "돋움", "Batang", "바탕", "AppleGothic", "Source Han Sans KR", "본고딕", "UnDotum", "Baekmuk Gulim"
         };
 
+        private static readonly string[] ProportionalFonts = { "Segoe UI", "Helvetica Neue", "Arial" };
+
+        // The Korean fonts come after these as fallbacks: a font object only accepts and shows the characters that
+        // one of its own fonts has.
         private static readonly string[] MonospacedFonts =
         {
             "D2Coding", "Consolas", "Menlo", "DejaVu Sans Mono", "Liberation Mono", "Courier New"
         };
+
+        // Parts of font names that suggest Korean glyphs, for systems that have none of the fonts above.
+        private static readonly string[] KoreanHints =
+        {
+            "gothic", "고딕", "gulim", "굴림", "dotum", "돋움", "batang", "바탕", "nanum", "나눔", "cjk", "korea", " kr", "hangul", "unifont", "myungjo", "명조"
+        };
+
+        private const char Hangul = '한';
+        private const int MaxFontProbes = 60;
 
         public static readonly Color TextColor = new Color(0.90f, 0.92f, 0.95f, 1f);
         public static readonly Color MutedColor = new Color(0.60f, 0.66f, 0.72f, 1f);
@@ -107,8 +122,9 @@ namespace BoardSandbox.Client.UI
             Scale = scale;
             if (!_fontsChosen)
             {
-                _font = CreateFont(ProportionalFonts);
-                _monoFont = CreateFont(MonospacedFonts);
+                string[] installed = InstalledFonts();
+                _font = CreateFont(installed, KoreanFonts, ProportionalFonts);
+                _monoFont = CreateFont(installed, MonospacedFonts, KoreanFonts);
                 TrackTexture = Solid(FieldColor);
                 FillTexture = Solid(AccentColor);
                 DimTexture = Solid(DimColor);
@@ -349,29 +365,96 @@ namespace BoardSandbox.Client.UI
             return texture;
         }
 
-        private static Font CreateFont(string[] preferred)
+        private static string[] InstalledFonts()
         {
             try
             {
-                string[] installed = Font.GetOSInstalledFontNames();
+                return Font.GetOSInstalledFontNames() ?? new string[0];
+            }
+            catch (Exception)
+            {
+                return new string[0];
+            }
+        }
+
+        // A font made of the installed fonts among the given names, first group first. Text fields only take the
+        // characters their font has, so a font that turns out to have no Korean gets one more that does.
+        private static Font CreateFont(string[] installed, string[] first, string[] second)
+        {
+            try
+            {
                 List<string> usable = new List<string>();
-                foreach (string name in preferred)
-                {
-                    foreach (string have in installed)
-                    {
-                        if (string.Equals(name, have, StringComparison.OrdinalIgnoreCase))
-                        {
-                            usable.Add(have);
-                            break;
-                        }
-                    }
-                }
-                return usable.Count == 0 ? null : Font.CreateDynamicFontFromOSFont(usable.ToArray(), 16);
+                AddInstalled(usable, installed, first);
+                AddInstalled(usable, installed, second);
+                Font font = usable.Count == 0 ? null : Font.CreateDynamicFontFromOSFont(usable.ToArray(), 16);
+                if (font != null && font.HasCharacter(Hangul))
+                    return font;
+
+                string korean = FindKoreanFont(installed);
+                if (korean == null)
+                    return font;
+                ObjectUtil.Destroy(font);
+                usable.Add(korean);
+                return Font.CreateDynamicFontFromOSFont(usable.ToArray(), 16);
             }
             catch (Exception)
             {
                 return null;
             }
+        }
+
+        private static void AddInstalled(List<string> usable, string[] installed, string[] preferred)
+        {
+            foreach (string name in preferred)
+            {
+                foreach (string have in installed)
+                {
+                    if (string.Equals(name, have, StringComparison.OrdinalIgnoreCase) && !usable.Contains(have))
+                    {
+                        usable.Add(have);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Looks through the installed fonts for one with Korean glyphs, the likely ones only: opening a font to ask
+        // it takes time.
+        private static string FindKoreanFont(string[] installed)
+        {
+            int probes = 0;
+            foreach (string name in installed)
+            {
+                string lower = name.ToLowerInvariant();
+                bool likely = false;
+                foreach (string hint in KoreanHints)
+                {
+                    if (lower.Contains(hint))
+                    {
+                        likely = true;
+                        break;
+                    }
+                }
+                if (!likely)
+                    continue;
+                if (++probes > MaxFontProbes)
+                    break;
+                Font candidate = null;
+                try
+                {
+                    candidate = Font.CreateDynamicFontFromOSFont(name, 16);
+                    if (candidate != null && candidate.HasCharacter(Hangul))
+                        return name;
+                }
+                catch (Exception)
+                {
+                }
+                finally
+                {
+                    ObjectUtil.Destroy(candidate);
+                }
+            }
+            return null;
         }
     }
 }
