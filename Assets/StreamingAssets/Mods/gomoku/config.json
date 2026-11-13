@@ -2,6 +2,7 @@
   "id": "gomoku",
   "name": "Gomoku",
   "version": "1.0.0",
+  "description": "The first player to get five stones in a row horizontally, vertically, or diagonally wins the game.",
   "api": 1,
   "entry": "logic.luau",
   "players": { "min": 2, "max": 2 },
