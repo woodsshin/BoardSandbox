@@ -3,6 +3,31 @@
 Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 장면으로 보여 줍니다. 기본으로 오목(Gomoku)과 3D 큐브 퍼즐(Cubic 3x3) 모드가 들어 있습니다.
 
 
+## 목차
+
+- [프로젝트 구조](#프로젝트-구조)
+- [구조 개요](#구조-개요)
+- [요구 사항](#요구-사항)
+- [빠른 시작](#빠른-시작)
+- [조작](#조작)
+- [화면 구성](#화면-구성)
+- [멀티플레이](#멀티플레이)
+- [콘솔 명령](#콘솔-명령)
+- [모드](#모드)
+  - [시작 규칙](#시작-규칙)
+  - [config.json](#configjson)
+  - [규칙 스크립트](#규칙-스크립트)
+  - [bse API](#bse-api)
+  - [최소 예제](#최소-예제)
+  - [클라이언트 힌트](#클라이언트-힌트)
+  - [정적 분석](#정적-분석)
+- [C#에서 사용하기](#c에서-사용하기)
+- [네이티브 라이브러리 빌드](#네이티브-라이브러리-빌드)
+- [테스트](#테스트)
+  - [빌드 : 다운로드](#빌드--다운로드)
+- [상태와 제한](#상태와-제한)
+- [라이선스](#라이선스)
+
 ## 프로젝트 구조
 
 ```
@@ -598,6 +623,8 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
 
 하네스는 환경 변수 `BSE_NATIVE_DIR`(네이티브 라이브러리 폴더)와 `BSE_MODS_DIR`(모드 폴더)을 따릅니다. `Tools/UnityCheck`는 Unity 없이 C# 컴파일을 검사하는 개발용 프로젝트로, UnityEngine 타입이 든 어셈블리 `.reference/UnityEngine.dll`이 있어야 빌드됩니다. `.reference/Steamworks.NET/`에 Steamworks.NET 패키지의 `Runtime` 소스를 두면 Steam 연동 코드도 함께 검사합니다. `.reference`는 저장소에 포함하지 않습니다.
+
+### 빌드 : [다운로드](https://drive.google.com/file/d/1_2vO5xoq66Gf55g6tXKK89JYEZO3Eki4/view?usp=drive_link)
 
 ## 상태와 제한
 
