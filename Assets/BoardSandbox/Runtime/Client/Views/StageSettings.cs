@@ -67,6 +67,10 @@ namespace BoardSandbox.Client.Views
 
         // The camera may go all the way around over the top and under the scene.
         public bool FreePitch;
+
+        // Dragging turns the scene like a ball in the hand, around the axes of the screen instead of a fixed
+        // vertical axis; the pitch limits do not hold.
+        public bool Trackball;
         public DragMode LeftDrag = DragMode.Pan;
         public DragMode RightDrag = DragMode.Orbit;
         public DragMode MiddleDrag = DragMode.Pan;
@@ -164,6 +168,7 @@ namespace BoardSandbox.Client.Views
             c.MinPitch = ReadFloat(camera["min_pitch"], c.MinPitch, -CameraMath.PitchLimit, CameraMath.PitchLimit);
             c.MaxPitch = ReadFloat(camera["max_pitch"], c.MaxPitch, c.MinPitch, CameraMath.PitchLimit);
             c.FreePitch = camera["free_pitch"].AsBool(false);
+            c.Trackball = camera["trackball"].AsBool(false);
             c.Pitch = c.FreePitch
                 ? ReadFloat(camera["pitch"], c.Pitch, -36000f, 36000f)
                 : ReadFloat(camera["pitch"], Mathf.Clamp(c.Pitch, c.MinPitch, c.MaxPitch), c.MinPitch, c.MaxPitch);
@@ -254,6 +259,7 @@ namespace BoardSandbox.Client.Views
         public float MinPitch;
         public float MaxPitch;
         public bool FreePitch;
+        public bool Trackball;
 
         // How far the target may be moved away from where it starts.
         public Vector3 Reach;
@@ -269,7 +275,8 @@ namespace BoardSandbox.Client.Views
                 Target = Frame.Flip(settings.Target),
                 MinPitch = settings.MinPitch,
                 MaxPitch = settings.MaxPitch,
-                FreePitch = settings.FreePitch
+                FreePitch = settings.FreePitch,
+                Trackball = settings.Trackball
             };
             float extent;
             if (settings.Distance > 0f)

@@ -431,7 +431,7 @@ namespace BoardSandbox.Tests
             float yaw = 10f;
             float pitch = 80f;
             CameraMath.Orbit(ref yaw, ref pitch, new Vector2(5f, 30f), true, -10f, 10f);
-            Assert.AreEqual(15f, yaw, 1e-4f);
+            Assert.AreEqual(5f, yaw, 1e-4f);
             Assert.AreEqual(110f, pitch, 1e-4f);
             CameraMath.Orbit(ref yaw, ref pitch, new Vector2(5f, 300f), true, -10f, 10f);
             Assert.AreEqual(10f, yaw, 1e-4f);
@@ -442,8 +442,76 @@ namespace BoardSandbox.Tests
             yaw = 10f;
             pitch = 80f;
             CameraMath.Orbit(ref yaw, ref pitch, new Vector2(5f, 30f), false, 12f, 89f);
-            Assert.AreEqual(15f, yaw, 1e-4f);
+            Assert.AreEqual(5f, yaw, 1e-4f);
             Assert.AreEqual(89f, pitch, 1e-4f);
+        }
+
+        // Dragging holds the scene like a ball: it moves with the cursor, to the right for a drag to the right and
+        // down for a drag down, with the camera on either side of the poles.
+        [TestCase(32f, 26f, true)]
+        [TestCase(32f, 70f, true)]
+        [TestCase(32f, 135f, true)]
+        [TestCase(32f, 200f, true)]
+        [TestCase(200f, 300f, true)]
+        [TestCase(32f, 26f, false)]
+        [TestCase(200f, 60f, false)]
+        public void TheSceneFollowsTheCursor(float yaw, float pitch, bool free)
+        {
+            Vector3 toCamera = CameraMath.Direction(yaw, pitch);
+            Vector3 corner = new Vector3(Mathf.Sign(toCamera.x), Mathf.Sign(toCamera.y), Mathf.Sign(toCamera.z)) * 1.5f;
+            Vector2 before = OnScreen(corner, yaw, pitch);
+
+            float turnedYaw = yaw;
+            float turnedPitch = pitch;
+            CameraMath.Orbit(ref turnedYaw, ref turnedPitch, new Vector2(5f, 0f), free, 12f, 89f);
+            Assert.Greater(OnScreen(corner, turnedYaw, turnedPitch).x, before.x, "a drag to the right");
+
+            turnedYaw = yaw;
+            turnedPitch = pitch;
+            CameraMath.Orbit(ref turnedYaw, ref turnedPitch, new Vector2(0f, 5f), free, 12f, 89f);
+            Assert.Less(OnScreen(corner, turnedYaw, turnedPitch).y, before.y, "a drag down");
+        }
+
+        // A trackball camera turns around the axes of the screen wherever it has been turned to before, so the scene
+        // follows the cursor even after the camera has been tipped over the top or onto its side.
+        [TestCase(0f, 0f)]
+        [TestCase(0f, 90f)]
+        [TestCase(0f, 200f)]
+        [TestCase(75f, 40f)]
+        public void ATrackballTurnsAroundTheAxesOfTheScreen(float sideways, float down)
+        {
+            Assert.IsTrue(StageSettings.Parse(JsonValue.Parse("{\"camera\":{\"trackball\":true}}")).Camera.Trackball);
+            Assert.IsFalse(new CameraSettings().Trackball);
+
+            Quaternion start = CameraMath.Orientation(32f, 26f);
+            CameraMath.Basis(32f, 26f, out Vector3 right, out Vector3 up, out Vector3 forward);
+            GeometryAssert.Near(right, start * Vector3.right, 1e-4f);
+            GeometryAssert.Near(up, start * Vector3.up, 1e-4f);
+            GeometryAssert.Near(forward, start * Vector3.forward, 1e-4f);
+
+            Quaternion turned = CameraMath.Trackball(CameraMath.Trackball(start, new Vector2(sideways, 0f)), new Vector2(0f, down));
+            // the point of the scene in the middle of the view, a little towards the camera
+            Vector3 point = turned * Vector3.forward * -1.5f;
+
+            Quaternion after = CameraMath.Trackball(turned, new Vector2(5f, 0f));
+            Vector3 seen = Quaternion.Inverse(after) * point;
+            Assert.Greater(seen.x, 0.05f, "a drag to the right");
+            Assert.AreEqual(0f, seen.y, 1e-4f);
+
+            after = CameraMath.Trackball(turned, new Vector2(0f, 5f));
+            seen = Quaternion.Inverse(after) * point;
+            Assert.Less(seen.y, -0.05f, "a drag down");
+            Assert.AreEqual(0f, seen.x, 1e-4f);
+
+            GeometryAssert.Near(turned * new Vector3(-1f, 0f, 0f), CameraMath.ScreenPanOffset(turned, new Vector2(100f, 0f), 10f, 90f, 2000f), 1e-4f);
+            GeometryAssert.Near(turned * new Vector3(0f, 1f, 0f), CameraMath.ScreenPanOffset(turned, new Vector2(0f, 100f), 10f, 90f, 2000f), 1e-4f);
+        }
+
+        // Where a point of the scene is on the screen: x to the right and y up, in world units.
+        private static Vector2 OnScreen(Vector3 point, float yaw, float pitch)
+        {
+            CameraMath.Basis(yaw, pitch, out Vector3 right, out Vector3 up, out _);
+            return new Vector2(Vector3.Dot(point, right), Vector3.Dot(point, up));
         }
 
         [TestCase(0f, 30f)]

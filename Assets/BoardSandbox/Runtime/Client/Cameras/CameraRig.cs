@@ -28,6 +28,10 @@ namespace BoardSandbox.Client.Cameras
         private float _goalPitch = 55f;
         private float _goalDistance = 20f;
 
+        // What a trackball camera is turned to; yaw and pitch only say where it starts.
+        private Quaternion _orientation = Quaternion.identity;
+        private Quaternion _goalOrientation = Quaternion.identity;
+
         public CameraRig(Camera camera)
         {
             _camera = camera;
@@ -58,8 +62,10 @@ namespace BoardSandbox.Client.Cameras
             _goalPitch = _plan.FreePitch ? CameraMath.WrapDegrees(_plan.Pitch) : _plan.Pitch;
             _goalTarget = _plan.Target;
             _goalDistance = _plan.Distance;
+            _goalOrientation = CameraMath.Orientation(_goalYaw, _goalPitch);
             if (jump)
             {
+                _orientation = _goalOrientation;
                 _target = _goalTarget;
                 _yaw = _goalYaw;
                 _pitch = _goalPitch;
@@ -84,13 +90,20 @@ namespace BoardSandbox.Client.Cameras
         public void Orbit(Vector2 mouseDelta)
         {
             _userMoved = true;
+            if (_plan.Trackball)
+            {
+                _goalOrientation = CameraMath.Trackball(_goalOrientation, mouseDelta * DegreesPerPixel);
+                return;
+            }
             CameraMath.Orbit(ref _goalYaw, ref _goalPitch, mouseDelta * DegreesPerPixel, _plan.FreePitch, _plan.MinPitch, _plan.MaxPitch);
         }
 
         public void Pan(Vector2 mouseDelta, float screenHeight)
         {
             _userMoved = true;
-            Vector3 moved = _goalTarget + CameraMath.PanOffset(_goalYaw, _goalPitch, mouseDelta, _goalDistance, _plan.Fov, screenHeight);
+            Vector3 moved = _goalTarget + (_plan.Trackball
+                ? CameraMath.ScreenPanOffset(_goalOrientation, mouseDelta, _goalDistance, _plan.Fov, screenHeight)
+                : CameraMath.PanOffset(_goalYaw, _goalPitch, mouseDelta, _goalDistance, _plan.Fov, screenHeight));
             Vector3 home = _plan.Target;
             _goalTarget = new Vector3(
                 Mathf.Clamp(moved.x, home.x - _plan.Reach.x, home.x + _plan.Reach.x),
@@ -115,6 +128,7 @@ namespace BoardSandbox.Client.Cameras
             _pitch = _plan.FreePitch
                 ? CameraMath.WrapDegrees(CameraMath.DampAngle(_pitch, _goalPitch, Stiffness, deltaTime))
                 : CameraMath.Damp(_pitch, _goalPitch, Stiffness, deltaTime);
+            _orientation = Quaternion.Slerp(_orientation, _goalOrientation, 1f - Mathf.Exp(-Stiffness * deltaTime));
             _distance = CameraMath.Damp(_distance, _goalDistance, Stiffness, deltaTime);
             _target = CameraMath.Damp(_target, _goalTarget, Stiffness, deltaTime);
             Apply();
@@ -128,11 +142,18 @@ namespace BoardSandbox.Client.Cameras
 
         private void Apply()
         {
-            Vector3 position = CameraMath.Position(_target, _yaw, _pitch, _distance);
             Transform t = _camera.transform;
-            t.position = position;
-            CameraMath.Basis(_yaw, _pitch, out _, out Vector3 up, out Vector3 forward);
-            t.rotation = Quaternion.LookRotation(forward, up);
+            if (_plan.Trackball)
+            {
+                t.position = _target - _orientation * Vector3.forward * _distance;
+                t.rotation = _orientation;
+            }
+            else
+            {
+                t.position = CameraMath.Position(_target, _yaw, _pitch, _distance);
+                CameraMath.Basis(_yaw, _pitch, out _, out Vector3 up, out Vector3 forward);
+                t.rotation = Quaternion.LookRotation(forward, up);
+            }
             _camera.nearClipPlane = Mathf.Max(0.05f, _distance * 0.02f);
             _camera.farClipPlane = _distance * 8f + 800f;
         }

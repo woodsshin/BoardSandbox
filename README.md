@@ -1,6 +1,6 @@
 # Board Sandbox Engine
 
-Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 장면으로 보여 줍니다. 기본으로 오목(Gomoku)과 3D 큐브 퍼즐(Cubic 3x3) 모드가 들어 있습니다.
+Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 장면으로 보여 줍니다. 기본으로 오목(Gomoku)과 3D 큐브 퍼즐(Cubic 3x3), 체스(Chess) 모드가 들어 있습니다.
 
 
 ## 목차
@@ -483,6 +483,7 @@ sim 1000 seed=1
 | `camera.yaw`, `camera.pitch`, `camera.fov`, `camera.target` | 0, 55, 40, `[0, 0, 0]` | 시작 시점(각도는 도) |
 | `camera.distance`, `camera.radius` | 0, 0 | 거리. 0이면 `radius`(이 반지름의 공이 들어오게), 그것도 0이면 보드에 맞춥니다 |
 | `camera.min_pitch`, `camera.max_pitch`, `camera.free_pitch` | 12, 89, `false` | 위아래 회전 범위(-89~89). `free_pitch`가 `true`이면 위아래로도 한 바퀴 돕니다 |
+| `camera.trackball` | `false` | `true`이면 드래그가 장면을 손에 쥔 공처럼 굴립니다. 좌우 드래그는 화면의 세로축, 상하 드래그는 화면의 가로축을 중심으로 돌아서 어느 방향으로든 돌릴 수 있고, 위아래 회전 범위는 적용되지 않습니다 |
 | `camera.min_distance`, `camera.max_distance`, `camera.zoom` | 자동, 자동, `true` | 확대/축소 범위 |
 | `camera.left_drag`, `camera.right_drag`, `camera.middle_drag` | `pan`, `orbit`, `pan` | 버튼별 드래그: `pan`, `orbit`, `none` |
 | `markers.last_move` / `win` / `cursor` / `preview` / `shadow` | 보임 | 마지막 수 점, 승리 줄 고리, 커서 고리, 미리보기 말, 말 그림자. 각각 `visible`, `color`, `size` |
@@ -525,7 +526,7 @@ sim 1000 seed=1
 
 ```lua
 bse.emit({ t = "stage", board = { visible = false }, table = { visible = false },
-	camera = { yaw = 32, pitch = 26, radius = 3.1, free_pitch = true, left_drag = "orbit" } })
+	camera = { yaw = 32, pitch = 26, radius = 3.1, trackball = true, left_drag = "orbit" } })
 local id = bse.view.spawn("cubie", 0, 0, { props = { shape = "box", pos = { 1, 1, 1 }, faces = { py = "#f06aa8" } } })
 bse.emit({ t = "fx", kind = "rotate", ids = { id }, axis = { 0, 1, 0 }, pivot = { 0, 0, 0 }, degrees = -90, seconds = 0.22 })
 bse.view.set(id, { pos = { -1, 1, 1 }, rot = { 0, 0, -1, 0, 1, 0, 1, 0, 0 } })

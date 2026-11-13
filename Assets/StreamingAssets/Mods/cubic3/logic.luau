@@ -46,7 +46,7 @@ local function announce_stage()
 			yaw = 32,
 			pitch = 26,
 			radius = 3.1,
-			free_pitch = true,
+			trackball = true,
 			left_drag = "orbit",
 			right_drag = "orbit",
 			middle_drag = "none",
