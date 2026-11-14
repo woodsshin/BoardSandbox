@@ -11,6 +11,7 @@
     { "name": "White", "color": "#f3efe6" }
   ],
   "options": { "size": 15, "win_length": 5, "exact_win": false },
+  "ai": { "engine": "gomoku_mcts", "levels": [100, 500, 2000] },
   "client": {
     "board": { "style": "lines" },
     "stage": { "camera": { "pitch": 89 } },

@@ -20,6 +20,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 - [모드](#모드)
   - [시작 규칙](#시작-규칙)
   - [config.json](#configjson)
+  - [컴퓨터 플레이어](#컴퓨터-플레이어)
   - [규칙 스크립트](#규칙-스크립트)
   - [bse API](#bse-api)
   - [최소 예제](#최소-예제)
@@ -37,7 +38,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 ```
 Assets/
 ├─ BoardSandbox/
-│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜), Agents(AI 콘솔)
+│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜), Agents(AI 콘솔), Ai(생각하는 컴퓨터 플레이어)
 │  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동
 │  ├─ Editor/            메뉴, 네이티브 플러그인 설정
 │  ├─ Plugins/Windows/x86_64/   bse_luau.dll
@@ -173,6 +174,7 @@ Cubic 3x3의 조작: 면을 클릭하면 시계 방향, 오른쪽 클릭이나 `
 
   - 옵션은 모드의 `options` 기본값을 보여 줍니다. 불리언은 체크박스, 숫자와 문자열은 입력란이고, 그 밖의 값은 읽기 전용입니다. 바꾼 값은 다음 새 게임과 Simulation 패널에 적용됩니다.
   - `Computer` 좌석은 모드의 무작위 합법 수를 0.45초 간격으로 둡니다. 모드가 `random_command` 또는 `legal_commands`를 제공하지 않으면 선택할 수 없습니다(안내 토스트). 컴퓨터가 둘 수를 못 찾거나 수가 거부되면 그 좌석은 `Human`으로 돌아갑니다. 되돌린 시점이 컴퓨터 차례면 컴퓨터가 다시 둡니다.
+  - 모드가 `config.json`의 `ai`로 엔진을 지정하면(오목) `Computer` 좌석은 무작위 대신 그 엔진으로 수를 찾습니다([컴퓨터 플레이어](#컴퓨터-플레이어)). 좌석 목록 아래에 `Computer level 1/3 (100 simulations)`처럼 현재 단계가 표시되고, 사람과 컴퓨터의 대국이 끝날 때마다 한 단계씩 올라갑니다.
 - **오른쪽 도구 열**: `Fit view`, `Console`, `Simulation`.
   - **Simulation 패널**: `Games`(기본 1000, 1~1,000,000)와 `Seed`(기본 1)를 정해 `Run`하면 무작위 대국을 백그라운드로 돌리고 진행률과 결과를 보여 줍니다. `Cancel`로 중단합니다. 화면에는 아무것도 그리지 않고, 진행 중인 게임에도 영향이 없습니다.
 - **콘솔 창**: 화면 아래. 명령 입력(`↑`/`↓`로 입력 기록 이동)과 스크립트 로그(`bse.log` 등)가 함께 나옵니다.
@@ -370,6 +372,7 @@ Mods/
 | `seats` | 아니오 | `[{ "name": "Black", "color": "#161616" }, ...]`. `max`개까지 읽고, 생략한 이름은 `Player N`, 생략한 색은 기본 8색 팔레트를 순환합니다. 색은 `#rrggbb` |
 | `options` | 아니오 | 새 게임 옵션의 기본값 객체 |
 | `multiplayer` | 아니오 | `{ "mode": "split", "players": 4, "seed_option": "seed" }`. `mode`가 `split`이면 분할 화면, 그 밖에는 한 화면([멀티플레이](#멀티플레이)) |
+| `ai` | 아니오 | `{ "engine": "gomoku_mcts", "levels": [100, 500, 2000] }`. 생각하는 컴퓨터 플레이어([컴퓨터 플레이어](#컴퓨터-플레이어)). `engine`을 쓰면 `levels`는 1~1000000인 수 1~16개가 있어야 합니다 |
 | `client` | 아니오 | 화면 표시 힌트 ([클라이언트 힌트](#클라이언트-힌트)) |
 
 오목의 `config.json`:
@@ -387,6 +390,7 @@ Mods/
     { "name": "White", "color": "#f3efe6" }
   ],
   "options": { "size": 15, "win_length": 5, "exact_win": false },
+  "ai": { "engine": "gomoku_mcts", "levels": [100, 500, 2000] },
   "client": {
     "board": { "style": "lines" },
     "stage": { "camera": { "pitch": 89 } },
@@ -395,6 +399,22 @@ Mods/
   }
 }
 ```
+
+### 컴퓨터 플레이어
+
+`Computer` 좌석은 기본으로 모드의 무작위 합법 수(`random_command`)를 둡니다. 모드가 `config.json`에 `ai.engine`을 쓰면 C# 쪽 엔진이 수를 찾습니다. 지금 있는 엔진은 오목용 `gomoku_mcts` 하나이고, 다른 게임의 엔진은 `IComputerPlayer`를 구현해 `ComputerPlayers.Register(이름, 팩토리)`로 추가합니다. 이 빌드가 모르는 엔진 이름이면 그 모드는 무작위 수로 둡니다.
+
+**단계**: `ai.levels`는 단계별 탐색량이고 `gomoku_mcts`에서는 한 수에 돌리는 MCTS 시뮬레이션 횟수입니다. 오목은 `[100, 500, 2000]`이라 첫 판은 100번, 둘째 판은 500번, 셋째 판부터 2,000번을 돌립니다. 사람 좌석과 엔진 좌석이 함께 있는 대국이 끝나면(승패 무관) 한 판으로 세며, 되돌렸다가 다시 끝내도 같은 판입니다. 컴퓨터끼리의 대국과 무작위 컴퓨터와의 대국은 세지 않습니다. 판 수는 모드 id별로 `persistentDataPath/ai_progress.json`에 저장되어 앱을 다시 켜도 이어집니다(파일을 지우면 첫 단계로 돌아갑니다).
+
+**`gomoku_mcts`** (`Runtime/Core/Ai`):
+
+- **MCTS**: 시뮬레이션 한 번은 UCB1로 트리를 내려가 새 국면 하나를 더하고, 거기서 끝까지 두어 본 결과를 지나온 국면에 더합니다. 가장 많이 방문한 수를 둡니다.
+- **조브리스트 해싱**: (칸, 돌 색)마다 고정된 64비트 난수를 두고 국면의 해시를 놓인 돌의 XOR로 유지합니다(`ZobristKeys`, 둘 차례도 포함). 트리의 국면은 이 해시를 키로 하는 전치표에 들어가므로 수순만 다른 같은 국면은 통계를 공유하고, 같은 대국의 다음 수 탐색은 이전 탐색의 결과에서 이어집니다.
+- **수 후보와 전술**: 돌에서 두 칸 안의 빈 점만 후보로 봅니다. 한 수로 이기는 점과 상대가 한 수로 이기는 점은 트리와 플레이아웃 모두에서 바로 둡니다. 플레이아웃은 열린 넷을 만드는 점과 상대의 그런 점도 둡니다. 후보는 이어지거나 끊는 줄의 길이로 순서를 매겨 방문 수가 늘수록 더 많이 펼칩니다(progressive widening).
+- **입출력**: 국면은 `rules.query("state")`로 읽고(`size`, `win_length`, `exact_win`, `current`, `board`가 오목 모드와 같은 형식이어야 함) `{ action = "place_stone", x, y }`를 냅니다. 오목을 고쳐 만든 모드도 이 형식을 지키면 엔진을 쓸 수 있습니다.
+- **실행**: 탐색은 VM을 쓰지 않으므로 작업 스레드에서 돌고, 수는 컴퓨터 지연(0.45초)과 탐색이 모두 끝났을 때 둡니다. 탐색 중에 되돌리기, 새 게임, 콘솔 명령 등으로 판이 바뀌면 그 탐색은 버리고 다시 시작합니다.
+
+같은 엔진끼리 시뮬레이션 횟수만 달리해 40판씩 두게 한 결과(선후 교대, 15×15, 승 1점·무승부 0.5점): 2,000 대 100은 35점, 500 대 100은 30.5점, 2,000 대 500은 34점. 한 수의 탐색 시간은 개발 장비의 .NET 8에서 2,000번 기준 수십 ms였고 Unity(Mono)에서는 재 보지 않았습니다.
 
 ### 규칙 스크립트
 
@@ -660,6 +680,7 @@ using (GameHost host = new GameHost(catalog))
 ```
 
 - `GameSession`은 VM 하나와 화면 미러(`View`), 기록을 가집니다. 한 VM은 한 번에 한 스레드에서만 호출하세요. 서로 다른 VM은 동시에 써도 됩니다(시뮬레이션이 별도 VM을 백그라운드 스레드에서 돌립니다).
+- 좌석 모드는 `SeatMode.Human`, `Random`(무작위 수), `Ai`(모드의 엔진)입니다. `host.HasAi`, `AiLevel`, `AiLevelCount`, `AiEffort`, `AiProgress`로 엔진 유무와 단계를 읽고, `GameHostOptions.AiProgress`에 파일 경로를 준 `AiProgress`를 넘기면 판 수가 저장됩니다. `AiThreaded = false`는 탐색을 `Update` 안에서 실행합니다.
 - `GameHost`는 UI가 필요로 하는 것을 묶습니다: 모드 목록(`ModCatalog`), 좌석별 사람/컴퓨터, 컴퓨터 플레이어 스케줄, 토스트, 콘솔, 거부 기록, 백그라운드 시뮬레이션. `StartGame(mod)`는 모드를 고르고 새 게임까지 시작하며, `IsRunning(mod)`는 그 모드의 같은 버전(내용 해시가 같음)이 진행 중인지 알려 줍니다.
 - `ModCatalog`는 `IModSource` 목록에서 모드를 모읍니다. 항목(`ModEntry`)은 모드와 출처(`ModOrigin`: `BuiltIn`, `Local`, `Workshop`)를 가지며, `Search(query, origin)`이 이름, id, 설명으로 찾아 출처, 이름 순으로 돌려줍니다. `Refresh()`는 소스를 다시 읽고, `FindStartup(id)`는 [시작 규칙](#시작-규칙)의 게임을 고릅니다.
 - `IModSource`는 `Origin`, `Description`(찾아보는 곳, 안내 문구에 쓰임), `Discover()`(`ModDiscovery`: 모드와 읽지 못한 모드의 오류)로 이루어집니다. 폴더를 읽는 `FolderModSource`가 들어 있고, `Discover()`가 예외를 던져도 오류로 보고될 뿐 다른 소스는 그대로 읽힙니다.
@@ -697,7 +718,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 | 종류 | 실행 방법 | 범위 |
 |---|---|---|
-| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 기하·장면·오브젝트 계산 |
+| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 오목 컴퓨터 플레이어(조브리스트 해시, MCTS, 단계), 기하·장면·오브젝트 계산 |
 | dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 장면)는 빼고 실행합니다 |
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
 
@@ -715,7 +736,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 | AI 콘솔 | 요청 구성, 답의 파일 블록 처리, 검사·자동 수정·되돌리기, 자식 프로세스 실행(가짜 에이전트 스크립트), chat completions 호출(로컬 가짜 서버)은 Linux의 dotnet 하네스 테스트로 확인했습니다. 실제 Claude Code·Codex·Gemini·Antigravity·Grok CLI와 실제 API 호출, Windows에서의 프로세스 실행, Unity 안에서의 창 표시와 한글 입력은 확인하지 못했습니다 |
 | 스크립팅 백엔드 | Mono 기준으로 작성했습니다. IL2CPP 빌드는 확인하지 않았습니다 |
 
-기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 컴퓨터 플레이어는 무작위 수만 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
+기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 생각하는 컴퓨터 플레이어는 오목(`gomoku_mcts`)에만 있고 다른 게임은 무작위 수를 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
 
 ## 라이선스
 

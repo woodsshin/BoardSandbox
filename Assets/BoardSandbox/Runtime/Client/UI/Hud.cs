@@ -599,15 +599,20 @@ namespace BoardSandbox.Client.UI
                 GUI.color = previous;
                 GUILayout.Label(SeatName(manifest, seat), _theme.Label, GUILayout.ExpandWidth(true));
 
-                int mode = (int)_host.GetSeatMode(seat);
+                // "Computer" is the mod's thinking player when it has one and random moves otherwise.
+                int mode = _host.GetSeatMode(seat) == SeatMode.Human ? 0 : 1;
                 int picked = GUILayout.Toolbar(mode, SeatModeNames, _theme.Button, GUILayout.Width(_theme.Sf(150)));
                 if (picked != mode)
                 {
                     int chosenSeat = seat;
-                    SeatMode chosenMode = (SeatMode)picked;
+                    SeatMode chosenMode = picked == 0 ? SeatMode.Human : _host.HasAi ? SeatMode.Ai : SeatMode.Random;
                     Defer(() => _host.SetSeatMode(chosenSeat, chosenMode));
                 }
                 GUILayout.EndHorizontal();
+            }
+            if (_host.HasAi && _host.Session != null && manifest == _host.Session.Mod.Manifest)
+            {
+                GUILayout.Label("Computer level " + _host.AiLevel + "/" + _host.AiLevelCount + " (" + _host.AiEffort + " simulations)", _theme.Muted);
             }
         }
 
