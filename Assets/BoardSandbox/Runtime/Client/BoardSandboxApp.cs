@@ -197,9 +197,12 @@ namespace BoardSandbox.Client
         // The games that come with the app are listed first, so that nothing else can take their ids.
         private List<IModSource> ModSources()
         {
+            // On Android the StreamingAssets are inside the APK ("jar:file://...apk!/assets"), where the file system
+            // calls of FolderModSource find nothing; everywhere else they are a folder.
+            IModSource builtIn = ZipModSource.FromJarUrl(Application.streamingAssetsPath, "Mods", ModOrigin.BuiltIn);
             List<IModSource> sources = new List<IModSource>
             {
-                new FolderModSource(Path.Combine(Application.streamingAssetsPath, "Mods"), ModOrigin.BuiltIn)
+                builtIn ?? new FolderModSource(Path.Combine(Application.streamingAssetsPath, "Mods"), ModOrigin.BuiltIn)
             };
             string environment = Environment.GetEnvironmentVariable("BSE_MODS_DIR");
             if (!string.IsNullOrEmpty(environment))

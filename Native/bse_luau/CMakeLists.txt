@@ -76,13 +76,18 @@ if(WIN32)
   set_target_properties(bse_luau PROPERTIES PREFIX "")
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Android)$")
   set(bse_exports "${CMAKE_CURRENT_SOURCE_DIR}/cmake/exports.map")
   target_link_options(bse_luau PRIVATE "-Wl,--version-script=${bse_exports}" -Wl,-z,relro,-z,now)
   set_property(TARGET bse_luau APPEND PROPERTY LINK_DEPENDS "${bse_exports}")
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT BSE_SANITIZE)
     target_link_options(bse_luau PRIVATE -static-libstdc++ -static-libgcc)
   endif()
+endif()
+
+if(ANDROID)
+  # Devices with 16 KB memory pages (Android 15 and later) refuse libraries aligned for 4 KB ones.
+  target_link_options(bse_luau PRIVATE -Wl,-z,max-page-size=16384)
 endif()
 
 enable_testing()
