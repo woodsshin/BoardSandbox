@@ -38,6 +38,8 @@ namespace BoardSandbox.Core.Mods
         public const int SupportedApi = 1;
         public const int MaxSeats = 16;
         public const int MaxRoomPlayers = 8;
+        public const int MaxAiLevels = 16;
+        public const int MaxAiEffort = 1000000;
 
         private static readonly string[] DefaultSeatColors =
         {
@@ -70,6 +72,13 @@ namespace BoardSandbox.Core.Mods
 
         // Presentation hints for a client; the core never interprets them.
         public JsonValue Client { get; private set; }
+
+        // The thinking computer player the mod asks for ("ai.engine"); empty when it has only random moves.
+        public string AiEngine { get; private set; }
+
+        // The effort of that player per level ("ai.levels"), rising with the games played against it. What a
+        // number means is up to the engine; for gomoku_mcts it is simulations per move.
+        public IReadOnlyList<int> AiLevels { get; private set; }
 
         public SeatInfo GetSeat(int seat)
         {
@@ -142,6 +151,27 @@ namespace BoardSandbox.Core.Mods
             if (!client.IsNull && !client.IsObject)
                 throw new ModException("'client' must be an object.");
             manifest.Client = client.IsObject ? client : JsonValue.NewObject();
+
+            JsonValue ai = root["ai"];
+            if (!ai.IsNull && !ai.IsObject)
+                throw new ModException("'ai' must be an object.");
+            manifest.AiEngine = ai["engine"].AsString();
+            JsonValue levelList = ai["levels"];
+            if (!levelList.IsNull && !levelList.IsArray)
+                throw new ModException("'ai.levels' must be an array of positive numbers.");
+            List<int> levels = new List<int>();
+            foreach (JsonValue level in levelList.Items)
+            {
+                int effort = level.AsInt(0);
+                if (effort < 1 || effort > MaxAiEffort)
+                    throw new ModException("'ai.levels' must hold numbers from 1 to " + MaxAiEffort + ".");
+                levels.Add(effort);
+            }
+            if (levels.Count > MaxAiLevels)
+                throw new ModException("'ai.levels' must not hold more than " + MaxAiLevels + " numbers.");
+            if (manifest.AiEngine.Length > 0 && levels.Count == 0)
+                throw new ModException("'ai.levels' must hold at least one number when 'ai.engine' is set.");
+            manifest.AiLevels = levels;
             return manifest;
         }
 

@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
+using BoardSandbox.Core.Ai;
 using BoardSandbox.Core.Commands;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
@@ -12,7 +15,12 @@ namespace BoardSandbox.Core.App
     public enum SeatMode
     {
         Human,
-        Random
+
+        // The computer plays a random legal move.
+        Random,
+
+        // The computer plays the move its engine finds (ModManifest.AiEngine), thinking harder with every game.
+        Ai
     }
 
     public sealed class GameHostOptions
@@ -24,6 +32,13 @@ namespace BoardSandbox.Core.App
 
         // 0 draws the seeds of computer-played moves from the clock.
         public int AiSeed;
+
+        // The thinking computer player searches on a worker thread while the game stays responsive. False runs the
+        // search inside Update when the move is due.
+        public bool AiThreaded = true;
+
+        // Games finished against the thinking computer player, which set its level. Null keeps them in memory.
+        public AiProgress AiProgress;
 
         // Seconds on a monotonic clock; defaults to one started with the host.
         public Func<double> Clock;
@@ -42,6 +57,11 @@ namespace BoardSandbox.Core.App
         private readonly Dictionary<int, SeatMode> _seatModes = new Dictionary<int, SeatMode>();
         private readonly Random _aiRandom;
         private double _aiDue = -1;
+        private IComputerPlayer _player;
+        private Task<JsonValue> _aiTask;
+        private CancellationTokenSource _aiCancel;
+        private Func<CancellationToken, JsonValue> _aiSearch;
+        private bool _gameCounted;
         private bool _disposed;
 
         public GameHost(ModCatalog catalog, GameHostOptions options = null)
@@ -59,6 +79,7 @@ namespace BoardSandbox.Core.App
             }
             _aiRandom = _options.AiSeed != 0 ? new Random(_options.AiSeed) : new Random();
             AiDelaySeconds = _options.AiDelaySeconds;
+            AiProgress = _options.AiProgress ?? new AiProgress();
             Toasts = new ToastQueue(_options.ToastCapacity, _options.ToastSeconds);
             Rejections = new RejectionLog(_options.RejectionLogCapacity);
             Simulation = new SimulationJob();
@@ -78,6 +99,21 @@ namespace BoardSandbox.Core.App
 
         public double AiDelaySeconds { get; set; }
         public bool AiPaused { get; set; }
+
+        public AiProgress AiProgress { get; }
+
+        // Whether the mod has a computer player that thinks (SeatMode.Ai).
+        public bool HasAi => _player != null;
+
+        // The levels of that player and the one it plays at now, counted from 1; 0 without such a player.
+        public int AiLevelCount => _player != null ? Session.Mod.Manifest.AiLevels.Count : 0;
+        public int AiLevel => _player != null ? AiProgress.LevelIndex(Session.Mod.Manifest.Id, AiLevelCount) + 1 : 0;
+
+        // What the player may spend on a move at this level; for gomoku the number of simulations.
+        public int AiEffort => _player != null ? Session.Mod.Manifest.AiLevels[AiLevel - 1] : 0;
+
+        // A search for the computer's move is under way.
+        public bool AiThinking => _aiTask != null || _aiSearch != null;
         public double Now => _clock();
 
         // Raised after the session was replaced; the table of the previous session is gone.
@@ -119,13 +155,17 @@ namespace BoardSandbox.Core.App
 
             Rejections.Clear();
             fresh.AddInterceptor(Rejections);
+            fresh.EventApplied += OnSessionEvent;
+            fresh.CommandProcessed += OnCommandProcessed;
 
             GameSession previous = Session;
             Session = fresh;
             Console = new CommandConsole(fresh);
             NewGameOptions = mod.Manifest.DefaultOptions.DeepClone();
             _seatModes.Clear();
-            _aiDue = -1;
+            ResetAi();
+            _player = ComputerPlayers.Create(mod.Manifest);
+            _gameCounted = false;
             SessionReplaced?.Invoke();
             previous?.Dispose();
             return true;
@@ -169,7 +209,8 @@ namespace BoardSandbox.Core.App
                 Toasts.Add("Could not start the game: " + Describe(e), ToastLevel.Error, Now);
                 return false;
             }
-            _aiDue = -1;
+            ResetAi();
+            _gameCounted = false;
             GameStarted?.Invoke();
             return true;
         }
@@ -208,7 +249,7 @@ namespace BoardSandbox.Core.App
             {
                 bool moved = move();
                 if (moved)
-                    _aiDue = -1;
+                    ResetAi();
                 return moved;
             }
             catch (Exception e) when (e is GameSessionException || e is LuauException)
@@ -233,11 +274,16 @@ namespace BoardSandbox.Core.App
                 Toasts.Add("'" + Session.Mod.Manifest.Name + "' has no computer player.", ToastLevel.Warning, Now);
                 return false;
             }
+            if (mode == SeatMode.Ai && _player == null)
+            {
+                Toasts.Add("'" + Session.Mod.Manifest.Name + "' has no thinking computer player.", ToastLevel.Warning, Now);
+                return false;
+            }
             if (mode == SeatMode.Human)
                 _seatModes.Remove(seat);
             else
                 _seatModes[seat] = mode;
-            _aiDue = -1;
+            ResetAi();
             return true;
         }
 
@@ -259,36 +305,66 @@ namespace BoardSandbox.Core.App
             GameSession s = Session;
             if (s == null || !s.IsStarted || s.View.IsOver || AiPaused)
             {
-                _aiDue = -1;
+                ResetAi();
                 return false;
             }
             int seat = s.View.Turn;
-            if (seat <= 0 || GetSeatMode(seat) != SeatMode.Random)
+            SeatMode mode = seat > 0 ? GetSeatMode(seat) : SeatMode.Human;
+            if (mode == SeatMode.Human)
             {
-                _aiDue = -1;
+                ResetAi();
                 return false;
+            }
+            if (mode == SeatMode.Ai && _aiDue >= 0 && !AiThinking)
+            {
+                // The game changed under the search (a console command, say), so its move is for another position.
+                _aiDue = -1;
             }
 
             double now = Now;
             if (_aiDue < 0)
             {
                 _aiDue = now + Math.Max(0, AiDelaySeconds);
+                if (mode == SeatMode.Ai)
+                    BeginThinking(s, seat, now);
                 return false;
             }
             if (now < _aiDue)
                 return false;
-            _aiDue = -1;
 
             JsonValue command;
-            try
+            if (mode == SeatMode.Ai)
             {
-                command = s.RandomCommand(seat, _aiRandom.Next(1, int.MaxValue));
+                if (_aiTask != null && !_aiTask.IsCompleted)
+                    return false;
+                try
+                {
+                    command = _aiTask != null ? _aiTask.GetAwaiter().GetResult() : _aiSearch(CancellationToken.None);
+                }
+                catch (OperationCanceledException)
+                {
+                    ResetAi();
+                    return false;
+                }
+                catch (Exception e)
+                {
+                    FailComputer(seat, e, now);
+                    return false;
+                }
+                ResetAi();
             }
-            catch (Exception e) when (e is GameSessionException || e is LuauException)
+            else
             {
-                Toasts.Add("The computer player failed: " + Describe(e), ToastLevel.Error, now);
-                _seatModes.Remove(seat);
-                return false;
+                _aiDue = -1;
+                try
+                {
+                    command = s.RandomCommand(seat, _aiRandom.Next(1, int.MaxValue));
+                }
+                catch (Exception e) when (e is GameSessionException || e is LuauException)
+                {
+                    FailComputer(seat, e, now);
+                    return false;
+                }
             }
             if (command == null || !command.IsObject)
             {
@@ -302,6 +378,88 @@ namespace BoardSandbox.Core.App
             if (!result.IsAccepted)
                 _seatModes.Remove(seat);
             return result.IsAccepted;
+        }
+
+        // Reads the position now and starts the search for the seat's move, which Update picks up when it is due.
+        private void BeginThinking(GameSession session, int seat, double now)
+        {
+            Func<CancellationToken, JsonValue> search;
+            try
+            {
+                search = _player.Prepare(session, seat, AiEffort, _aiRandom.Next(1, int.MaxValue));
+            }
+            catch (Exception e) when (e is GameSessionException || e is LuauException)
+            {
+                FailComputer(seat, e, now);
+                return;
+            }
+            if (_options.AiThreaded)
+            {
+                _aiCancel = new CancellationTokenSource();
+                CancellationToken token = _aiCancel.Token;
+                _aiTask = Task.Run(() => search(token), token);
+            }
+            else
+            {
+                _aiSearch = search;
+            }
+        }
+
+        private void FailComputer(int seat, Exception e, double now)
+        {
+            Toasts.Add("The computer player failed: " + Describe(e), ToastLevel.Error, now);
+            _seatModes.Remove(seat);
+            ResetAi();
+        }
+
+        // Forgets the move that is scheduled or being thought about.
+        private void ResetAi()
+        {
+            _aiDue = -1;
+            StopThinking();
+        }
+
+        private void StopThinking()
+        {
+            _aiSearch = null;
+            _aiTask = null;
+            if (_aiCancel != null)
+            {
+                // The search notices at its next simulation and its result is dropped.
+                _aiCancel.Cancel();
+                _aiCancel = null;
+            }
+        }
+
+        private void OnSessionEvent(ViewEvent applied)
+        {
+            // Whatever the search was started for, the table is no longer that.
+            StopThinking();
+        }
+
+        // Counts a finished game between a person and the thinking computer player; the next one is a level harder.
+        private void OnCommandProcessed(InputPacket packet, SubmitResult result)
+        {
+            GameSession s = Session;
+            if (_gameCounted || _player == null || s == null || !result.IsAccepted || !s.View.IsOver)
+                return;
+            bool computer = false;
+            bool person = false;
+            for (int seat = 1; seat <= s.Mod.Manifest.MaxPlayers; seat++)
+            {
+                SeatMode mode = GetSeatMode(seat);
+                computer |= mode == SeatMode.Ai;
+                person |= mode == SeatMode.Human;
+            }
+            if (!computer || !person)
+                return;
+            _gameCounted = true;
+            int before = AiLevel;
+            AiProgress.RecordGame(s.Mod.Manifest.Id);
+            if (AiProgress.Problem.Length > 0)
+                Toasts.Add(AiProgress.Problem, ToastLevel.Warning, Now);
+            if (AiLevel != before)
+                Toasts.Add("The computer will think harder next game (level " + AiLevel + " of " + AiLevelCount + ").", ToastLevel.Info, Now);
         }
 
         private void Report(SubmitResult result)
@@ -338,6 +496,7 @@ namespace BoardSandbox.Core.App
             if (_disposed)
                 return;
             _disposed = true;
+            StopThinking();
             Simulation.Cancel();
             Simulation.Wait(3000);
             Session?.Dispose();

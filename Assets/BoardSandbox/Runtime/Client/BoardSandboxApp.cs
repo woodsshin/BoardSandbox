@@ -7,6 +7,7 @@ using BoardSandbox.Client.Rendering;
 using BoardSandbox.Client.UI;
 using BoardSandbox.Client.Views;
 using BoardSandbox.Core.Agents;
+using BoardSandbox.Core.Ai;
 using BoardSandbox.Core.App;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
@@ -141,7 +142,13 @@ namespace BoardSandbox.Client
             _active = _panels[0];
             Listen(_queue);
 
-            _host = new GameHost(new ModCatalog(ModSources()), new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds });
+            // The computer player gets stronger with the games played against it, also after the app was closed.
+            AiProgress progress = new AiProgress(Path.Combine(Application.persistentDataPath, "ai_progress.json"));
+            progress.Load();
+            _host = new GameHost(new ModCatalog(ModSources()),
+                new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds, AiProgress = progress });
+            if (progress.Problem.Length > 0)
+                _host.Toasts.Add(progress.Problem, ToastLevel.Warning, _host.Now);
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer = new Multiplayer(_host, CreateLobbyBackend());
             _multiplayer.RoomChanged += OnRoomChanged;
