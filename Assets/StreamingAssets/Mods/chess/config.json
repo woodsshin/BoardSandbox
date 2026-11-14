@@ -11,6 +11,7 @@
     { "name": "Black", "color": "#161616" }
   ],
   "options": { "fen": "", "promotion": "q", "repetition": 3, "halfmove_limit": 100 },
+  "ai": { "engine": "chess_mcts", "levels": [100, 500, 2000] },
   "client": {
     "board": { "style": "checker", "columns": 8, "rows": 8 },
     "stage": {
