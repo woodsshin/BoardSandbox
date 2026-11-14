@@ -26,6 +26,9 @@ namespace BoardSandbox.Core.Ai
 
         // The move was the only sensible one (a win or the answer to one), so nothing was simulated.
         public bool Forced { get; internal set; }
+
+        // The move starts a row of fours that the opponent can only answer until it wins.
+        public bool Solved { get; internal set; }
     }
 
     // Monte Carlo tree search for gomoku. Positions are kept in a transposition table under their Zobrist hash, so
@@ -36,11 +39,15 @@ namespace BoardSandbox.Core.Ai
     // result to every position on the way. The number of simulations is the strength: with few of them the search
     // sees wins and losses a move or two ahead, with more it reads further.
     //
-    // Three things keep a small number of simulations from being wasted on the 200 points of a board:
-    // only points near stones are moves; a win in one and the answer to the opponent's win in one are played without
-    // thought, in the tree and in the playouts (which also make and stop open lines one short of winning); and a
-    // position gets its moves in the order of a quick guess, a few at first and more as it is visited (progressive
-    // widening).
+    // The search knows the shapes of gomoku (GomokuShape), which is what makes its simulations worth something:
+    // - only points near stones are moves;
+    // - a win, the answer to a win, a move that wins by force (an open four, two fours, a four with an open three)
+    //   and the answer to such a move are played without thought, in the tree and in the playouts;
+    // - a position gets its other moves in the order of their shapes, a few at first and more as it is visited
+    //   (progressive widening), and the playouts prefer good shapes too;
+    // - before anything is simulated, a row of fours that wins by force is looked for (the opponent has one answer
+    //   to each four), for the mover and, to keep away from it, for the opponent. The more simulations, the longer
+    //   the rows it may read.
     //
     // An instance is not thread safe.
     public sealed class GomokuMcts
@@ -48,7 +55,12 @@ namespace BoardSandbox.Core.Ai
         // The table is dropped when it grows past this.
         private const int MaxNodes = 400000;
 
-        private static readonly double[] RunWeights = { 0, 2, 14, 90, 600 };
+        // Fours in a row the forced-win search reads at most, and positions it may look at per simulation allowed.
+        private const int MaxForcedDepth = 14;
+        private const int ForcedNodesPerSimulation = 6;
+
+        // Root moves tried against a forced win of the opponent.
+        private const int MaxDefences = 24;
 
         private sealed class Node
         {
@@ -69,16 +81,28 @@ namespace BoardSandbox.Core.Ai
 
         private readonly Dictionary<ulong, Node> _table = new Dictionary<ulong, Node>();
         private readonly List<Node> _path = new List<Node>();
-        private readonly List<int> _blocks = new List<int>();
+        private readonly List<int> _picked = new List<int>();
+        private readonly List<int> _fours = new List<int>();
         private readonly List<ulong> _stale = new List<ulong>();
         private GomokuPosition _scratch;
+        private GomokuPosition[] _forced;
+        private int _forcedBudget;
         private int _transpositions;
 
         // Weight of the exploration term of UCB1.
-        public double Exploration { get; set; } = 0.25;
+        public double Exploration { get; set; } = 0.4;
 
         // A position visited n times offers 1 + Widening * sqrt(n) of its moves.
-        public double Widening { get; set; } = 0.5;
+        public double Widening { get; set; } = 0.8;
+
+        // How often a playout takes the move with the best shapes instead of a random one near the stones.
+        public double Greed { get; set; } = 0.7;
+
+        // A playout that has not ended after this many moves counts as a draw.
+        public int PlayoutLength { get; set; } = 24;
+
+        // Look for wins by a row of fours before simulating.
+        public bool ReadForcedWins { get; set; } = true;
 
         public int NodeCount => _table.Count;
 
@@ -117,6 +141,32 @@ namespace BoardSandbox.Core.Ai
                 return result;
             }
 
+            if (ReadForcedWins)
+            {
+                int budget = simulations * ForcedNodesPerSimulation;
+                if (ForcedWin(root, budget, out int winning))
+                {
+                    result.Move = winning;
+                    result.Solved = true;
+                    result.Nodes = _table.Count;
+                    return result;
+                }
+                int[] safe = Defences(root, rootNode, budget, cancel);
+                if (safe != null)
+                {
+                    // Only these moves keep the opponent from a forced win; start this position afresh with them.
+                    rootNode = new Node { ToMove = root.Current, Stones = root.Moves, Moves = safe, Kids = new Node[safe.Length] };
+                    _table[root.Hash] = rootNode;
+                    if (safe.Length == 1)
+                    {
+                        result.Move = safe[0];
+                        result.Forced = true;
+                        result.Nodes = _table.Count;
+                        return result;
+                    }
+                }
+            }
+
             for (int i = 0; i < simulations; i++)
             {
                 cancel.ThrowIfCancellationRequested();
@@ -147,6 +197,9 @@ namespace BoardSandbox.Core.Ai
             {
                 // Another game: its positions would hash like those of this one.
                 _scratch = new GomokuPosition(root.Size, root.WinLength, root.ExactWin);
+                _forced = new GomokuPosition[MaxForcedDepth + 2];
+                for (int i = 0; i < _forced.Length; i++)
+                    _forced[i] = new GomokuPosition(root.Size, root.WinLength, root.ExactWin);
                 _table.Clear();
                 return;
             }
@@ -239,8 +292,10 @@ namespace BoardSandbox.Core.Ai
             }
         }
 
-        // The moves of a position: the winning move alone when there is one, else the answers to the opponent's
-        // winning moves alone, else every point near a stone, the most promising first.
+        // The moves of a position, the most promising first:
+        // the winning move alone; else the answers to the opponent's winning moves alone; else a move that wins by
+        // force alone; else, when the opponent has such a move, the points where it would be made and the mover's
+        // own fours; else every point near a stone.
         private void ListMoves(Node node, GomokuPosition position, Random random)
         {
             int seat = position.Current;
@@ -268,35 +323,65 @@ namespace BoardSandbox.Core.Ai
             }
             else
             {
+                int[] all = new int[count];
+                double[] order = new double[count];
                 int win = -1;
-                _blocks.Clear();
+                int attack = -1;
+                int attackValue = -1;
+                bool threatened = false;
+                _picked.Clear();
+                _fours.Clear();
                 for (int i = 0; i < count && win < 0; i++)
                 {
                     int point = position.Candidate(i);
-                    if (position.Wins(point, seat))
+                    GomokuThreat mine = position.Rate(point, seat, out int myValue);
+                    GomokuThreat theirs = position.Rate(point, other, out int theirValue);
+                    all[i] = point;
+                    order[i] = -(myValue * 1.2 + theirValue + random.NextDouble());
+                    if (mine == GomokuThreat.Win)
                         win = point;
-                    else if (position.Wins(point, other))
-                        _blocks.Add(point);
+                    else if (theirs == GomokuThreat.Win)
+                        _picked.Add(point);
+                    else if (mine == GomokuThreat.Winning && myValue > attackValue)
+                    {
+                        attack = point;
+                        attackValue = myValue;
+                    }
+                    if (theirs == GomokuThreat.Winning)
+                        threatened = true;
+                    if (mine == GomokuThreat.Four)
+                        _fours.Add(point);
                 }
+
                 if (win >= 0)
                 {
                     moves = new[] { win };
                 }
-                else if (_blocks.Count > 0)
+                else if (_picked.Count > 0)
                 {
-                    moves = _blocks.ToArray();
+                    moves = _picked.ToArray();
+                }
+                else if (attack >= 0)
+                {
+                    moves = new[] { attack };
                 }
                 else
                 {
-                    moves = new int[count];
-                    double[] order = new double[count];
-                    for (int i = 0; i < count; i++)
+                    Array.Sort(order, all);
+                    if (threatened)
                     {
-                        int point = position.Candidate(i);
-                        moves[i] = point;
-                        order[i] = -(Promise(position, point, seat, other) + random.NextDouble());
+                        _picked.Clear();
+                        foreach (int point in all)
+                        {
+                            if (position.Rate(point, other, out _) == GomokuThreat.Winning || _fours.Contains(point))
+                                _picked.Add(point);
+                        }
+                        moves = _picked.ToArray();
                     }
-                    Array.Sort(order, moves);
+                    else
+                    {
+                        moves = all;
+                    }
                 }
             }
 
@@ -305,71 +390,176 @@ namespace BoardSandbox.Core.Ai
             node.Expanded = 0;
         }
 
-        // A quick guess at the worth of a point: the longer the lines it extends or cuts, the better.
-        private static double Promise(GomokuPosition position, int point, int seat, int other)
+        // Plays the game out and gives the winner, 0 for a draw. Both sides win when they can, stop a win, make a
+        // move that wins by force or take the point where the opponent would, and otherwise play the point with the
+        // best shapes most of the time and a random point near the stones the rest.
+        private int Playout(GomokuPosition position, Random random)
         {
-            double total = 0;
-            int cap = RunWeights.Length - 1;
-            for (int direction = 0; direction < 4; direction++)
+            for (int ply = 0; ply < PlayoutLength && !position.IsFull; ply++)
             {
-                total += RunWeights[Math.Min(cap, position.Line(point, seat, direction))];
-                total += 0.8 * RunWeights[Math.Min(cap, position.Line(point, other, direction))];
-            }
-            return total;
-        }
-
-        // Plays the game out and gives the winner, 0 for a draw. Both sides take a win in one, answer the opponent's
-        // win in one, make a line that wins the move after next or take the point where the opponent would, and
-        // otherwise play a random point near the stones.
-        private static int Playout(GomokuPosition position, Random random)
-        {
-            int previous = -1;
-            int last = -1;
-            int ply = 0;
-            while (!position.IsFull)
-            {
+                int count = position.CandidateCount;
+                if (count == 0)
+                    return 0;
                 int seat = position.Current;
                 int other = 3 - seat;
-                int move = -1;
-                if (ply < 2)
+                int win = -1;
+                int block = -1;
+                int attack = -1;
+                int defend = -1;
+                int best = -1;
+                int bestValue = -1;
+                for (int i = 0; i < count; i++)
                 {
-                    // Nothing is known yet about the lines that were on the board before the playout.
-                    int block = -1;
-                    for (int i = 0; i < position.CandidateCount && move < 0; i++)
+                    int point = position.Candidate(i);
+                    GomokuThreat mine = position.Rate(point, seat, out int myValue);
+                    if (mine == GomokuThreat.Win)
                     {
-                        int point = position.Candidate(i);
-                        if (position.Wins(point, seat))
-                            move = point;
-                        else if (block < 0 && position.Wins(point, other))
-                            block = point;
+                        win = point;
+                        break;
                     }
-                    if (move < 0)
-                        move = block;
+                    GomokuThreat theirs = position.Rate(point, other, out int theirValue);
+                    if (theirs == GomokuThreat.Win)
+                        block = point;
+                    else if (mine == GomokuThreat.Winning)
+                        attack = point;
+                    else if (theirs == GomokuThreat.Winning)
+                        defend = point;
+                    int value = myValue * 5 + theirValue * 4 + random.Next(16);
+                    if (value > bestValue)
+                    {
+                        bestValue = value;
+                        best = point;
+                    }
                 }
-                else
-                {
-                    // From here on a winning point can only come from the last stone of either side.
-                    move = position.WinningPointThrough(previous, seat);
-                    if (move < 0)
-                        move = position.WinningPointThrough(last, other);
-                    if (move < 0)
-                        move = position.OpenLinePointThrough(previous, seat);
-                    if (move < 0)
-                        move = position.OpenLinePointThrough(last, other);
-                }
-                if (move < 0)
-                {
-                    if (position.CandidateCount == 0)
-                        return 0;
-                    move = position.Candidate(random.Next(position.CandidateCount));
-                }
+
+                int move = win >= 0 ? win
+                    : block >= 0 ? block
+                    : attack >= 0 ? attack
+                    : defend >= 0 ? defend
+                    : random.NextDouble() < Greed ? best
+                    : position.Candidate(random.Next(count));
                 if (position.Play(move))
                     return seat;
-                previous = last;
-                last = move;
-                ply++;
             }
             return 0;
+        }
+
+        // Whether the seat to move wins by a row of fours, each of which the opponent can only answer on one point,
+        // and the first of them.
+        private bool ForcedWin(GomokuPosition position, int budget, out int first)
+        {
+            _forcedBudget = budget;
+            // Deeper only when the shallower search found nothing, so the shortest win comes first.
+            for (int depth = 2; depth <= MaxForcedDepth && _forcedBudget > 0; depth += 4)
+            {
+                if (Fours(position, depth, out first))
+                    return true;
+            }
+            first = -1;
+            return false;
+        }
+
+        private bool Fours(GomokuPosition position, int depth, out int first)
+        {
+            first = -1;
+            if (--_forcedBudget < 0)
+                return false;
+            int seat = position.Current;
+            int other = 3 - seat;
+            int count = position.CandidateCount;
+
+            // The opponent's own four leaves one move, which must be a four as well to go on.
+            int must = -1;
+            for (int i = 0; i < count; i++)
+            {
+                int point = position.Candidate(i);
+                if (position.Wins(point, seat))
+                {
+                    first = point;
+                    return true;
+                }
+                if (position.Wins(point, other))
+                {
+                    if (must >= 0)
+                        return false;
+                    must = point;
+                }
+            }
+            if (depth <= 0)
+                return false;
+
+            GomokuPosition next = _forced[depth];
+            // Moves that win at once (an open four) before plain fours.
+            for (int pass = 0; pass < 2; pass++)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    int point = position.Candidate(i);
+                    if (must >= 0 && point != must)
+                        continue;
+                    GomokuThreat threat = position.Rate(point, seat, out _);
+                    if (pass == 0 ? threat != GomokuThreat.Winning : threat != GomokuThreat.Four)
+                        continue;
+
+                    next.CopyFrom(position);
+                    next.Play(point);
+                    int answer = -1;
+                    int answers = 0;
+                    for (int j = 0; j < next.CandidateCount; j++)
+                    {
+                        int reply = next.Candidate(j);
+                        if (next.Wins(reply, seat))
+                        {
+                            answer = reply;
+                            answers++;
+                        }
+                    }
+                    if (answers == 0)
+                        continue;
+                    if (answers >= 2)
+                    {
+                        first = point;
+                        return true;
+                    }
+                    if (next.Play(answer))
+                        continue;
+                    if (Fours(next, depth - 1, out _))
+                    {
+                        first = point;
+                        return true;
+                    }
+                    if (_forcedBudget < 0)
+                        return false;
+                }
+            }
+            return false;
+        }
+
+        // When the opponent would win by a row of fours if the mover did nothing about it: the moves after which
+        // that is no longer so, in the order of the position's moves. Null when there is no such danger or nothing
+        // was found against it.
+        private int[] Defences(GomokuPosition root, Node rootNode, int budget, CancellationToken cancel)
+        {
+            GomokuPosition probe = _forced[MaxForcedDepth + 1];
+            probe.CopyFrom(root);
+            probe.Pass();
+            if (!ForcedWin(probe, budget, out _))
+                return null;
+
+            List<int> safe = new List<int>();
+            int tried = 0;
+            foreach (int move in rootNode.Moves)
+            {
+                if (tried++ >= MaxDefences)
+                    break;
+                cancel.ThrowIfCancellationRequested();
+                probe.CopyFrom(root);
+                if (probe.Play(move))
+                    return new[] { move };
+                if (!ForcedWin(probe, budget, out _))
+                    safe.Add(move);
+            }
+            return safe.Count > 0 && safe.Count < rootNode.Moves.Length ? safe.ToArray() : null;
         }
     }
 }

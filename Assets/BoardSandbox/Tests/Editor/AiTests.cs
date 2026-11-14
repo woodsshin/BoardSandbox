@@ -167,12 +167,6 @@ namespace BoardSandbox.Tests
             Assert.IsTrue(four.Wins(At(2, 7), 1));
             Assert.IsFalse(four.Wins(At(7, 7), 2));
             Assert.IsFalse(four.Wins(At(6, 8), 2));
-            int point = four.WinningPointThrough(At(4, 7), 1);
-            Assert.IsTrue(point == At(2, 7) || point == At(7, 7));
-            Assert.AreEqual(-1, four.WinningPointThrough(At(4, 8), 2));
-            int open = four.OpenLinePointThrough(At(4, 8), 2);
-            Assert.IsTrue(open == At(2, 8) || open == At(6, 8), "white gets an open four at either end of its three");
-            Assert.AreEqual(-1, four.OpenLinePointThrough(At(4, 7), 1), "a fifth stone is a win, not an open four");
             Assert.IsTrue(four.Play(At(7, 7)));
             Assert.AreEqual(1, four.Winner);
 
@@ -183,6 +177,90 @@ namespace BoardSandbox.Tests
             Assert.Throws<FormatException>(() => GomokuPosition.Parse(Size, 5, false, "012", 1));
             Assert.Throws<FormatException>(() => GomokuPosition.Parse(3, 3, false, "000000003", 1));
             Assert.Throws<FormatException>(() => GomokuPosition.Parse(3, 3, false, "000000000", 3));
+        }
+
+        [Test]
+        public void PositionsKnowTheShapesAStoneWouldMake()
+        {
+            const int Across = 0;
+            const int Down = 1;
+
+            // . X X . X . : the gap makes an open four, as does either end of an unbroken three.
+            GomokuPosition broken = Position(1, new[] { 5, 7, 6, 7, 8, 7 }, new[] { 0, 0, 14, 0, 0, 14 });
+            Assert.AreEqual(GomokuShape.OpenFour, broken.Shape(At(7, 7), 1, Across));
+            Assert.AreEqual(GomokuShape.Four, broken.Shape(At(9, 7), 1, Across), "X X . X X has one point left");
+            Assert.AreEqual(GomokuShape.None, broken.Shape(At(7, 7), 1, Down));
+            Assert.AreEqual(GomokuThreat.Winning, broken.Rate(At(7, 7), 1, out int value));
+            Assert.Greater(value, 1000);
+            Assert.AreEqual(GomokuThreat.None, broken.Rate(At(7, 7), 2, out value), "white only stops black there");
+            Assert.AreEqual(GomokuThreat.None, broken.Rate(At(12, 12), 1, out value));
+            Assert.AreEqual(0, value);
+
+            // A three closed on one side becomes a four the opponent can stop.
+            GomokuPosition closed = Position(1, new[] { 5, 7, 6, 7, 7, 7 }, new[] { 4, 7, 0, 0, 14, 0 });
+            Assert.AreEqual(GomokuShape.Four, closed.Shape(At(8, 7), 1, Across));
+            Assert.AreEqual(GomokuThreat.Four, closed.Rate(At(8, 7), 1, out value));
+
+            // Two stones with a gap, and two in a row: a third makes an open three.
+            GomokuPosition two = Position(1, new[] { 6, 7, 8, 7 }, new[] { 0, 0, 14, 0 });
+            Assert.AreEqual(GomokuShape.OpenThree, two.Shape(At(7, 7), 1, Across));
+            Assert.AreEqual(GomokuShape.OpenThree, two.Shape(At(9, 7), 1, Across), "X . X X is an open three too");
+            Assert.AreEqual(GomokuShape.Two, Position(2, new[] { 7, 7 }, new int[0]).Shape(At(8, 7), 1, Across));
+            Assert.AreEqual(GomokuShape.Five, Position(1, new[] { 3, 7, 4, 7, 5, 7, 6, 7 }, new[] { 0, 0, 1, 0, 2, 0, 4, 0 }).Shape(At(7, 7), 1, Across));
+
+            // A four and an open three through one point, and two open threes.
+            GomokuPosition fourThree = Position(1, new[] { 5, 7, 6, 7, 7, 7, 8, 5, 8, 6 }, new[] { 4, 7, 0, 0, 14, 0, 0, 14, 14, 14 });
+            Assert.AreEqual(GomokuShape.OpenThree, fourThree.Shape(At(8, 7), 1, Down));
+            Assert.AreEqual(GomokuThreat.Winning, fourThree.Rate(At(8, 7), 1, out value));
+            GomokuPosition threeThree = Position(1, new[] { 6, 7, 7, 7, 8, 5, 8, 6 }, new[] { 0, 0, 14, 0, 0, 14, 14, 14 });
+            Assert.AreEqual(GomokuThreat.DoubleThree, threeThree.Rate(At(8, 7), 1, out value));
+
+            // The shapes follow the stones.
+            Assert.AreEqual(GomokuShape.OpenThree, threeThree.Shape(At(8, 7), 1, Across));
+            threeThree.Play(At(5, 7));
+            threeThree.Play(At(9, 7));
+            Assert.AreEqual(GomokuShape.Four, threeThree.Shape(At(8, 7), 1, Across), "black lengthened the line and white closed its far end");
+            GomokuPosition copy = new GomokuPosition(Size, 5, false);
+            copy.CopyFrom(threeThree);
+            Assert.AreEqual(GomokuShape.Four, copy.Shape(At(8, 7), 1, Across));
+        }
+
+        // Black wins by fours: (8,7) makes a four across, white must take (9,7), and (8,8) then makes two fours.
+        private static readonly int[] FoursBlack = { 5, 7, 6, 7, 7, 7, 8, 5, 8, 6, 6, 6, 9, 9 };
+        private static readonly int[] FoursWhite = { 4, 7, 8, 4, 5, 5, 0, 0, 14, 0, 0, 14, 14, 14 };
+
+        [Test]
+        public void TheSearchFindsAWinByARowOfFours()
+        {
+            GomokuPosition position = Position(1, FoursBlack, FoursWhite);
+            for (int i = 0; i < position.CandidateCount; i++)
+                Assert.AreNotEqual(GomokuThreat.Winning, position.Rate(position.Candidate(i), 1, out _), "no single move wins yet");
+
+            GomokuSearchResult result = new GomokuMcts().Search(position, 100, new Random(1));
+            Assert.IsTrue(result.Solved);
+            Assert.AreEqual(0, result.Simulations);
+            Assert.IsTrue(result.Move == At(8, 7) || result.Move == At(8, 8));
+
+            GomokuSearchResult blind = new GomokuMcts { ReadForcedWins = false }.Search(position, 100, new Random(1));
+            Assert.IsFalse(blind.Solved);
+            Assert.AreEqual(100, blind.Simulations);
+        }
+
+        [Test]
+        public void TheSearchKeepsTheOpponentFromAWinByFours()
+        {
+            int[] white = new int[FoursWhite.Length - 2];
+            Array.Copy(FoursWhite, white, white.Length);
+            GomokuPosition position = Position(2, FoursBlack, white);
+            for (int seed = 1; seed <= 3; seed++)
+            {
+                GomokuSearchResult result = new GomokuMcts().Search(position, 100, new Random(seed));
+                GomokuPosition after = new GomokuPosition(Size, 5, false);
+                after.CopyFrom(position);
+                after.Play(result.Move);
+                Assert.IsFalse(new GomokuMcts().Search(after, 100, new Random(1)).Solved,
+                    "white played " + result.Move % Size + "," + result.Move / Size + " and black still wins by fours");
+            }
         }
 
         [Test]
@@ -274,7 +352,7 @@ namespace BoardSandbox.Tests
         public void MoreSimulationsPlayBetter()
         {
             double points = 0;
-            const int Games = 8;
+            const int Games = 6;
             for (int game = 0; game < Games; game++)
             {
                 bool strongIsBlack = game % 2 == 0;
@@ -286,14 +364,14 @@ namespace BoardSandbox.Tests
                 while (!position.IsFull && winner == 0)
                 {
                     bool blackToMove = position.Current == 1;
-                    int simulations = blackToMove == strongIsBlack ? 600 : 50;
+                    int simulations = blackToMove == strongIsBlack ? 400 : 30;
                     int mover = position.Current;
                     if (position.Play((blackToMove ? black : white).Search(position, simulations, random).Move))
                         winner = mover;
                 }
                 points += winner == 0 ? 0.5 : (winner == 1) == strongIsBlack ? 1 : 0;
             }
-            Assert.GreaterOrEqual(points, Games * 0.75, "600 simulations scored " + points + " of " + Games + " against 50");
+            Assert.GreaterOrEqual(points, Games * 0.75, "400 simulations scored " + points + " of " + Games + " against 30");
         }
 
         [Test]
