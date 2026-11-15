@@ -56,6 +56,9 @@ namespace BoardSandbox.Client.UI
 
         public bool IsOpen { get; private set; }
 
+        // True while an agent is at work on a request of the console.
+        public bool Busy => _studio.Busy;
+
         // Whether anything was ever started in the console, so that it can be opened again as it was left.
         public bool HasSession => _studio.Lines.Count > 0 || _studio.Workspace != null;
 

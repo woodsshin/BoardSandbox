@@ -74,6 +74,7 @@ namespace BoardSandbox.Client.UI
             _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true, OpenStudio,
                 entry => studio.CanDelete(entry.Mod), entry => DeleteGame(studio, entry));
             _agents = new AgentConsolePanel(studio, theme, () => _host.Now, Defer, () => _releaseFocus = true);
+            _library.GameChosen += PutAwayConsole;
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer.RoomChanged += OnRoomChanged;
             _multiplayer.RoomLost += OpenLibrary;
@@ -91,11 +92,32 @@ namespace BoardSandbox.Client.UI
         // The room of a game that somebody else hosts; null when the local player hosts or plays alone.
         private NetRoom GuestRoom => _multiplayer.Room != null && !_multiplayer.Room.IsHost ? _multiplayer.Room : null;
 
-        // Entering a room puts its game on the table, so the list of games gets out of the way.
+        // Entering a room puts its game on the table, so the list of games and the AI console get out of the way.
         private void OnRoomChanged()
         {
-            if (_multiplayer.Room != null && _library.IsOpen)
+            if (_multiplayer.Room == null)
+                return;
+            if (_library.IsOpen)
                 _library.Close();
+            PutAwayConsole();
+        }
+
+        // The AI console is for making a game; once the player chose a game to play it makes room for the table. An
+        // agent that is still at work keeps its window, so that its answer is not missed. Opening the console again
+        // brings it back as it was left.
+        private void PutAwayConsole()
+        {
+            if (_agents.IsOpen && !_agents.Busy)
+                _agents.Close();
+        }
+
+        // Leaves the room the local player is in, a guest leaving the room of somebody else or a host closing their own.
+        // Either way the game of the room is over for them, so the list of games opens, as it does for a guest when the
+        // host closes the room. Call it between two frames, not from inside OnGUI.
+        private void LeaveRoom()
+        {
+            _multiplayer.Leave();
+            OpenLibrary();
         }
 
         // True while a text field has the keyboard, so that shortcuts leave the typed characters alone.
@@ -297,7 +319,7 @@ namespace BoardSandbox.Client.UI
             GUILayout.Space(_theme.Sf(10));
             GUI.enabled = room != null;
             if (GUILayout.Button("Cancel", _theme.Button))
-                Defer(_multiplayer.Leave);
+                Defer(LeaveRoom);
             GUI.enabled = true;
             GUILayout.EndVertical();
             GUILayout.EndArea();
@@ -578,7 +600,7 @@ namespace BoardSandbox.Client.UI
                 GUILayout.EndHorizontal();
             }
             if (GUILayout.Button(room.IsHost ? "Close room" : "Leave room", _theme.Button))
-                Defer(_multiplayer.Leave);
+                Defer(LeaveRoom);
         }
 
         private void DrawGamesButton()

@@ -82,6 +82,10 @@ namespace BoardSandbox.Client.UI
 
         public bool IsOpen { get; private set; }
 
+        // Raised, after the list has closed, when the player chose a game to play: a new game of the one picked, or the
+        // game on the table when it was picked again. Closing the list with Escape is not a choice.
+        public event Action GameChosen;
+
         // Call it between two frames, not from inside OnGUI.
         public void Open()
         {
@@ -187,7 +191,14 @@ namespace BoardSandbox.Client.UI
         private void Play()
         {
             if (_library.Play())
-                Close();
+                Choose();
+        }
+
+        // Back to the table, to play.
+        private void Choose()
+        {
+            Close();
+            GameChosen?.Invoke();
         }
 
         // Return on the game that is on the table goes back to it; on any other game it starts that one.
@@ -197,7 +208,7 @@ namespace BoardSandbox.Client.UI
             if (entry == null)
                 return;
             if (_library.IsRunning(entry))
-                Close();
+                Choose();
             else
                 Play();
         }
@@ -527,7 +538,7 @@ namespace BoardSandbox.Client.UI
                 if (GUILayout.Button(running ? "Resume" : "Play", _theme.Button, GUILayout.Width(_theme.Sf(110f)), GUILayout.Height(_theme.Sf(34f))))
                 {
                     if (running)
-                        _defer(Close);
+                        _defer(Choose);
                     else
                         _defer(Play);
                 }
