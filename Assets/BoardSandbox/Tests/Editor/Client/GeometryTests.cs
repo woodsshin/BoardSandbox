@@ -931,6 +931,64 @@ namespace BoardSandbox.Tests
             }
         }
 
+        // The widths along x of the strips of a ruled sheet that run from its near to its far side, left to right.
+        private static List<float> RuledAcross(MeshBuilder mesh, BoardLayout layout)
+        {
+            SortedDictionary<float, float> widths = new SortedDictionary<float, float>();
+            List<Vector3> v = mesh.VertexList;
+            List<int> t = mesh.TriangleList;
+            for (int i = 0; i < t.Count; i += 3)
+            {
+                float minX = Mathf.Min(v[t[i]].x, Mathf.Min(v[t[i + 1]].x, v[t[i + 2]].x));
+                float maxX = Mathf.Max(v[t[i]].x, Mathf.Max(v[t[i + 1]].x, v[t[i + 2]].x));
+                float minZ = Mathf.Min(v[t[i]].z, Mathf.Min(v[t[i + 1]].z, v[t[i + 2]].z));
+                float maxZ = Mathf.Max(v[t[i]].z, Mathf.Max(v[t[i + 1]].z, v[t[i + 2]].z));
+                bool onTop = v[t[i]].y > 0.003f && v[t[i]].y < 0.005f;
+                if (onTop && maxX - minX < 0.5f * layout.CellSize && maxZ - minZ > layout.Rows * layout.CellSize * 0.9f)
+                    widths[Mathf.Round((minX + maxX) * 50f)] = maxX - minX;
+            }
+            return new List<float>(widths.Values);
+        }
+
+        [Test]
+        public void GridBoardsRuleEveryCellAndSetTheBlocksApart()
+        {
+            BoardLayout layout = new BoardLayout(9, 9, BoardStyle.Grid, 1f, -1f, -1f, 3);
+            BoardPalette palette = new BoardPalette();
+            MeshBuilder mesh = BoardShapes.Board(layout, palette);
+            // The slab, the sheet, and ten lines each way.
+            Assert.AreEqual(12 + 2 + 2 * (10 + 10), mesh.TriangleCount);
+            GeometryAssert.Oriented(mesh);
+
+            List<float> widths = RuledAcross(mesh, layout);
+            Assert.AreEqual(10, widths.Count);
+            for (int x = 0; x <= 9; x++)
+                Assert.AreEqual(x % 3 == 0 ? palette.ThickLine : palette.ThinLine, widths[x], 1e-4, "line " + x);
+
+            // The cells are where the pieces of a checkered board would be, and the lines run between them.
+            BoardLayout checker = new BoardLayout(9, 9, BoardStyle.Checker, 1f, -1f, -1f, 3);
+            GeometryAssert.Near(checker.CellToWorld(2, 7), layout.CellToWorld(2, 7), 1e-6f);
+            Assert.AreEqual(checker.SlabHalfWidth, layout.SlabHalfWidth, 1e-6);
+            bool found = false;
+            float edge = (layout.CellToWorld(3, 1).x + layout.CellToWorld(4, 1).x) * 0.5f;
+            foreach (Vector3 p in mesh.VertexList)
+                found |= p.y > 0.003f && Mathf.Abs(p.x - edge) < palette.ThickLine;
+            Assert.IsTrue(found, "no line between the third and the fourth column");
+        }
+
+        [Test]
+        public void GridBoardsWithoutBlocksHaveThickLinesOnlyAroundTheWhole()
+        {
+            BoardLayout layout = new BoardLayout(6, 4, BoardStyle.Grid);
+            BoardPalette palette = new BoardPalette();
+            MeshBuilder mesh = BoardShapes.Board(layout, palette);
+            Assert.AreEqual(12 + 2 + 2 * (7 + 5), mesh.TriangleCount);
+            List<float> widths = RuledAcross(mesh, layout);
+            Assert.AreEqual(7, widths.Count);
+            for (int x = 0; x <= 6; x++)
+                Assert.AreEqual(x == 0 || x == 6 ? palette.ThickLine : palette.ThinLine, widths[x], 1e-4, "line " + x);
+        }
+
         [Test]
         public void LineBoardsIgnoreTheBlock()
         {

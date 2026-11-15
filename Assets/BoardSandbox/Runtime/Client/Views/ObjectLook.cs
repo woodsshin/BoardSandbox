@@ -16,6 +16,9 @@ namespace BoardSandbox.Client.Views
         public const float MinSize = 0.01f;
         public const float MaxSize = 100f;
         public const float MaxTween = 5f;
+        public const float DefaultLabelSize = 0.55f;
+        public const float MinLabelSize = 0.02f;
+        public const float MaxLabelSize = 3f;
 
         private static readonly Color32 Neutral = new Color32(0x8a, 0x8a, 0x8a, 255);
         private static readonly string[] SideNames = { "px", "nx", "py", "ny", "nz", "pz" };
@@ -56,6 +59,13 @@ namespace BoardSandbox.Client.Views
 
         // Whether dark text can be read on the object; on a dark object the text is light.
         public bool IsLight => (0.299f * Color.r + 0.587f * Color.g + 0.114f * Color.b) / 255f > 0.6f;
+
+        // The height of the text of the "label" as a share of the width of the object.
+        public float LabelSize { get; private set; }
+        public bool LabelBold { get; private set; }
+
+        // The color of the label when the mod names one; otherwise the text is dark or light to stand out.
+        public Color32? LabelColor { get; private set; }
         public Vector3 HalfExtents => Vector3.Scale(BoardShapes.NaturalSize(Shape), Size) * 0.5f;
 
         // The middle of a free object.
@@ -97,6 +107,11 @@ namespace BoardSandbox.Client.Views
             look.Visible = Pick2(props, defaults, "visible").AsBool(true);
             look.Pick = Pick2(props, defaults, "pick").AsBool(true);
             look.Tween = StageSettings.ReadFloat(Pick2(props, defaults, "tween"), 0f, 0f, MaxTween);
+            look.LabelSize = StageSettings.ReadFloat(Pick2(props, defaults, "label_size"), DefaultLabelSize, MinLabelSize, MaxLabelSize);
+            look.LabelBold = Pick2(props, defaults, "label_bold").AsBool(true);
+            JsonValue labelColor = Pick2(props, defaults, "label_color");
+            if (labelColor.IsString && ColorParser.TryParse(labelColor.AsString(), out Color32 parsed))
+                look.LabelColor = new Color32(parsed.r, parsed.g, parsed.b, 255);
             look.MeshKey = BuildMeshKey(look);
             return look;
         }

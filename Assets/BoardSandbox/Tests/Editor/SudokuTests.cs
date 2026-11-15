@@ -98,6 +98,73 @@ namespace BoardSandbox.Tests
             return played;
         }
 
+        // The digits on the grid; the table also holds the tiles under the cells and the keys of the pad.
+        private static int Digits(GameSession session)
+        {
+            int count = 0;
+            foreach (ViewObject o in session.View.Objects)
+            {
+                if (o.Kind == "digit")
+                    count++;
+            }
+            return count;
+        }
+
+        // The tile under a cell and the key of a digit (10 is the eraser), which is what a click names.
+        private static ViewObject Tile(GameSession session, int x, int y)
+        {
+            foreach (ViewObject o in session.View.Objects)
+            {
+                JsonValue pos = o.Props["pos"];
+                if (o.Kind == "cell" && pos[0].AsInt(-99) == x - 5 && pos[2].AsInt(-99) == y - 5)
+                    return o;
+            }
+            throw new InvalidOperationException("there is no tile at (" + x + "," + y + ")");
+        }
+
+        private static ViewObject Key(GameSession session, int key)
+        {
+            string label = key == 10 ? "X" : key.ToString();
+            foreach (ViewObject o in session.View.Objects)
+            {
+                if (o.Kind == "key" && o.Props["label"].AsString() == label)
+                    return o;
+            }
+            throw new InvalidOperationException("there is no key " + key);
+        }
+
+        private static SubmitResult Tap(GameSession session, int id, bool hold = false)
+        {
+            return session.Submit(InputPacket.Action(1, "tap").With("id", id).With("button", 0).With("shift", false).With("hold", hold));
+        }
+
+        private static SubmitResult TapCell(GameSession session, int x, int y, bool hold = false)
+        {
+            return Tap(session, Tile(session, x, y).Id, hold);
+        }
+
+        private static SubmitResult TapKey(GameSession session, int key)
+        {
+            return Tap(session, Key(session, key).Id);
+        }
+
+        private static double Tint(GameSession session, int x, int y)
+        {
+            return Tile(session, x, y).Props["alpha"].AsDouble(-1);
+        }
+
+        private static string Notes(GameSession session, int x, int y)
+        {
+            JsonValue labels = Tile(session, x, y).Props["labels"];
+            string text = string.Empty;
+            if (labels.IsArray)
+            {
+                foreach (JsonValue label in labels.Items)
+                    text += label["text"].AsString();
+            }
+            return text;
+        }
+
         private static JsonValue State(GameSession session)
         {
             return session.Query("state");
@@ -275,7 +342,7 @@ namespace BoardSandbox.Tests
                     clues++;
             }
             Assert.AreEqual(clues, state["clues"].AsInt());
-            Assert.AreEqual(clues, session.View.ObjectCount);
+            Assert.AreEqual(clues, Digits(session));
             Assert.AreEqual(puzzle, state["board"].AsString());
         }
 
@@ -293,7 +360,11 @@ namespace BoardSandbox.Tests
             // A puzzle of your own is typed in the console; the text field of the options panel is too short for 81 digits.
             Assert.AreEqual(3, manifest.DefaultOptions.Count);
             Assert.IsFalse(manifest.DefaultOptions.Has("puzzle"));
-            Assert.AreEqual("cycle", manifest.Client["click"]["action"].AsString());
+            Assert.AreEqual("tap", manifest.Client["click"]["action"].AsString());
+            Assert.AreEqual("object", manifest.Client["click"]["target"].AsString());
+            Assert.IsTrue(manifest.Client["click"]["hold"].AsBool());
+            Assert.AreEqual("grid", manifest.Client["board"]["style"].AsString());
+            Assert.AreEqual(89, manifest.Client["stage"]["camera"]["pitch"].AsInt());
             Assert.AreEqual(9, manifest.Client["board"]["columns"].AsInt());
             Assert.AreEqual(3, manifest.Client["board"]["block"].AsInt());
         }
@@ -310,13 +381,13 @@ namespace BoardSandbox.Tests
                 Assert.AreEqual(9, board.Raw["columns"].AsInt());
                 Assert.AreEqual(9, board.Raw["rows"].AsInt());
                 Assert.AreEqual(3, board.Raw["block"].AsInt());
-                Assert.AreEqual(30, Count(events, "spawn"));
+                Assert.AreEqual(30 + 91, Count(events, "spawn"), "the clues, the tiles and the pad");
                 Assert.AreEqual(ViewEventKind.Turn, events[events.Count - 1].Kind);
                 Assert.AreEqual(1, events[events.Count - 1].Seat);
 
                 Assert.IsTrue(session.IsStarted);
                 Assert.AreEqual(1, session.View.Turn);
-                Assert.AreEqual(30, session.View.ObjectCount);
+                Assert.AreEqual(30, Digits(session));
                 Assert.IsFalse(session.View.IsOver);
                 Assert.AreEqual(1, session.HistoryCount);
                 Assert.IsTrue(session.Capabilities.Snapshot);
@@ -333,6 +404,8 @@ namespace BoardSandbox.Tests
             {
                 foreach (ViewObject o in session.View.Objects)
                 {
+                    if (o.Kind != "digit")
+                        continue;
                     int x = (int)o.X;
                     int y = (int)o.Y;
                     char digit = Puzzle[(y - 1) * 9 + x - 1];
@@ -377,7 +450,7 @@ namespace BoardSandbox.Tests
                 Assert.IsFalse(spawn.Props["given"].AsBool(true));
                 Assert.IsFalse(spawn.Props["conflict"].AsBool(true));
 
-                Assert.AreEqual(31, session.View.ObjectCount);
+                Assert.AreEqual(31, Digits(session));
                 Assert.AreEqual(1, session.View.Turn);
                 Assert.AreEqual(2, session.HistoryCount);
                 JsonValue state = State(session);
@@ -402,7 +475,7 @@ namespace BoardSandbox.Tests
                 Assert.AreEqual(ViewEventKind.Set, changed.Events[0].Kind);
                 Assert.AreEqual(id, changed.Events[0].Id);
                 Assert.AreEqual("2", session.View.Get(id).Props["label"].AsString());
-                Assert.AreEqual(31, session.View.ObjectCount);
+                Assert.AreEqual(31, Digits(session));
 
                 SubmitResult cleared = Do(session, "clear", 3, 1);
                 Assert.IsTrue(cleared.IsAccepted);
@@ -410,7 +483,7 @@ namespace BoardSandbox.Tests
                 Assert.AreEqual(ViewEventKind.Remove, cleared.Events[0].Kind);
                 Assert.AreEqual(id, cleared.Events[0].Id);
                 Assert.IsNull(session.View.Get(id));
-                Assert.AreEqual(30, session.View.ObjectCount);
+                Assert.AreEqual(30, Digits(session));
                 Assert.AreEqual(3, State(session)["moves"].AsInt());
                 Assert.AreEqual(Puzzle, State(session)["board"].AsString());
             }
@@ -856,27 +929,27 @@ namespace BoardSandbox.Tests
             {
                 int first = PlaceOk(session, 3, 1, 1).Events[0].Id;
                 PlaceOk(session, 4, 1, 1);
-                Assert.AreEqual(32, session.View.ObjectCount);
+                Assert.AreEqual(32, Digits(session));
                 Assert.AreEqual(2, State(session)["conflicts"].AsInt());
 
                 Assert.IsTrue(session.Undo());
-                Assert.AreEqual(31, session.View.ObjectCount);
+                Assert.AreEqual(31, Digits(session));
                 Assert.AreEqual(0, State(session)["conflicts"].AsInt());
                 Assert.IsFalse(session.View.Get(first).Props["conflict"].AsBool(true));
                 Assert.AreEqual(1, session.View.Turn);
 
                 Assert.IsTrue(session.Redo());
-                Assert.AreEqual(32, session.View.ObjectCount);
+                Assert.AreEqual(32, Digits(session));
                 Assert.AreEqual(2, State(session)["conflicts"].AsInt());
                 Assert.IsTrue(session.View.Get(first).Props["conflict"].AsBool());
 
                 Assert.IsTrue(session.Undo(2));
-                Assert.AreEqual(30, session.View.ObjectCount);
+                Assert.AreEqual(30, Digits(session));
                 Assert.AreEqual(Puzzle, State(session)["board"].AsString());
 
                 PlaceOk(session, 3, 1, 4);
                 Assert.IsFalse(session.CanRedo);
-                Assert.AreEqual(31, session.View.ObjectCount);
+                Assert.AreEqual(31, Digits(session));
             }
         }
 
@@ -950,7 +1023,7 @@ namespace BoardSandbox.Tests
                 Assert.AreEqual(31, State(session)["filled"].AsInt());
                 Assert.AreEqual(2, session.HistoryCount);
                 PlaceOk(session, 4, 1, 2);
-                Assert.AreEqual(32, session.View.ObjectCount);
+                Assert.AreEqual(32, Digits(session));
             }
         }
 
@@ -1012,7 +1085,7 @@ namespace BoardSandbox.Tests
                     warned |= e.Kind == ViewEventKind.Status && e.Level == "warning";
                 Assert.IsTrue(warned);
                 Assert.IsFalse(State(session)["unique"].AsBool(true));
-                Assert.AreEqual(0, session.View.ObjectCount);
+                Assert.AreEqual(0, Digits(session));
 
                 List<JsonValue> played = LetTheComputerPlay(session);
                 Assert.AreEqual(81, played.Count);
@@ -1029,7 +1102,7 @@ namespace BoardSandbox.Tests
                 Assert.IsNotNull(Find(events, "over"));
                 Assert.IsTrue(session.View.IsOver);
                 Assert.AreEqual(1, session.View.Over.Winner);
-                Assert.AreEqual(81, session.View.ObjectCount);
+                Assert.AreEqual(81, Digits(session));
                 Assert.AreEqual("GAME_OVER", Place(session, 1, 1, 5).Code);
             }
         }
@@ -1270,7 +1343,7 @@ namespace BoardSandbox.Tests
                 string started = console.Execute("new puzzle=" + Puzzle);
                 StringAssert.StartsWith("new game started", started);
                 StringAssert.Contains("turn: seat 1 (Player)", started);
-                StringAssert.Contains("objects: 30", started);
+                StringAssert.Contains("objects: 121", started);
 
                 string[] lines = console.Execute("board").Split('\n');
                 string[] expected =
@@ -1320,6 +1393,311 @@ namespace BoardSandbox.Tests
                 string solved = console.Execute("board");
                 StringAssert.Contains("  1  5  3  4   6  7  8   9  1  2", solved);
                 StringAssert.Contains("  9  3  4  5   2  8  6   1  7  9", solved);
+            }
+        }
+
+        [Test]
+        public void TheTableHasATileUnderEveryCellAndAPadBelowTheGrid()
+        {
+            using (GameSession session = StartClassic())
+            {
+                int tiles = 0;
+                int keys = 0;
+                foreach (ViewObject o in session.View.Objects)
+                {
+                    if (o.Kind == "cell")
+                    {
+                        tiles++;
+                        Assert.AreEqual(0.0, o.Props["alpha"].AsDouble(-1), "nothing is pointed out before a digit is chosen");
+                        Assert.IsTrue(o.Props["pos"].IsArray, "tiles are not pieces of the grid");
+                    }
+                    else if (o.Kind == "key")
+                    {
+                        keys++;
+                        Assert.Greater(o.Props["pos"][2].AsDouble(), 4.9, "the pad lies below the grid");
+                        Assert.Less(Math.Abs(o.Props["pos"][0].AsDouble()), 4.9);
+                    }
+                }
+                Assert.AreEqual(81, tiles);
+                Assert.AreEqual(10, keys);
+                Assert.AreEqual(30 + 91, session.View.ObjectCount);
+                Assert.AreEqual(0, State(session)["selected"].AsInt());
+                for (int key = 1; key <= 10; key++)
+                    Assert.AreEqual("#e8ecf2", Key(session, key).Props["color"].AsString());
+            }
+        }
+
+        [Test]
+        public void ChoosingADigitPointsOutWhereItIsAndWhatItReaches()
+        {
+            using (GameSession session = StartClassic())
+            {
+                // The 5s of the puzzle are at (1,1), (5,2) and (8,8)... the last one is (9,8).
+                Assert.IsTrue(TapKey(session, 5).IsAccepted);
+                Assert.AreEqual(5, State(session)["selected"].AsInt());
+                Assert.AreEqual("#4d8fe6", Key(session, 5).Props["color"].AsString());
+                Assert.AreEqual("#ffffff", Key(session, 5).Props["label_color"].AsString());
+                Assert.AreEqual("#e8ecf2", Key(session, 4).Props["color"].AsString());
+
+                Assert.AreEqual(0.45, Tint(session, 1, 1), 1e-9, "a cell that holds the digit");
+                Assert.AreEqual(0.45, Tint(session, 6, 2), 1e-9);
+                Assert.AreEqual(0.45, Tint(session, 9, 8), 1e-9);
+                Assert.AreEqual(0.14, Tint(session, 4, 1), 1e-9, "the row of a 5");
+                Assert.AreEqual(0.14, Tint(session, 1, 9), 1e-9, "the column of a 5");
+                Assert.AreEqual(0.14, Tint(session, 3, 3), 1e-9, "the box of a 5");
+                Assert.AreEqual(0.14, Tint(session, 2, 1), 1e-9, "another digit in the row of a 5");
+                Assert.AreEqual(0.0, Tint(session, 3, 4), 1e-9, "a 5 can still go here");
+                Assert.AreEqual(0.0, Tint(session, 4, 7), 1e-9);
+
+                // The cells left plain are exactly those where the digit fits.
+                for (int y = 1; y <= 9; y++)
+                {
+                    for (int x = 1; x <= 9; x++)
+                    {
+                        if (Puzzle[(y - 1) * 9 + x - 1] != '0')
+                            continue;
+                        bool fits = false;
+                        foreach (JsonValue digit in session.Query("candidates", JsonValue.NewObject().Set("x", x).Set("y", y)).Items)
+                            fits |= digit.AsInt() == 5;
+                        Assert.AreEqual(fits, Tint(session, x, y) == 0.0, "cell " + x + "," + y);
+                    }
+                }
+
+                // Another digit moves the tints, the same key again takes them away.
+                Assert.IsTrue(TapKey(session, 7).IsAccepted);
+                Assert.AreEqual("#e8ecf2", Key(session, 5).Props["color"].AsString());
+                Assert.AreEqual(0.45, Tint(session, 5, 1), 1e-9);
+                Assert.AreEqual(0.14, Tint(session, 1, 1), 1e-9);
+                Assert.IsTrue(TapKey(session, 7).IsAccepted);
+                Assert.AreEqual(0, State(session)["selected"].AsInt());
+                for (int y = 1; y <= 9; y++)
+                {
+                    for (int x = 1; x <= 9; x++)
+                        Assert.AreEqual(0.0, Tint(session, x, y), 1e-9);
+                }
+                Assert.AreEqual(0, State(session)["moves"].AsInt(), "choosing is not a move");
+            }
+        }
+
+        [Test]
+        public void ATapEntersTheChosenDigitAndAnotherTapTakesItOut()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.AreEqual("NOTHING_CHOSEN", TapCell(session, 3, 1).Code);
+                TapKey(session, 4);
+                Assert.IsTrue(TapCell(session, 3, 1).IsAccepted);
+                Assert.AreEqual('4', State(session)["board"].AsString()[2]);
+                Assert.AreEqual(1, State(session)["moves"].AsInt());
+                Assert.AreEqual(0.45, Tint(session, 3, 1), 1e-9, "the new 4 is pointed out with the others");
+                Assert.AreEqual(0.14, Tint(session, 3, 7), 1e-9, "and now reaches down its column");
+
+                Assert.IsTrue(TapCell(session, 3, 1).IsAccepted);
+                Assert.AreEqual('0', State(session)["board"].AsString()[2]);
+                Assert.AreEqual(0.0, Tint(session, 3, 7), 1e-9);
+
+                // A tap on a clue chooses its digit instead of changing it.
+                Assert.IsTrue(TapCell(session, 1, 1).IsAccepted);
+                Assert.AreEqual(5, State(session)["selected"].AsInt());
+                Assert.AreEqual("GIVEN_CELL", TapCell(session, 1, 1).Code);
+                Assert.AreEqual(Puzzle.Substring(0, 9), State(session)["board"].AsString().Substring(0, 9));
+
+                // Another digit over an entry replaces it.
+                Assert.IsTrue(TapCell(session, 3, 4).IsAccepted);
+                TapKey(session, 2);
+                Assert.IsTrue(TapCell(session, 3, 4).IsAccepted);
+                Assert.AreEqual('2', State(session)["board"].AsString()[29]);
+
+                // With nothing chosen a tap on an entry chooses its digit.
+                TapKey(session, 2);
+                Assert.AreEqual(0, State(session)["selected"].AsInt());
+                Assert.IsTrue(TapCell(session, 3, 4).IsAccepted);
+                Assert.AreEqual(2, State(session)["selected"].AsInt());
+
+                Assert.AreEqual("NOT_A_CELL", Tap(session, 999999).Code);
+                Assert.AreEqual("INVALID_ARGUMENT", Submit(session, "{\"action\":\"tap\"}").Code);
+            }
+        }
+
+        [Test]
+        public void HoldingACellNotesTheChosenDigit()
+        {
+            using (GameSession session = StartClassic())
+            {
+                TapKey(session, 4);
+                Assert.IsTrue(TapCell(session, 3, 1, true).IsAccepted);
+                Assert.AreEqual("4", Notes(session, 3, 1));
+                Assert.AreEqual('0', State(session)["board"].AsString()[2], "a note is not an entry");
+                Assert.AreEqual(0, State(session)["moves"].AsInt());
+
+                TapKey(session, 1);
+                TapCell(session, 3, 1, true);
+                TapKey(session, 9);
+                TapCell(session, 3, 1, true);
+                Assert.AreEqual("149", Notes(session, 3, 1));
+
+                // Small, thin, and each in its own place of the cell: 1 top left, 9 bottom right.
+                JsonValue labels = Tile(session, 3, 1).Props["labels"];
+                Assert.AreEqual(3, labels.Count);
+                Assert.AreEqual(-0.3, labels[0]["dx"].AsDouble(), 1e-9);
+                Assert.AreEqual(-0.3, labels[0]["dy"].AsDouble(), 1e-9);
+                Assert.AreEqual(-0.3, labels[1]["dx"].AsDouble(), 1e-9);
+                Assert.AreEqual(0.0, labels[1]["dy"].AsDouble(), 1e-9);
+                Assert.AreEqual(0.3, labels[2]["dx"].AsDouble(), 1e-9);
+                Assert.AreEqual(0.3, labels[2]["dy"].AsDouble(), 1e-9);
+                Assert.Less(labels[0]["size"].AsDouble(), 0.3);
+                Assert.IsFalse(labels[0]["bold"].AsBool(true));
+                Assert.IsTrue(labels[2]["bold"].AsBool(), "the note of the chosen digit stands out");
+
+                // Holding again rubs the note out; the right button and shift do the same as holding.
+                Assert.IsTrue(TapCell(session, 3, 1, true).IsAccepted);
+                Assert.AreEqual("14", Notes(session, 3, 1));
+                int tile = Tile(session, 3, 1).Id;
+                Assert.IsTrue(session.Submit(InputPacket.Action(1, "tap").With("id", tile).With("button", 1)).IsAccepted);
+                Assert.AreEqual("149", Notes(session, 3, 1));
+                Assert.IsTrue(session.Submit(InputPacket.Action(1, "tap").With("id", tile).With("shift", true)).IsAccepted);
+                Assert.AreEqual("14", Notes(session, 3, 1));
+
+                JsonValue listed = session.Query("notes");
+                Assert.AreEqual(1, listed.Count);
+                Assert.AreEqual(3, listed[0]["x"].AsInt());
+                Assert.AreEqual(2, listed[0]["digits"].Count);
+
+                Assert.AreEqual("CELL_FILLED", TapCell(session, 1, 1, true).Code);
+                Assert.IsTrue(Submit(session, "{\"action\":\"note\",\"x\":4,\"y\":1,\"digit\":2}").IsAccepted);
+                Assert.AreEqual("2", Notes(session, 4, 1));
+                Assert.AreEqual("GIVEN_CELL", Submit(session, "{\"action\":\"note\",\"x\":1,\"y\":1,\"digit\":2}").Code);
+                Assert.AreEqual("BAD_DIGIT", Submit(session, "{\"action\":\"note\",\"x\":4,\"y\":1,\"digit\":0}").Code);
+            }
+        }
+
+        [Test]
+        public void EnteringADigitClearsTheNotesItSettles()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Submit(session, "{\"action\":\"note\",\"x\":3,\"y\":1,\"digit\":4}");
+                Submit(session, "{\"action\":\"note\",\"x\":3,\"y\":1,\"digit\":2}");
+                Submit(session, "{\"action\":\"note\",\"x\":4,\"y\":1,\"digit\":4}");
+                Submit(session, "{\"action\":\"note\",\"x\":4,\"y\":1,\"digit\":6}");
+                Submit(session, "{\"action\":\"note\",\"x\":3,\"y\":5,\"digit\":4}");
+                Submit(session, "{\"action\":\"note\",\"x\":9,\"y\":7,\"digit\":4}");
+
+                PlaceOk(session, 3, 1, 4);
+                Assert.AreEqual("", Notes(session, 3, 1), "the cell is decided");
+                Assert.AreEqual("6", Notes(session, 4, 1), "a 4 can no longer go in this row");
+                Assert.AreEqual("", Notes(session, 3, 5), "nor in this column");
+                Assert.AreEqual("4", Notes(session, 9, 7), "this cell does not see the 4");
+            }
+        }
+
+        [Test]
+        public void TheEraserTakesOutEntriesAndNotes()
+        {
+            using (GameSession session = StartClassic())
+            {
+                PlaceOk(session, 3, 1, 4);
+                Submit(session, "{\"action\":\"note\",\"x\":4,\"y\":1,\"digit\":2}");
+                Submit(session, "{\"action\":\"note\",\"x\":4,\"y\":1,\"digit\":6}");
+
+                Assert.IsTrue(TapKey(session, 10).IsAccepted);
+                Assert.AreEqual(10, State(session)["selected"].AsInt());
+                Assert.AreEqual("#4d8fe6", Key(session, 10).Props["color"].AsString());
+                Assert.IsTrue(TapCell(session, 3, 1).IsAccepted);
+                Assert.AreEqual('0', State(session)["board"].AsString()[2]);
+                Assert.IsTrue(TapCell(session, 4, 1).IsAccepted);
+                Assert.AreEqual("", Notes(session, 4, 1));
+                Assert.AreEqual("ALREADY_EMPTY", TapCell(session, 4, 1).Code);
+                Assert.AreEqual("GIVEN_CELL", TapCell(session, 1, 1).Code);
+            }
+        }
+
+        [Test]
+        public void KeysChooseDigitsToo()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.IsTrue(Submit(session, "{\"action\":\"select\",\"digit\":5}").IsAccepted);
+                Assert.AreEqual(5, State(session)["selected"].AsInt());
+                Assert.IsTrue(Submit(session, "{\"action\":\"select\",\"digit\":5}").IsAccepted);
+                Assert.AreEqual(0, State(session)["selected"].AsInt(), "the same digit again lets go of it");
+                Submit(session, "{\"action\":\"select\",\"digit\":3}");
+                Assert.IsTrue(Submit(session, "{\"action\":\"select\",\"digit\":0}").IsAccepted);
+                Assert.AreEqual(0, State(session)["selected"].AsInt());
+                Assert.AreEqual("UNCHANGED", Submit(session, "{\"action\":\"select\",\"digit\":0}").Code);
+                Assert.AreEqual("BAD_DIGIT", Submit(session, "{\"action\":\"select\",\"digit\":11}").Code);
+                Assert.AreEqual("INVALID_ARGUMENT", Submit(session, "{\"action\":\"select\"}").Code);
+
+                JsonValue keys = LoadSudoku().Manifest.Client["keys"];
+                Assert.AreEqual(5, keys["5"]["digit"].AsInt());
+                Assert.AreEqual(10, keys["backspace"]["digit"].AsInt());
+            }
+        }
+
+        [Test]
+        public void AKeyFadesOnceAllNineOfItsDigitAreOnTheGrid()
+        {
+            using (GameSession session = StartClassic())
+            {
+                // The classic puzzle has three 5s; the solution has the other six.
+                int placed = 0;
+                for (int i = 0; i < 81 && placed < 6; i++)
+                {
+                    if (Puzzle[i] == '0' && Solved[i] == '5')
+                    {
+                        placed++;
+                        SubmitResult result = PlaceOk(session, i % 9 + 1, i / 9 + 1, 5);
+                        Assert.AreEqual(placed == 6 ? 2 : 1, result.Events.Count, "only the last 5 changes the pad");
+                    }
+                }
+                Assert.AreEqual("#c3c9d2", Key(session, 5).Props["color"].AsString());
+                Assert.AreEqual("#e8ecf2", Key(session, 6).Props["color"].AsString());
+            }
+        }
+
+        [Test]
+        public void TheChoiceAndTheNotesComeBackWithUndoAndSnapshots()
+        {
+            using (GameSession session = StartClassic())
+            {
+                TapKey(session, 4);
+                TapCell(session, 3, 1, true);
+                TapCell(session, 5, 5);
+
+                // Undo walks back through entries, notes and choices alike.
+                Assert.IsTrue(session.Undo(2));
+                Assert.AreEqual("", Notes(session, 3, 1));
+                Assert.AreEqual(4, State(session)["selected"].AsInt());
+                Assert.IsTrue(session.Undo());
+                Assert.AreEqual(0, State(session)["selected"].AsInt());
+                Assert.AreEqual(0.0, Tint(session, 1, 5), 1e-9);
+                Assert.IsTrue(session.Redo(3));
+                Assert.AreEqual("4", Notes(session, 3, 1));
+                Assert.AreEqual(0.45, Tint(session, 1, 5), 1e-9);
+
+                string snapshot = session.CaptureSnapshot();
+                string table = Describe(session.View);
+
+                TapKey(session, 6);
+                TapCell(session, 3, 1, true);
+                TapCell(session, 5, 5);
+                Assert.AreEqual("46", Notes(session, 3, 1));
+                Assert.AreEqual('6', State(session)["board"].AsString()[40]);
+
+                session.LoadSnapshot(snapshot);
+                Assert.AreEqual(table, Describe(session.View));
+                Assert.AreEqual(4, State(session)["selected"].AsInt());
+                Assert.AreEqual("4", Notes(session, 3, 1));
+                Assert.AreEqual('4', State(session)["board"].AsString()[40]);
+
+                // The game goes on from there as if nothing had happened: only what changes is sent.
+                SubmitResult again = TapCell(session, 3, 1, true);
+                Assert.IsTrue(again.IsAccepted);
+                Assert.AreEqual(1, again.Events.Count);
+                Assert.AreEqual("", Notes(session, 3, 1));
+                Assert.IsTrue(TapKey(session, 4).IsAccepted);
+                Assert.AreEqual(0.0, Tint(session, 5, 5), 1e-9);
+
             }
         }
 

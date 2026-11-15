@@ -24,6 +24,9 @@ namespace BoardSandbox.Client
     public sealed class BoardSandboxApp : MonoBehaviour
     {
         private const float DragThreshold = 6f;
+
+        // How long the pointer has to rest on one spot to count as held down.
+        private const float HoldSeconds = 0.45f;
         private const float GestureThreshold = 18f;
         private const double ComputerDelaySeconds = 0.45;
 
@@ -76,6 +79,8 @@ namespace BoardSandbox.Client
         private bool _dragged;
         private int _pressButton;
         private Vector2 _pressPosition;
+        private float _pressTime;
+        private bool _holdSent;
         private bool _pressOnObject;
         private bool _gestureSent;
         private PickHit _pressHit;
@@ -521,7 +526,10 @@ namespace BoardSandbox.Client
                 DrawTitles();
                 _hud.Draw();
                 if (e.type == EventType.Repaint)
+                {
                     UpdateHover(e.mousePosition);
+                    CheckHold();
+                }
                 HandlePointer(e);
                 HandleKeys(e);
             }
@@ -546,6 +554,8 @@ namespace BoardSandbox.Client
                     _dragged = false;
                     _pressButton = e.button;
                     _pressPosition = e.mousePosition;
+                    _pressTime = Time.unscaledTime;
+                    _holdSent = false;
                     _gestureSent = false;
                     _pressOnObject = e.button == 0 && _pressPanel == _active && _hints.CanDrag && InputOpen
                         && _active.View.TryPickObject(_active.Rig.RayFromScreen(GuiToScreen(e.mousePosition)), out _pressHit);
@@ -555,7 +565,7 @@ namespace BoardSandbox.Client
                 case EventType.MouseDrag:
                     if (!_pressing || _pressPanel == null)
                         return;
-                    if ((e.mousePosition - _pressPosition).magnitude > DragThreshold)
+                    if ((e.mousePosition - _pressPosition).magnitude > DragSlack)
                         _dragged = true;
                     if (_pressOnObject)
                     {
@@ -579,12 +589,12 @@ namespace BoardSandbox.Client
                     if (!_pressing || e.button != _pressButton)
                         return;
                     _pressing = false;
-                    if (!_dragged && _pressPanel == _active && (_pressButton == 0 || (_pressButton == 1 && _hints.ClickObjects)))
+                    if (!_dragged && !_holdSent && _pressPanel == _active && (_pressButton == 0 || (_pressButton == 1 && _hints.ClickObjects)))
                     {
                         Vector2 at = e.mousePosition;
                         int button = _pressButton;
                         bool shift = e.shift;
-                        _hud.Defer(() => Click(at, button, shift));
+                        _hud.Defer(() => Click(at, button, shift, false));
                     }
                     e.Use();
                     break;
@@ -599,6 +609,20 @@ namespace BoardSandbox.Client
                     e.Use();
                     break;
             }
+        }
+
+        // How far the pointer may wander during a click; a finger on a dense screen is less steady than a mouse.
+        private static float DragSlack => Screen.dpi > 0f ? Mathf.Max(DragThreshold, Screen.dpi * 0.05f) : DragThreshold;
+
+        // A pointer that has rested long enough on one spot clicks there as a hold, once, before it is let go.
+        private void CheckHold()
+        {
+            if (!_pressing || _dragged || _holdSent || _pressButton != 0 || _pressPanel != _active || !_hints.ClickHold
+                || Time.unscaledTime - _pressTime < HoldSeconds)
+                return;
+            _holdSent = true;
+            Vector2 at = _pressPosition;
+            _hud.Defer(() => Click(at, 0, false, true));
         }
 
         private void HandleKeys(Event e)
@@ -676,7 +700,7 @@ namespace BoardSandbox.Client
                 _host.Submit(_host.Session.View.Turn, command, "human");
         }
 
-        private void Click(Vector2 guiPoint, int button, bool shift)
+        private void Click(Vector2 guiPoint, int button, bool shift, bool hold)
         {
             if (!_hints.CanClick || !InputOpen)
                 return;
@@ -694,6 +718,8 @@ namespace BoardSandbox.Client
                     return;
                 command.Set("x", x).Set("y", y);
             }
+            if (_hints.ClickHold)
+                command.Set("hold", hold);
             SubmitHuman(command);
         }
 

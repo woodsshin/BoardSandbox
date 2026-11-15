@@ -8,7 +8,11 @@ namespace BoardSandbox.Client.Geometry
         Lines,
 
         // Pieces sit on the squares of a checkered board.
-        Checker
+        Checker,
+
+        // Pieces sit in the cells of a ruled sheet: thin lines between the cells and thick ones around every
+        // group of Block cells and around the whole, like a sudoku.
+        Grid
     }
 
     // Maps the 1-based grid coordinates of a mod to the table. The board lies on the y = 0 plane with its

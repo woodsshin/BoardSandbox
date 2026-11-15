@@ -89,6 +89,24 @@ namespace BoardSandbox.Tests
         }
 
         [Test]
+        public void HoldingIsAClickOfItsOwnOnlyWhenTheModAsksForIt()
+        {
+            Assert.IsFalse(new ViewHints(null).ClickHold);
+            Assert.IsFalse(new ViewHints(JsonValue.Parse("{\"click\":{\"action\":\"a\"}}")).ClickHold);
+            Assert.IsTrue(new ViewHints(JsonValue.Parse("{\"click\":{\"action\":\"a\",\"hold\":true}}")).ClickHold);
+            Assert.IsFalse(new ViewHints(TestSupport.LoadGomoku().Manifest.Client).ClickHold);
+        }
+
+        [Test]
+        public void TheStyleOfTheBoardIsRead()
+        {
+            Assert.AreEqual(BoardStyle.Lines, new StageSettings().Board.Style);
+            Assert.AreEqual(BoardStyle.Checker, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"Checker\"}}")).Board.Style);
+            Assert.AreEqual(BoardStyle.Grid, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"grid\"}}")).Board.Style);
+            Assert.AreEqual(BoardStyle.Lines, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"hexagons\"}}")).Board.Style);
+        }
+
+        [Test]
         public void TheBlockOfAGroupedBoardIsRead()
         {
             Assert.AreEqual(0, new StageSettings().Board.Block);
@@ -103,14 +121,20 @@ namespace BoardSandbox.Tests
         {
             ViewHints hints = new ViewHints(ModLoader.LoadDirectory(Path.Combine(TestSupport.ModsRoot, "sudoku")).Manifest.Client);
             StageSettings stage = StageSettings.Resolve(hints.Client, null);
-            Assert.AreEqual(BoardStyle.Checker, stage.Board.Style);
+            Assert.AreEqual(BoardStyle.Grid, stage.Board.Style);
             Assert.AreEqual(9, stage.Board.Columns);
             Assert.AreEqual(9, stage.Board.Rows);
             Assert.AreEqual(3, stage.Board.Block);
-            Assert.AreEqual("cycle", hints.ClickAction);
+            Assert.AreEqual(89f, stage.Camera.Pitch, 1e-4, "the grid is seen from straight above");
+            Assert.AreEqual(DragMode.None, stage.Camera.LeftDrag);
+            Assert.AreEqual("tap", hints.ClickAction);
             Assert.IsTrue(hints.CanClick);
+            Assert.IsTrue(hints.ClickObjects);
+            Assert.IsTrue(hints.ClickHold);
             Assert.IsNull(hints.PreviewKind);
-            Assert.AreEqual(PieceShape.Disc, hints.ShapeFor("digit"));
+            Assert.AreEqual(PieceShape.Box, hints.ShapeFor("digit"));
+            Assert.IsNotNull(hints.KeyCommand("5", false));
+            Assert.AreEqual(5, hints.KeyCommand("5", false)["digit"].AsInt());
         }
     }
 
@@ -165,6 +189,27 @@ namespace BoardSandbox.Tests
             // The colors of the digits of the sudoku: the digits of the player and the ones in conflict are written in white.
             Assert.IsFalse(Look("{\"color\":\"#4d8fe6\"}").IsLight);
             Assert.IsFalse(Look("{\"color\":\"#ff5c5c\"}").IsLight);
+        }
+
+        [Test]
+        public void LabelsAreWrittenAsTheModSays()
+        {
+            ObjectLook plain = Look("{\"label\":\"5\"}");
+            Assert.AreEqual(ObjectLook.DefaultLabelSize, plain.LabelSize, 1e-6);
+            Assert.IsTrue(plain.LabelBold);
+            Assert.IsFalse(plain.LabelColor.HasValue);
+
+            ObjectLook own = Look("{\"label\":\"5\",\"label_size\":0.8,\"label_bold\":false,\"label_color\":\"#ff5c5c\"}");
+            Assert.AreEqual(0.8f, own.LabelSize, 1e-6);
+            Assert.IsFalse(own.LabelBold);
+            AssertColor(own.LabelColor.Value, 0xff, 0x5c, 0x5c);
+
+            // What the mod says about the kind holds until the object says otherwise.
+            ObjectLook kind = Look("{}", "{\"pieces\":{\"pawn\":{\"label_size\":0.3,\"label_color\":\"#00ff00\"}}}");
+            Assert.AreEqual(0.3f, kind.LabelSize, 1e-6);
+            AssertColor(kind.LabelColor.Value, 0, 255, 0);
+            Assert.AreEqual(ObjectLook.MaxLabelSize, Look("{\"label_size\":50}").LabelSize, 1e-6);
+            Assert.IsFalse(Look("{\"label_color\":\"nonsense\"}").LabelColor.HasValue);
         }
 
         [Test]

@@ -144,7 +144,10 @@ namespace BoardSandbox.Client.Views
             JsonValue board = root["board"];
             BoardSettings b = stage.Board;
             b.Visible = board["visible"].AsBool(true);
-            b.Style = string.Equals(board["style"].AsString(), "checker", StringComparison.OrdinalIgnoreCase) ? BoardStyle.Checker : BoardStyle.Lines;
+            string style = board["style"].AsString();
+            b.Style = string.Equals(style, "checker", StringComparison.OrdinalIgnoreCase) ? BoardStyle.Checker
+                : string.Equals(style, "grid", StringComparison.OrdinalIgnoreCase) ? BoardStyle.Grid
+                : BoardStyle.Lines;
             b.Columns = Math.Max(0, board["columns"].AsInt(0));
             b.Rows = Math.Max(0, board["rows"].AsInt(0));
             b.Block = Math.Max(0, board["block"].AsInt(0));
