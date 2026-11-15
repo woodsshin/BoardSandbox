@@ -1,8 +1,8 @@
 {
   "id": "sudoku",
   "name": "Sudoku",
-  "version": "1.1.0",
-  "description": "Put 1-9 in every row, column and 3x3 box exactly once. Choose a digit on the pad, tap a cell to enter it, hold to note it.",
+  "version": "1.2.0",
+  "description": "Put 1-9 in every row, column and 3x3 box exactly once. Choose a digit on the pad, tap a cell to enter it, hold to note it. A finished row, column or box lights up and is locked.",
   "api": 1,
   "entry": "logic.luau",
   "players": { "min": 1, "max": 1 },
@@ -17,7 +17,7 @@
       "lines": { "thin": 0.02, "thick": 0.075 }
     },
     "stage": {
-      "camera": { "pitch": 89, "target": [0, 0, 0.78], "radius": 5.0, "left_drag": "none", "right_drag": "none" },
+      "camera": { "pitch": 89, "target": [0, 0, 1.0], "radius": 5.25, "left_drag": "none", "right_drag": "none" },
       "markers": { "shadow": { "visible": false } }
     },
     "click": { "action": "tap", "target": "object", "hold": true },

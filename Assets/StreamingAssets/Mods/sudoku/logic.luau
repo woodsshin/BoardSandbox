@@ -10,6 +10,15 @@
 -- Choosing a digit on the pad tints every cell that holds it strongly and every cell of their rows, columns and
 -- boxes lightly, so the cells where the digit can still go are the ones left plain.
 --
+-- A row, a column or a box whose nine cells all hold the digits of the solution is finished. The table says so with
+-- a wave that runs outwards from the cell that was just filled, one step at a time (the tile of every cell lights
+-- up, the digit grows, then both settle in green), and from then on the digits of the unit are locked: they can
+-- not be changed or taken out any more. When one digit finishes several units, they are one wave.
+--
+-- Under every key of a digit a small number says how many of that digit are still to be put on the grid. When all
+-- nine are on the grid the key goes from the pad (a digit can not be on the grid more than nine times), and comes
+-- back when one of them is taken out.
+--
 -- Commands:  place {x, y, digit}   put a digit in a cell, over the digit that was there
 --            clear {x, y}          take a digit the player entered out of its cell
 --            cycle {x, y}          the digit after the one in the cell (1 to 9, then empty)
@@ -25,10 +34,12 @@
 --            puzzle  81 digits, 0 or . for an empty cell, to play a puzzle of your own instead of a dealt one
 --
 -- Queries:   state                the clues, how far the puzzle is, the grid and the puzzle as 81 digits (0 is empty),
---                                 and what is chosen on the pad
+--                                 what is chosen on the pad, how many of each digit are still to be put on the grid
+--                                 (9 digits) and how many cells are locked
 --            notes                the cells with notes and their digits
 --            solution             the solution as 81 digits
 --            conflicts            the digits of the player that clash with another digit
+--            units                the rows, columns and boxes (1 to 9 each) that are finished
 --            candidates {x, y}    the digits that are not yet in the row, the column or the box of a cell
 --
 -- The computer player knows the solution: it puts the right digit in a cell where the grid is wrong.
@@ -45,6 +56,9 @@ local COLUMN = Grid.COLUMN
 local ROW = Grid.ROW
 local BLOCK = Grid.BLOCK
 local PEERS = Grid.PEERS
+local UNITS = Grid.UNITS
+local UNIT_CELLS = Grid.UNIT_CELLS
+local UNITS_OF = Grid.UNITS_OF
 
 local DEFAULT_CLUES = 36
 local MIN_CLUES = 17
@@ -58,25 +72,47 @@ local SOLVE_NODES = 50000
 local GIVEN_COLOR = "#2f343d"
 local ENTRY_COLOR = "#4d8fe6"
 local CONFLICT_COLOR = "#ff5c5c"
+local DONE_COLOR = "#1f9d6b" -- a digit of a finished unit
+local DIGIT_SIZE = 0.82 -- the label_size of a digit, as in config.json
 
 -- The pad: keys 1 to 9 and the eraser, in a row below the grid.
 local KEYS = 10
 local ERASER = 10
 local KEY_STEP = 0.96
 local KEY_ROW = 5.75
-local KEY_LOOKS = {
+local KEY_LOOKS: { [string]: { [string]: any } } = {
 	idle = { color = "#e8ecf2", label_color = "#2f343d" },
 	chosen = { color = "#4d8fe6", label_color = "#ffffff" },
-	done = { color = "#c3c9d2", label_color = "#98a1ae" }, -- all nine of the digit are on the grid
 }
 
--- How strongly a tile is tinted: not at all, as a cell the chosen digit reaches, as a cell that holds it.
-local TILE_ALPHA = { [0] = 0, [1] = 0.14, [2] = 0.45 }
+-- Under a key a small number says how many of its digit are still to be put on the grid. Its place is a share of
+-- the width of the key, down from the middle of it, which puts it just below the key.
+local COUNT_DY = 0.72
+local COUNT_SIZE = 0.3
+local COUNT_COLOR = "#69727f"
+
+-- How a tile looks: plain, as a cell the chosen digit reaches (lightly tinted), as a cell that holds it (strongly)
+-- and as a cell of a finished unit (faintly green).
+local TILE_LOOKS: { [string]: { [string]: any } } = {
+	plain = { color = ENTRY_COLOR, alpha = 0 },
+	reach = { color = ENTRY_COLOR, alpha = 0.14 },
+	holds = { color = ENTRY_COLOR, alpha = 0.45 },
+	done = { color = "#34c38f", alpha = 0.16 },
+}
 local TILE_HEIGHT = 0.006
 local NOTE_COLOR = "#69727f"
 local NOTE_STEP = 0.3
 local NOTE_SIZE = 0.26
 local ALL_NOTES = 511
+
+-- The wave that shows a finished unit: a cell lights up (the tile gold, the digit large), then glows green for a
+-- step and then settles. A step is this long on the screen.
+local STEP_SECONDS = 0.09
+local FLASH_TILE = { color = "#ffd166", alpha = 0.9 }
+local GLOW_TILE = { color = "#34c38f", alpha = 0.5 }
+local FLASH_TEXT = "#8a5a00"
+local GLOW_TEXT = "#127a50"
+local POP_SIZE = 1.0
 
 local grid: { number } = {} -- the digit of each cell, 0 for empty
 local given: { boolean } = {} -- the cells that belong to the puzzle
@@ -86,6 +122,8 @@ local flagged: { boolean } = {} -- the cells shown as conflicting
 local row_count: { number } = {} -- row_count[slot(row, digit)] is how often a digit is in a row
 local col_count: { number } = {}
 local box_count: { number } = {}
+local unit_done: { boolean } = {} -- the units (rows, then columns, then boxes) whose nine cells are right
+local locked: { boolean } = {} -- the cells of the player in a finished unit, which can not be changed any more
 local filled = 0
 local bad = 0 -- how many cells conflict
 local clues = 0
@@ -102,7 +140,7 @@ local tiles: { number } = {} -- the tile object of each cell
 local keys: { number } = {} -- the object of each key
 local cell_of_tile: { [number]: number } = {}
 local key_of_object: { [number]: number } = {}
-local tile_shade: { number } = {} -- what the table shows now, so that only changes are sent
+local tile_look: { string } = {} -- what the table shows now, so that only changes are sent
 local tile_notes: { string } = {}
 local key_look: { string } = {}
 
@@ -128,10 +166,11 @@ local function fits(i: number, digit: number): boolean
 	return row_count[slot(ROW[i], digit)] == own and col_count[slot(COLUMN[i], digit)] == own and box_count[slot(BLOCK[i], digit)] == own
 end
 
--- Only the digits of the player conflict: a clue never does, the digit that clashes with it does.
+-- Only the digits of the player conflict: a clue never does, the digit that clashes with it does. The same goes for
+-- a digit of a finished unit, which is known to be right: it is the other digit that is wrong.
 local function is_conflicting(i: number): boolean
 	local digit = grid[i]
-	if digit == 0 or given[i] then
+	if digit == 0 or given[i] or locked[i] then
 		return false
 	end
 	return not fits(i, digit)
@@ -141,10 +180,36 @@ local function color_of(i: number, conflicting: boolean): string
 	if given[i] then
 		return GIVEN_COLOR
 	end
+	if locked[i] then
+		return DONE_COLOR
+	end
 	return if conflicting then CONFLICT_COLOR else ENTRY_COLOR
 end
 
--- Counts the digits of the grid and finds the cells that conflict; the view is not touched.
+-- Whether the nine cells of a unit hold the digits of the solution.
+local function unit_is_right(u: number): boolean
+	for _, c in UNIT_CELLS[u] do
+		if grid[c] ~= solution[c] then
+			return false
+		end
+	end
+	return true
+end
+
+-- Finds the finished units of the grid, and with them the cells that are locked. Nothing is sent to the table.
+local function find_finished_units()
+	unit_done = {}
+	for u = 1, UNITS do
+		unit_done[u] = unit_is_right(u)
+	end
+	locked = {}
+	for i = 1, CELLS do
+		local units = UNITS_OF[i]
+		locked[i] = not given[i] and (unit_done[units[1]] or unit_done[units[2]] or unit_done[units[3]])
+	end
+end
+
+-- Counts the digits of the grid and finds the finished units and the cells that conflict; the view is not touched.
 local function recount()
 	row_count = table.create(81, 0)
 	col_count = table.create(81, 0)
@@ -161,6 +226,7 @@ local function recount()
 			box_count[slot(BLOCK[i], digit)] += 1
 		end
 	end
+	find_finished_units()
 	bad = 0
 	for i = 1, CELLS do
 		flagged[i] = is_conflicting(i)
@@ -247,50 +313,99 @@ local function note_labels(i: number): any
 	return list
 end
 
+-- Whether a cell is in a finished row, column or box.
+local function in_finished_unit(i: number): boolean
+	local units = UNITS_OF[i]
+	return unit_done[units[1]] or unit_done[units[2]] or unit_done[units[3]]
+end
+
+-- Names how the tile of a cell looks: what the chosen digit makes of it, or else that it is in a finished unit.
+local function tile_look_of(i: number): string
+	local shade = shade_of(i)
+	if shade == 2 then
+		return "holds"
+	elseif shade == 1 then
+		return "reach"
+	end
+	return if in_finished_unit(i) then "done" else "plain"
+end
+
+-- Whether all nine of a digit are on the grid: its key is gone from the pad and it can not be chosen.
+local function is_used_up(digit: number): boolean
+	return digit >= 1 and digit <= 9 and placed[digit] >= 9
+end
+
 local function look_of_key(key: number): string
-	if key == selected then
-		return "chosen"
+	if is_used_up(key) then
+		return "gone"
 	end
-	if key <= 9 and placed[key] >= 9 then
-		return "done"
+	return if key == selected then "chosen" else "idle"
+end
+
+-- Names what a key looks like: its look, and for a digit how many of it are still to come.
+local function key_state(key: number): string
+	local look = look_of_key(key)
+	if look == "gone" or key == ERASER then
+		return look
 	end
-	return "idle"
+	return `{look}:{9 - placed[key]}`
+end
+
+-- What the table is told about a key: it is gone, or it has its colors and, for a digit, the count below it.
+local function key_props(key: number): { [string]: any }
+	local look = look_of_key(key)
+	if look == "gone" then
+		return { visible = false }
+	end
+	local colors = KEY_LOOKS[look]
+	local props: { [string]: any } = { visible = true, color = colors.color, label_color = colors.label_color }
+	if key ~= ERASER then
+		props.labels = {
+			{ text = tostring(9 - placed[key]), dx = 0, dy = COUNT_DY, size = COUNT_SIZE, color = COUNT_COLOR, bold = false },
+		}
+	end
+	return props
 end
 
 -- What the tiles and keys should show, without telling the table: after a restore the table already shows it.
 local function remember_looks()
 	for i = 1, CELLS do
-		tile_shade[i] = shade_of(i)
+		tile_look[i] = tile_look_of(i)
 		tile_notes[i] = notes_look(i)
 	end
 	for key = 1, KEYS do
-		key_look[key] = look_of_key(key)
+		key_look[key] = key_state(key)
 	end
 end
 
 -- Brings the tiles and the keys up to date; only what changed is sent to the table.
 local function refresh_table()
+	-- A digit that has been used up can not stay chosen: its key is gone.
+	if is_used_up(selected) then
+		selected = 0
+	end
 	for i = 1, CELLS do
-		local shade = shade_of(i)
-		local look = notes_look(i)
-		if shade ~= tile_shade[i] or look ~= tile_notes[i] then
+		local look = tile_look_of(i)
+		local written = notes_look(i)
+		if look ~= tile_look[i] or written ~= tile_notes[i] then
 			local props: { [string]: any } = {}
-			if shade ~= tile_shade[i] then
-				tile_shade[i] = shade
-				props.alpha = TILE_ALPHA[shade]
+			if look ~= tile_look[i] then
+				tile_look[i] = look
+				props.color = TILE_LOOKS[look].color
+				props.alpha = TILE_LOOKS[look].alpha
 			end
-			if look ~= tile_notes[i] then
-				tile_notes[i] = look
+			if written ~= tile_notes[i] then
+				tile_notes[i] = written
 				props.labels = note_labels(i)
 			end
 			bse.view.set(tiles[i], props)
 		end
 	end
 	for key = 1, KEYS do
-		local look = look_of_key(key)
-		if look ~= key_look[key] then
-			key_look[key] = look
-			bse.view.set(keys[key], KEY_LOOKS[look])
+		local state = key_state(key)
+		if state ~= key_look[key] then
+			key_look[key] = state
+			bse.view.set(keys[key], key_props(key))
 		end
 	end
 end
@@ -302,24 +417,20 @@ local function spawn_table()
 	keys = {}
 	cell_of_tile = {}
 	key_of_object = {}
+	remember_looks()
 	for i = 1, CELLS do
+		local look = TILE_LOOKS[tile_look[i]]
 		local id = bse.view.spawn("cell", 0, 0, {
-			props = { pos = { COLUMN[i] - 5, TILE_HEIGHT, ROW[i] - 5 }, alpha = 0, labels = false },
+			props = { pos = { COLUMN[i] - 5, TILE_HEIGHT, ROW[i] - 5 }, color = look.color, alpha = look.alpha, labels = false },
 		})
 		tiles[i] = id
 		cell_of_tile[id] = i
 	end
-	remember_looks()
 	for key = 1, KEYS do
-		local look = KEY_LOOKS[key_look[key]]
-		local id = bse.view.spawn("key", 0, 0, {
-			props = {
-				pos = { (key - 5.5) * KEY_STEP, 0, KEY_ROW },
-				label = if key == ERASER then "X" else tostring(key),
-				color = look.color,
-				label_color = look.label_color,
-			},
-		})
+		local props = key_props(key)
+		props.pos = { (key - 5.5) * KEY_STEP, 0, KEY_ROW }
+		props.label = if key == ERASER then "X" else tostring(key)
+		local id = bse.view.spawn("key", 0, 0, { props = props })
 		keys[key] = id
 		key_of_object[id] = key
 	end
@@ -329,7 +440,14 @@ local function spawn_cell(i: number, conflicting: boolean)
 	local color = color_of(i, conflicting)
 	ids[i] = bse.view.spawn("digit", COLUMN[i], ROW[i], {
 		owner = if given[i] then nil else 1,
-		props = { label = tostring(grid[i]), color = color, label_color = color, given = given[i], conflict = conflicting },
+		props = {
+			label = tostring(grid[i]),
+			color = color,
+			label_color = color,
+			given = given[i],
+			locked = locked[i],
+			conflict = conflicting,
+		},
 	})
 end
 
@@ -516,11 +634,122 @@ local function conflict_of(i: number, digit: number): any
 	return nil
 end
 
+-- How long a step of the wave has to be on paper for the table to show it for STEP_SECONDS. The table plays the
+-- steps faster while others are waiting behind them: one and a half times as fast with one waiting, twice with two
+-- and so on (PlaybackQueue.Speed), so the step that has `behind` steps after it is made that much longer.
+local function step_seconds(behind: number): number
+	return STEP_SECONDS * math.min(12, 1 + 0.5 * behind)
+end
+
+-- Where a cell ends up when the wave has passed: the tile and the digit as they are meant to look from now on.
+local function settle(c: number)
+	local look = TILE_LOOKS[tile_look[c]]
+	bse.view.set(tiles[c], { color = look.color, alpha = look.alpha })
+	local color = color_of(c, flagged[c])
+	bse.view.set(ids[c], { color = color, label_color = color, label_size = DIGIT_SIZE, locked = locked[c], conflict = flagged[c] })
+end
+
+-- Shows what the cell of the wave looks like at the given moment of it.
+local function light(c: number, stage: string)
+	if stage == "flash" then
+		bse.view.set(tiles[c], FLASH_TILE)
+		bse.view.set(ids[c], { color = FLASH_TEXT, label_color = FLASH_TEXT, label_size = POP_SIZE })
+	elseif stage == "glow" then
+		bse.view.set(tiles[c], GLOW_TILE)
+		bse.view.set(ids[c], { color = GLOW_TEXT, label_color = GLOW_TEXT, label_size = DIGIT_SIZE })
+	else
+		settle(c)
+	end
+end
+
+-- The units in which the digit that has just been put in a cell completes the right digits.
+local function units_finished_by(i: number): { number }
+	local list: { number } = {}
+	for _, u in UNITS_OF[i] do
+		if not unit_done[u] and unit_is_right(u) then
+			table.insert(list, u)
+		end
+	end
+	return list
+end
+
+-- Shows that the units are right and locks their cells. The wave starts at the cell that was just filled and runs
+-- outwards one cell further with every step, along the row, the column and round the box: a cell lights up, glows a
+-- step later and has settled a step after that. Without a screen the cells just settle.
+local function celebrate(origin: number, units: { number })
+	local cells: { number } = {}
+	local counted: { boolean } = {}
+	for _, u in units do
+		unit_done[u] = true
+		for _, c in UNIT_CELLS[u] do
+			if not counted[c] then
+				counted[c] = true
+				table.insert(cells, c)
+			end
+		end
+	end
+
+	-- What the cells are from now on. A digit that was shown as conflicting is not any more: it is right.
+	for _, c in cells do
+		if not given[c] and not locked[c] then
+			locked[c] = true
+			local conflicting = is_conflicting(c)
+			if conflicting ~= flagged[c] then
+				flagged[c] = conflicting
+				bad += if conflicting then 1 else -1
+			end
+		end
+		tile_look[c] = tile_look_of(c)
+	end
+
+	if bse.is_headless() then
+		for _, c in cells do
+			settle(c)
+		end
+		return
+	end
+
+	local rings: { { number } } = {}
+	local last = 0
+	for _, c in cells do
+		local ring = math.abs(COLUMN[c] - COLUMN[origin]) + math.abs(ROW[c] - ROW[origin])
+		last = math.max(last, ring)
+		-- Rings are counted from 1 here, 1 being the cell that was filled.
+		local list = rings[ring + 1]
+		if list == nil then
+			list = {}
+			rings[ring + 1] = list
+		end
+		table.insert(list, c)
+	end
+	local waits = last + 2
+	for step = 0, last + 2 do
+		for _, c in rings[step + 1] or {} do
+			light(c, "flash")
+		end
+		for _, c in rings[step] or {} do
+			light(c, "glow")
+		end
+		for _, c in rings[step - 1] or {} do
+			light(c, "settle")
+		end
+		if step < waits then
+			bse.emit({ t = "fx", kind = "wait", seconds = step_seconds(waits - step - 1) })
+		end
+	end
+end
+
 -- Puts a digit in a cell or takes it out, as a move of the game.
 local function enter(i: number, digit: number)
 	apply(i, digit)
 	moves += 1
 	refresh_table()
+	if digit ~= 0 then
+		local units = units_finished_by(i)
+		if #units > 0 then
+			celebrate(i, units)
+		end
+	end
 	check_solved()
 end
 
@@ -529,9 +758,22 @@ local function toggle_note(i: number, digit: number)
 	refresh_table()
 end
 
-local function choose(key: number)
+-- Chooses a key of the pad, or lets go of it when it is chosen. A digit that has been used up has no key to choose.
+local function choose(key: number): any
+	if is_used_up(key) then
+		return bse.reject("DIGIT_USED", `all nine {key}s are already on the grid`, { digit = key })
+	end
 	selected = if key == selected then 0 else key
 	refresh_table()
+	return nil
+end
+
+-- Why nobody can change the cell: it is part of the puzzle or of a finished unit.
+local function why_fixed(i: number): any
+	if given[i] then
+		return bse.reject("GIVEN_CELL", "that cell is part of the puzzle", { x = COLUMN[i], y = ROW[i] })
+	end
+	return bse.reject("CELL_LOCKED", "that cell is in a row, a column or a box that is finished", { x = COLUMN[i], y = ROW[i] })
 end
 
 -- A tap on a cell: what it does depends on what is chosen on the pad and on whether it is a note.
@@ -542,13 +784,12 @@ local function tap_cell(i: number, as_note: boolean): any
 		if grid[i] == 0 then
 			return bse.reject("NOTHING_CHOSEN", "choose a digit on the pad first", { x = x, y = y })
 		end
-		choose(grid[i])
-		return nil
+		return choose(grid[i])
 	end
 
 	if selected == ERASER then
-		if given[i] then
-			return bse.reject("GIVEN_CELL", "that cell is part of the puzzle", { x = x, y = y })
+		if given[i] or locked[i] then
+			return why_fixed(i)
 		end
 		if grid[i] ~= 0 and not as_note then
 			enter(i, 0)
@@ -569,13 +810,12 @@ local function tap_cell(i: number, as_note: boolean): any
 		toggle_note(i, selected)
 		return nil
 	end
-	if given[i] then
-		-- A clue cannot be changed; a tap on it is a way to choose its digit.
+	if given[i] or locked[i] then
+		-- Such a cell can not be changed; a tap on it is a way to choose its digit.
 		if grid[i] == selected then
-			return bse.reject("GIVEN_CELL", "that cell is part of the puzzle", { x = x, y = y })
+			return why_fixed(i)
 		end
-		choose(grid[i])
-		return nil
+		return choose(grid[i])
 	end
 	if grid[i] == selected then
 		enter(i, 0)
@@ -609,8 +849,7 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		if key == 0 and selected == 0 then
 			return bse.reject("UNCHANGED", "nothing is chosen")
 		end
-		choose(if key == 0 then selected else key)
-		return nil
+		return choose(if key == 0 then selected else key)
 	end
 
 	if action == "tap" then
@@ -620,8 +859,7 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		end
 		local key = key_of_object[id]
 		if key ~= nil then
-			choose(key)
-			return nil
+			return choose(key)
 		end
 		local cell = cell_of_tile[id]
 		if cell == nil then
@@ -639,8 +877,8 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		return bse.reject("OUT_OF_BOUNDS", "the cell is outside the grid", { x = x, y = y, size = SIZE })
 	end
 	local i = Grid.index(x, y)
-	if given[i] then
-		return bse.reject("GIVEN_CELL", "that cell is part of the puzzle", { x = x, y = y })
+	if given[i] or locked[i] then
+		return why_fixed(i)
 	end
 
 	local digit = 0
@@ -662,6 +900,9 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		if digit == grid[i] then
 			return bse.reject("UNCHANGED", "that cell already holds that digit", { x = x, y = y, digit = digit })
 		end
+		if is_used_up(digit) then
+			return bse.reject("DIGIT_USED", `all nine {digit}s are already on the grid`, { x = x, y = y, digit = digit })
+		end
 		local conflict = conflict_of(i, digit)
 		if conflict ~= nil then
 			return conflict
@@ -674,7 +915,7 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		digit = grid[i]
 		repeat
 			digit += 1
-		until digit > 9 or not strict or fits(i, digit)
+		until digit > 9 or (not is_used_up(digit) and (not strict or fits(i, digit)))
 		if digit > 9 then
 			digit = 0
 		end
@@ -693,9 +934,9 @@ function rules.legal_commands(seat: number): { any }
 		return list
 	end
 	for i = 1, CELLS do
-		if not given[i] then
+		if not given[i] and not locked[i] then
 			for digit = 1, 9 do
-				if digit ~= grid[i] and (not strict or fits(i, digit)) then
+				if digit ~= grid[i] and not is_used_up(digit) and (not strict or fits(i, digit)) then
 					table.insert(list, { action = "place", x = COLUMN[i], y = ROW[i], digit = digit })
 				end
 			end
@@ -707,8 +948,8 @@ function rules.legal_commands(seat: number): { any }
 	return list
 end
 
--- A cell where the grid is not right yet gets the right digit. Where a wrong digit stands in the way of that in
--- strict mode, the wrong digit is taken out first.
+-- A cell where the grid is not right yet gets the right digit. Where a wrong digit stands in the way of that, in
+-- strict mode or because all nine of the digit are on the grid already, the wrong digit is taken out first.
 function rules.random_command(seat: number): any
 	if finished or seat ~= 1 then
 		return nil
@@ -716,7 +957,7 @@ function rules.random_command(seat: number): any
 	local moves_left: { any } = {}
 	for i = 1, CELLS do
 		if grid[i] ~= solution[i] then
-			if not strict or fits(i, solution[i]) then
+			if not is_used_up(solution[i]) and (not strict or fits(i, solution[i])) then
 				table.insert(moves_left, { action = "place", x = COLUMN[i], y = ROW[i], digit = solution[i] })
 			elseif grid[i] ~= 0 then
 				table.insert(moves_left, { action = "clear", x = COLUMN[i], y = ROW[i] })
@@ -737,6 +978,25 @@ local function puzzle_text(): string
 	return table.concat(digits)
 end
 
+-- How many of each digit are still to be put on the grid, as nine digits.
+local function remaining_text(): string
+	local counts: { number } = {}
+	for digit = 1, 9 do
+		counts[digit] = math.max(0, 9 - placed[digit])
+	end
+	return table.concat(counts)
+end
+
+local function locked_count(): number
+	local count = 0
+	for i = 1, CELLS do
+		if locked[i] then
+			count += 1
+		end
+	end
+	return count
+end
+
 function rules.query(name: string, args: any): any
 	if name == "state" then
 		return {
@@ -752,6 +1012,8 @@ function rules.query(name: string, args: any): any
 			board = table.concat(grid),
 			puzzle = puzzle_text(),
 			selected = selected,
+			remaining = remaining_text(),
+			locked = locked_count(),
 		}
 	elseif name == "notes" then
 		local list = {}
@@ -767,6 +1029,22 @@ function rules.query(name: string, args: any): any
 			end
 		end
 		return list
+	elseif name == "units" then
+		local rows: { number } = {}
+		local columns: { number } = {}
+		local boxes: { number } = {}
+		for u = 1, 9 do
+			if unit_done[u] then
+				table.insert(rows, u)
+			end
+			if unit_done[9 + u] then
+				table.insert(columns, u)
+			end
+			if unit_done[18 + u] then
+				table.insert(boxes, u)
+			end
+		end
+		return { rows = rows, columns = columns, boxes = boxes }
 	elseif name == "solution" then
 		return table.concat(solution)
 	elseif name == "conflicts" then
@@ -927,6 +1205,10 @@ function rules.restore(data: any)
 	selected = chosen
 	clues = new_clues
 	recount()
+	-- A digit that has been used up has no key to be chosen on.
+	if is_used_up(selected) then
+		selected = 0
+	end
 	remember_looks()
 	moves = clamp_integer(data.moves, 0, 0, 1000000)
 	seed_used = clamp_integer(data.seed, 0, 0, MAX_SEED)
