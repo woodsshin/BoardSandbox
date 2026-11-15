@@ -336,7 +336,7 @@ namespace BoardSandbox.Client.UI
             if (guest != null)
             {
                 NetBoard board = guest.LocalBoard ?? (guest.Boards.Count > 0 ? guest.Boards[0] : null);
-                if (board == null || board.Queue.Display.Turn <= 0 && !board.Queue.Display.IsOver)
+                if (board == null || board.Queue.Display.Turn <= 0 && !board.Queue.Display.IsOver && !guest.Mod.Manifest.Cooperative)
                 {
                     _status = board == null ? "Joining…" : "Waiting for the host to start";
                     return;
@@ -364,7 +364,11 @@ namespace BoardSandbox.Client.UI
             {
                 OverInfo over = view.Over;
                 string reason = over.Reason.Length > 0 ? " - " + over.Reason.Replace('_', ' ') : string.Empty;
-                if (over.Winner > 0)
+                if (manifest.Cooperative)
+                {
+                    _status = (over.Winner > 0 ? "Everyone wins" : "Game over") + reason;
+                }
+                else if (over.Winner > 0)
                 {
                     _status = SeatName(manifest, over.Winner) + " wins" + reason;
                     _hasSwatch = true;
@@ -374,6 +378,13 @@ namespace BoardSandbox.Client.UI
                 {
                     _status = "Draw" + reason;
                 }
+                return;
+            }
+            if (manifest.Cooperative)
+            {
+                // Nobody is on turn: the seats play together, and only a room has more than one of them.
+                bool watching = room != null && room.LocalPlayer != null && room.LocalPlayer.Seat <= 0;
+                _status = watching ? "Watching" : room != null ? "Playing together" : string.Empty;
                 return;
             }
             if (view.Turn > 0)

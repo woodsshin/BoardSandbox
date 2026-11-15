@@ -168,20 +168,53 @@ namespace BoardSandbox.Client.Geometry
 
             if (layout.Style == BoardStyle.Checker)
                 AddSquares(builder, layout, palette);
+            else if (layout.Style == BoardStyle.Grid)
+                AddGrid(builder, layout, palette);
             else
                 AddLines(builder, layout, palette);
             return builder;
         }
 
+        // A sheet in the light color with a line along every edge of a cell; the lines around the whole and around
+        // every group of Block cells are the thick ones.
+        private static void AddGrid(MeshBuilder builder, BoardLayout layout, BoardPalette palette)
+        {
+            float half = layout.CellSize * 0.5f;
+            float thin = layout.CellSize * palette.ThinLine;
+            float thick = layout.CellSize * palette.ThickLine;
+            float left = -layout.HalfWidth - half;
+            float right = layout.HalfWidth + half;
+            float near = -layout.HalfDepth - half;
+            float far = layout.HalfDepth + half;
+            int block = layout.Block;
+
+            AddStrip(builder, new Vector3(left, LineHeight * 0.5f, near), new Vector3(right, LineHeight * 0.5f, far), palette.Light);
+            for (int x = 0; x <= layout.Columns; x++)
+            {
+                float width = x == 0 || x == layout.Columns || (block > 1 && x % block == 0) ? thick : thin;
+                float worldX = left + x * layout.CellSize;
+                AddStrip(builder, new Vector3(worldX - width * 0.5f, LineHeight, near - thick * 0.5f),
+                    new Vector3(worldX + width * 0.5f, LineHeight, far + thick * 0.5f), palette.Line);
+            }
+            for (int y = 0; y <= layout.Rows; y++)
+            {
+                float width = y == 0 || y == layout.Rows || (block > 1 && y % block == 0) ? thick : thin;
+                float worldZ = far - y * layout.CellSize;
+                AddStrip(builder, new Vector3(left - thick * 0.5f, LineHeight, worldZ - width * 0.5f),
+                    new Vector3(right + thick * 0.5f, LineHeight, worldZ + width * 0.5f), palette.Line);
+            }
+        }
+
         private static void AddSquares(MeshBuilder builder, BoardLayout layout, BoardPalette palette)
         {
             float half = layout.CellSize * 0.5f;
+            int block = layout.Block;
             for (int y = 1; y <= layout.Rows; y++)
             {
                 for (int x = 1; x <= layout.Columns; x++)
                 {
                     Vector3 c = layout.CellToWorld(x, y, LineHeight);
-                    Color32 color = ((x + y) & 1) == 0 ? palette.Light : palette.Dark;
+                    Color32 color = (((x - 1) / block + (y - 1) / block) & 1) == 0 ? palette.Light : palette.Dark;
                     builder.AddQuad(c + new Vector3(-half, 0f, -half), c + new Vector3(-half, 0f, half),
                         c + new Vector3(half, 0f, half), c + new Vector3(half, 0f, -half), Vector3.up, color);
                 }

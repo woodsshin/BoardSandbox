@@ -1,0 +1,42 @@
+{
+  "id": "sudoku",
+  "name": "Sudoku",
+  "version": "1.3.0",
+  "description": "Put 1-9 in every row, column and 3x3 box exactly once. Choose a digit on the pad, tap a cell to enter it, hold to note it. A finished row, column or box lights up and is locked. Up to two players solve one puzzle together in an online room: one grid, no turns, each with a pad of their own.",
+  "api": 1,
+  "entry": "logic.luau",
+  "players": { "min": 1, "max": 2 },
+  "seats": [
+    { "name": "Blue", "color": "#4d8fe6" },
+    { "name": "Orange", "color": "#e68a2e" }
+  ],
+  "multiplayer": { "cooperative": true },
+  "options": { "clues": 36, "seed": 0, "strict": false },
+  "client": {
+    "board": {
+      "style": "grid", "columns": 9, "rows": 9, "block": 3, "margin": 0.62,
+      "colors": { "slab": "#2f343d", "light": "#fbfbf7", "line": "#2f343d" },
+      "lines": { "thin": 0.02, "thick": 0.075 }
+    },
+    "stage": {
+      "camera": { "pitch": 89, "target": [0, 0, 1.0], "radius": 5.25, "left_drag": "none", "right_drag": "none" },
+      "markers": { "shadow": { "visible": false } }
+    },
+    "click": { "action": "tap", "target": "object", "hold": true },
+    "keys": {
+      "1": { "action": "select", "digit": 1 }, "2": { "action": "select", "digit": 2 }, "3": { "action": "select", "digit": 3 },
+      "4": { "action": "select", "digit": 4 }, "5": { "action": "select", "digit": 5 }, "6": { "action": "select", "digit": 6 },
+      "7": { "action": "select", "digit": 7 }, "8": { "action": "select", "digit": 8 }, "9": { "action": "select", "digit": 9 },
+      "keypad1": { "action": "select", "digit": 1 }, "keypad2": { "action": "select", "digit": 2 }, "keypad3": { "action": "select", "digit": 3 },
+      "keypad4": { "action": "select", "digit": 4 }, "keypad5": { "action": "select", "digit": 5 }, "keypad6": { "action": "select", "digit": 6 },
+      "keypad7": { "action": "select", "digit": 7 }, "keypad8": { "action": "select", "digit": 8 }, "keypad9": { "action": "select", "digit": 9 },
+      "0": { "action": "select", "digit": 10 }, "backspace": { "action": "select", "digit": 10 }, "delete": { "action": "select", "digit": 10 },
+      "escape": { "action": "select", "digit": 0 }
+    },
+    "pieces": {
+      "digit": { "shape": "box", "size": [0.8, 0.01, 0.8], "alpha": 0, "shadow": false, "pick": false, "label_size": 0.82 },
+      "cell": { "shape": "box", "size": [0.93, 0.01, 0.93], "color": "#4d8fe6", "anchor": "bottom", "shadow": false, "gloss": 0 },
+      "key": { "shape": "box", "size": [0.86, 0.1, 0.86], "anchor": "bottom", "shadow": false, "gloss": 0.15, "label_size": 0.62 }
+    }
+  }
+}

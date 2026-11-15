@@ -27,7 +27,13 @@ namespace BoardSandbox.Tests
 
         public static ModPackage LoadGomoku()
         {
-            return ModLoader.LoadDirectory(Path.Combine(ModsRoot, "gomoku"));
+            return LoadMod("gomoku");
+        }
+
+        // A game that ships with the platform, by its id.
+        public static ModPackage LoadMod(string id)
+        {
+            return ModLoader.LoadDirectory(Path.Combine(ModsRoot, id));
         }
 
         public static ModPackage InlineMod(string source, string optionsJson = "{}", int maxPlayers = 2)

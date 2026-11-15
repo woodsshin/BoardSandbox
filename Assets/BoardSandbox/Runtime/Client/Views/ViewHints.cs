@@ -18,6 +18,7 @@ namespace BoardSandbox.Client.Views
             JsonValue click = Client["click"];
             ClickAction = click["action"].AsString();
             ClickObjects = string.Equals(click["target"].AsString(), "object", StringComparison.OrdinalIgnoreCase);
+            ClickHold = click["hold"].AsBool(false);
             string preview = click["preview"].AsString();
             PreviewKind = preview.Length > 0 ? preview : null;
             DragAction = Client["drag"]["action"].AsString();
@@ -39,6 +40,11 @@ namespace BoardSandbox.Client.Views
 
         // Clicks name the object under the cursor instead of a coordinate of the board.
         public bool ClickObjects { get; }
+
+        // Holding the pointer down without moving it is a click of its own, sent with "hold" set while the pointer
+        // is still down; a quick click then has "hold" false. For a second way to act on the same spot, such as
+        // writing a note instead of an answer.
+        public bool ClickHold { get; }
 
         // The action a drag that starts on an object sends; empty when the mod does not take drags.
         public string DragAction { get; }

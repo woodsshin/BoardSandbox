@@ -152,14 +152,18 @@ namespace BoardSandbox.Core.Commands
             if (s.View.IsOver)
             {
                 OverInfo over = s.View.Over;
-                sb.Append("result: ").Append(over.Winner > 0 ? SeatName(over.Winner) + " wins" : "no winner");
+                bool together = s.Mod.Manifest.Cooperative;
+                sb.Append("result: ").Append(over.Winner > 0 ? (together ? "everyone wins" : SeatName(over.Winner) + " wins") : "no winner");
                 if (!string.IsNullOrEmpty(over.Reason))
                     sb.Append(" (").Append(over.Reason).Append(')');
                 sb.Append('\n');
             }
             else
             {
-                sb.Append("turn: ").Append(s.View.Turn > 0 ? "seat " + s.View.Turn + " (" + SeatName(s.View.Turn) + ")" : "none").Append('\n');
+                if (s.Mod.Manifest.Cooperative)
+                    sb.Append("turn: none (cooperative: every seat plays at once)\n");
+                else
+                    sb.Append("turn: ").Append(s.View.Turn > 0 ? "seat " + s.View.Turn + " (" + SeatName(s.View.Turn) + ")" : "none").Append('\n');
             }
             sb.Append("objects: ").Append(s.View.ObjectCount);
             if (s.HistoryEnabled)

@@ -23,6 +23,9 @@ namespace BoardSandbox.Client.Views
 
         public int Columns { get; private set; }
         public int Rows { get; private set; }
+
+        // How many columns and rows form one group of squares; 1 when the board has no groups.
+        public int Block { get; private set; }
         public bool HasLastMove { get; private set; }
         public int LastX { get; private set; }
         public int LastY { get; private set; }
@@ -39,8 +42,8 @@ namespace BoardSandbox.Client.Views
             return _cells.ContainsKey(Key(x, y));
         }
 
-        // The board announces its size with a "board" event, otherwise the stage decides, otherwise
-        // it is as large as the pieces on it require.
+        // The board announces its size and its groups of squares with a "board" event, otherwise the stage decides,
+        // otherwise it is as large as the pieces on it require.
         public static BoardState Read(ViewModel view, StageSettings stage)
         {
             BoardState state = new BoardState();
@@ -61,12 +64,17 @@ namespace BoardSandbox.Client.Views
 
             int columns = 0;
             int rows = 0;
+            int block = 0;
             ViewEvent board = view.GetCustom("board");
             if (board != null)
             {
                 columns = board.Raw["columns"].AsInt(0);
                 rows = board.Raw["rows"].AsInt(0);
+                block = board.Raw["block"].AsInt(0);
             }
+            if (block <= 0)
+                block = stage.Board.Block;
+            state.Block = Math.Max(1, Math.Min(block, BoardLayout.MaxSize));
             if (columns <= 0)
                 columns = stage.Board.Columns > 0 ? stage.Board.Columns : Math.Max(DefaultSize, widest);
             if (rows <= 0)

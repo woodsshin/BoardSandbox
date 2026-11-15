@@ -1,3 +1,4 @@
+using System.IO;
 using BoardSandbox.Client.Geometry;
 using BoardSandbox.Client.Views;
 using BoardSandbox.Core.Game;
@@ -86,6 +87,55 @@ namespace BoardSandbox.Tests
             Assert.AreEqual(PieceShape.Stone, hints.ShapeFor("stone"));
             Assert.AreEqual(BoardStyle.Lines, StageSettings.Resolve(hints.Client, null).Board.Style);
         }
+
+        [Test]
+        public void HoldingIsAClickOfItsOwnOnlyWhenTheModAsksForIt()
+        {
+            Assert.IsFalse(new ViewHints(null).ClickHold);
+            Assert.IsFalse(new ViewHints(JsonValue.Parse("{\"click\":{\"action\":\"a\"}}")).ClickHold);
+            Assert.IsTrue(new ViewHints(JsonValue.Parse("{\"click\":{\"action\":\"a\",\"hold\":true}}")).ClickHold);
+            Assert.IsFalse(new ViewHints(TestSupport.LoadGomoku().Manifest.Client).ClickHold);
+        }
+
+        [Test]
+        public void TheStyleOfTheBoardIsRead()
+        {
+            Assert.AreEqual(BoardStyle.Lines, new StageSettings().Board.Style);
+            Assert.AreEqual(BoardStyle.Checker, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"Checker\"}}")).Board.Style);
+            Assert.AreEqual(BoardStyle.Grid, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"grid\"}}")).Board.Style);
+            Assert.AreEqual(BoardStyle.Lines, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"hexagons\"}}")).Board.Style);
+        }
+
+        [Test]
+        public void TheBlockOfAGroupedBoardIsRead()
+        {
+            Assert.AreEqual(0, new StageSettings().Board.Block);
+            Assert.AreEqual(0, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"checker\"}}")).Board.Block);
+            Assert.AreEqual(3, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"checker\",\"block\":3}}")).Board.Block);
+            Assert.AreEqual(0, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"block\":-2}}")).Board.Block);
+            Assert.AreEqual(3, StageSettings.Parse(JsonValue.Parse("{\"board\":{\"style\":\"checker\",\"block\":3}}")).Layout(9, 9, 3).Block);
+        }
+
+        [Test]
+        public void SudokuDeclaresItsHints()
+        {
+            ViewHints hints = new ViewHints(ModLoader.LoadDirectory(Path.Combine(TestSupport.ModsRoot, "sudoku")).Manifest.Client);
+            StageSettings stage = StageSettings.Resolve(hints.Client, null);
+            Assert.AreEqual(BoardStyle.Grid, stage.Board.Style);
+            Assert.AreEqual(9, stage.Board.Columns);
+            Assert.AreEqual(9, stage.Board.Rows);
+            Assert.AreEqual(3, stage.Board.Block);
+            Assert.AreEqual(89f, stage.Camera.Pitch, 1e-4, "the grid is seen from straight above");
+            Assert.AreEqual(DragMode.None, stage.Camera.LeftDrag);
+            Assert.AreEqual("tap", hints.ClickAction);
+            Assert.IsTrue(hints.CanClick);
+            Assert.IsTrue(hints.ClickObjects);
+            Assert.IsTrue(hints.ClickHold);
+            Assert.IsNull(hints.PreviewKind);
+            Assert.AreEqual(PieceShape.Box, hints.ShapeFor("digit"));
+            Assert.IsNotNull(hints.KeyCommand("5", false));
+            Assert.AreEqual(5, hints.KeyCommand("5", false)["digit"].AsInt());
+        }
     }
 
     [TestFixture]
@@ -126,6 +176,40 @@ namespace BoardSandbox.Tests
             AssertColor(Look("{}").Color, 255, 0, 0);
             AssertColor(Look("{}", "{}", 2).Color, 0, 255, 0);
             AssertColor(Look("{\"color\":\"nonsense\"}", "{}", 2).Color, 0, 255, 0);
+        }
+
+        [Test]
+        public void TextIsDarkOnLightPiecesAndLightOnDarkOnes()
+        {
+            Assert.IsTrue(Look("{\"color\":\"#ffffff\"}").IsLight);
+            Assert.IsTrue(Look("{\"color\":\"#f2efe6\"}").IsLight);
+            Assert.IsTrue(Look("{\"color\":\"#e3c13a\"}").IsLight);
+            Assert.IsFalse(Look("{\"color\":\"#000000\"}").IsLight);
+            Assert.IsFalse(Look("{\"color\":\"#2f343d\"}").IsLight);
+            // The colors of the digits of the sudoku: the digits of the player and the ones in conflict are written in white.
+            Assert.IsFalse(Look("{\"color\":\"#4d8fe6\"}").IsLight);
+            Assert.IsFalse(Look("{\"color\":\"#ff5c5c\"}").IsLight);
+        }
+
+        [Test]
+        public void LabelsAreWrittenAsTheModSays()
+        {
+            ObjectLook plain = Look("{\"label\":\"5\"}");
+            Assert.AreEqual(ObjectLook.DefaultLabelSize, plain.LabelSize, 1e-6);
+            Assert.IsTrue(plain.LabelBold);
+            Assert.IsFalse(plain.LabelColor.HasValue);
+
+            ObjectLook own = Look("{\"label\":\"5\",\"label_size\":0.8,\"label_bold\":false,\"label_color\":\"#ff5c5c\"}");
+            Assert.AreEqual(0.8f, own.LabelSize, 1e-6);
+            Assert.IsFalse(own.LabelBold);
+            AssertColor(own.LabelColor.Value, 0xff, 0x5c, 0x5c);
+
+            // What the mod says about the kind holds until the object says otherwise.
+            ObjectLook kind = Look("{}", "{\"pieces\":{\"pawn\":{\"label_size\":0.3,\"label_color\":\"#00ff00\"}}}");
+            Assert.AreEqual(0.3f, kind.LabelSize, 1e-6);
+            AssertColor(kind.LabelColor.Value, 0, 255, 0);
+            Assert.AreEqual(ObjectLook.MaxLabelSize, Look("{\"label_size\":50}").LabelSize, 1e-6);
+            Assert.IsFalse(Look("{\"label_color\":\"nonsense\"}").LabelColor.HasValue);
         }
 
         [Test]
@@ -405,6 +489,42 @@ namespace BoardSandbox.Tests
             Assert.AreEqual(4, state.LastX);
             Assert.AreEqual(7, state.LastY);
             Assert.IsFalse(BoardState.Read(Model("{\"t\":\"last_move\",\"x\":0,\"y\":7}"), new StageSettings()).HasLastMove);
+        }
+
+        [Test]
+        public void TheBlockComesFromTheBoardEventOrTheStage()
+        {
+            StageSettings staged = StageSettings.Parse(JsonValue.Parse("{\"board\":{\"block\":2}}"));
+            Assert.AreEqual(1, BoardState.Read(Model(), new StageSettings()).Block);
+            Assert.AreEqual(2, BoardState.Read(Model(), staged).Block);
+            Assert.AreEqual(3, BoardState.Read(Model("{\"t\":\"board\",\"columns\":9,\"rows\":9,\"block\":3}"), staged).Block);
+            Assert.AreEqual(2, BoardState.Read(Model("{\"t\":\"board\",\"columns\":9,\"rows\":9}"), staged).Block);
+            Assert.AreEqual(1, BoardState.Read(Model("{\"t\":\"board\",\"columns\":9,\"rows\":9,\"block\":-4}"), new StageSettings()).Block);
+            Assert.AreEqual(BoardLayout.MaxSize, BoardState.Read(Model("{\"t\":\"board\",\"columns\":9,\"rows\":9,\"block\":1000}"), new StageSettings()).Block);
+        }
+
+        [Test]
+        public void ASudokuShowsItsGridItsBlocksAndItsClues()
+        {
+            ModPackage mod = ModLoader.LoadDirectory(Path.Combine(TestSupport.ModsRoot, "sudoku"));
+            using (GameSession session = new GameSession(mod))
+            {
+                session.NewGame(JsonValue.Parse("{\"puzzle\":\"530070000600195000098000060800060003400803001700020006060000280000419005000080079\"}"));
+                StageSettings stage = StageSettings.Resolve(mod.Manifest.Client, null);
+                BoardState state = BoardState.Read(session.View, stage);
+                Assert.AreEqual(9, state.Columns);
+                Assert.AreEqual(9, state.Rows);
+                Assert.AreEqual(3, state.Block);
+                Assert.IsFalse(state.HasLastMove);
+                Assert.AreEqual("5", state.ObjectAt(1, 1).Props["label"].AsString());
+                Assert.AreEqual("9", state.ObjectAt(9, 9).Props["label"].AsString());
+                Assert.IsFalse(state.IsOccupied(3, 1));
+
+                Assert.IsTrue(session.Submit(InputPacket.Action(1, "place").With("x", 3).With("y", 1).With("digit", 4)).IsAccepted);
+                state = BoardState.Read(session.View, stage);
+                Assert.AreEqual("4", state.ObjectAt(3, 1).Props["label"].AsString());
+                Assert.AreEqual(1, state.ObjectAt(3, 1).Owner);
+            }
         }
 
         [Test]

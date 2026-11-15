@@ -64,6 +64,10 @@ namespace BoardSandbox.Core.Mods
         // Every player of a networked game has a table of their own instead of a seat at a shared one.
         public bool SplitScreen { get; private set; }
 
+        // The seats play together on one table, all at the same time: nobody is on turn, whoever sits at a seat acts
+        // whenever they like, and a finished game is a win for everybody. Never set for a split game.
+        public bool Cooperative { get; private set; }
+
         // How many players a networked game takes.
         public int RoomPlayers { get; private set; }
 
@@ -144,6 +148,7 @@ namespace BoardSandbox.Core.Mods
 
             JsonValue multiplayer = root["multiplayer"];
             manifest.SplitScreen = multiplayer["mode"].AsString() == "split";
+            manifest.Cooperative = !manifest.SplitScreen && multiplayer["cooperative"].AsBool(false);
             manifest.RoomPlayers = manifest.SplitScreen ? Math.Max(1, Math.Min(MaxRoomPlayers, multiplayer["players"].AsInt(4))) : max;
             manifest.SeedOption = multiplayer["seed_option"].AsString();
 

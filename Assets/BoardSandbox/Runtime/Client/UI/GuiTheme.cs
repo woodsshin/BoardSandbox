@@ -71,6 +71,7 @@ namespace BoardSandbox.Client.UI
         public GUIStyle Field { get; private set; }
         public GUIStyle Toggle { get; private set; }
         public GUIStyle Mono { get; private set; }
+        public GUIStyle BoardLabel { get; private set; }
         public GUIStyle Swatch { get; private set; }
         public GUIStyle Card { get; private set; }
         public GUIStyle RowButton { get; private set; }
@@ -232,6 +233,19 @@ namespace BoardSandbox.Client.UI
                 padding = new RectOffset(0, 0, 0, 0)
             };
             Mono.normal.textColor = TextColor;
+
+            // The size of the font is set for every label that is drawn, as the piece it is on grows and shrinks on the screen.
+            BoardLabel = new GUIStyle(skin.label)
+            {
+                font = _font,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = false,
+                richText = false,
+                clipping = TextClipping.Overflow,
+                margin = new RectOffset(),
+                padding = new RectOffset()
+            };
 
             Swatch = new GUIStyle
             {

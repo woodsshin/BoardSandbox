@@ -55,13 +55,24 @@ namespace BoardSandbox.Core.Net
                 if (IsClosed || !Joined || board == null || me == null || board.Queue.IsBusy)
                     return false;
                 ViewModel view = board.Queue.Display;
+                if (Mod.Manifest.Cooperative)
+                    return me.Seat > 0 && !view.IsOver;
                 if (view.IsOver || view.Turn <= 0)
                     return false;
                 return SplitScreen ? !Finished : me.Seat == view.Turn;
             }
         }
 
-        public override int ActingSeat => CanAct ? LocalBoard.Queue.Display.Turn : 0;
+        // In a cooperative game the local player acts as the seat they sit at, whoever is on turn.
+        public override int ActingSeat
+        {
+            get
+            {
+                if (!CanAct)
+                    return 0;
+                return Mod.Manifest.Cooperative ? LocalPlayer.Seat : LocalBoard.Queue.Display.Turn;
+            }
+        }
 
         public override void Submit(JsonValue command)
         {

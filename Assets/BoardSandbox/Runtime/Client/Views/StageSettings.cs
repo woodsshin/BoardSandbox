@@ -31,6 +31,10 @@ namespace BoardSandbox.Client.Views
         // 0 when the mod does not say.
         public int Columns;
         public int Rows;
+
+        // A checkered board shades its squares in groups of this many columns and rows, like the 3x3 boxes of a
+        // sudoku; 0 when the mod does not say, which is a chess board.
+        public int Block;
         public float Cell = 1f;
 
         // In cells; negative for the usual value.
@@ -140,9 +144,13 @@ namespace BoardSandbox.Client.Views
             JsonValue board = root["board"];
             BoardSettings b = stage.Board;
             b.Visible = board["visible"].AsBool(true);
-            b.Style = string.Equals(board["style"].AsString(), "checker", StringComparison.OrdinalIgnoreCase) ? BoardStyle.Checker : BoardStyle.Lines;
+            string style = board["style"].AsString();
+            b.Style = string.Equals(style, "checker", StringComparison.OrdinalIgnoreCase) ? BoardStyle.Checker
+                : string.Equals(style, "grid", StringComparison.OrdinalIgnoreCase) ? BoardStyle.Grid
+                : BoardStyle.Lines;
             b.Columns = Math.Max(0, board["columns"].AsInt(0));
             b.Rows = Math.Max(0, board["rows"].AsInt(0));
+            b.Block = Math.Max(0, board["block"].AsInt(0));
             b.Cell = ReadFloat(board["cell"], 1f, 0.05f, 20f);
             b.Margin = board["margin"].IsNumber ? ReadFloat(board["margin"], 0f, 0f, 20f) : -1f;
             b.Thickness = board["thickness"].IsNumber ? ReadFloat(board["thickness"], 0.4f, 0.01f, 20f) : -1f;
@@ -198,9 +206,9 @@ namespace BoardSandbox.Client.Views
             return other != null && Source.StructurallyEquals(other.Source);
         }
 
-        public BoardLayout Layout(int columns, int rows)
+        public BoardLayout Layout(int columns, int rows, int block = 1)
         {
-            return new BoardLayout(columns, rows, Board.Style, Board.Cell, Board.Margin, Board.Thickness);
+            return new BoardLayout(columns, rows, Board.Style, Board.Cell, Board.Margin, Board.Thickness, block);
         }
 
         private static void ReadMarker(JsonValue value, MarkerSettings marker)

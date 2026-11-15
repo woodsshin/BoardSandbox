@@ -54,18 +54,43 @@ namespace BoardSandbox.Core.Net
         {
             get
             {
+                if (Mod.Manifest.Cooperative)
+                    return OwnSeat > 0;
                 if (IsClosed || !_host.AcceptsHumanInput || (SplitScreen && Finished))
                     return false;
                 return SplitScreen || MayPlay(LocalId, _host.Session.View.Turn);
             }
         }
 
-        public override int ActingSeat => CanAct ? _host.Session.View.Turn : 0;
+        public override int ActingSeat
+        {
+            get
+            {
+                if (Mod.Manifest.Cooperative)
+                    return OwnSeat;
+                return CanAct ? _host.Session.View.Turn : 0;
+            }
+        }
 
         public override void Submit(JsonValue command)
         {
-            if (CanAct)
-                _host.Submit(_host.Session.View.Turn, command, "human");
+            int seat = ActingSeat;
+            if (seat > 0)
+                _host.Submit(seat, command, "human");
+        }
+
+        // In a cooperative game nobody is on turn: the local player acts as the seat they sit at, whenever the game is
+        // on and a person plays the seat. 0 for none.
+        private int OwnSeat
+        {
+            get
+            {
+                NetPlayer me = LocalPlayer;
+                GameSession session = _host.Session;
+                if (IsClosed || me == null || me.Seat <= 0 || session == null || !session.IsStarted || session.View.IsOver)
+                    return 0;
+                return _host.GetSeatMode(me.Seat) == SeatMode.Human ? me.Seat : 0;
+            }
         }
 
         public override void Update()
@@ -150,7 +175,7 @@ namespace BoardSandbox.Core.Net
                 Note(peer, seat <= 0 && !SplitScreen ? "You are watching this game." : "The game is over.", ToastLevel.Warning);
                 return;
             }
-            if (!SplitScreen && view.Turn > 0 && view.Turn != seat)
+            if (!SplitScreen && !Mod.Manifest.Cooperative && view.Turn > 0 && view.Turn != seat)
             {
                 Note(peer, "It is not your turn.", ToastLevel.Warning);
                 return;

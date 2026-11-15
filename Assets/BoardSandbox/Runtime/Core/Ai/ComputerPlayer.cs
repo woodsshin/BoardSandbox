@@ -29,7 +29,8 @@ namespace BoardSandbox.Core.Ai
         private static readonly Dictionary<string, Func<IComputerPlayer>> Factories =
             new Dictionary<string, Func<IComputerPlayer>>(StringComparer.Ordinal)
             {
-                { GomokuMctsPlayer.EngineName, () => new GomokuMctsPlayer() }
+                { GomokuMctsPlayer.EngineName, () => new GomokuMctsPlayer() },
+                { ChessMctsPlayer.EngineName, () => new ChessMctsPlayer() }
             };
 
         // Adds an engine, or replaces the one of that name.
