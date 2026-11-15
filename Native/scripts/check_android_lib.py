@@ -9,8 +9,10 @@ ELF file itself, so it needs neither the NDK nor readelf. It fails when the libr
   - was built for another CPU than its folder says,
   - needs a library the player does not have (above all libc++_shared.so: the C++ runtime has to be inside),
   - does not export exactly the bse_* functions of include/bse_luau.h,
-  - is a 64-bit library whose segments are not aligned to 16 KB (devices with 16 KB pages refuse it), or
-  - contains text relocations, which Android no longer loads.
+  - is a 64-bit library whose segments are not aligned to 16 KB (devices with 16 KB pages refuse it),
+  - contains text relocations, which Android no longer loads, or
+  - uses a feature that the oldest Android of the project (AndroidMinSdkVersion in ProjectSettings) does not have:
+    a thread-local storage segment before API 29, or relative relocations (RELR) before API 28 and 30.
 """
 
 import argparse
@@ -33,9 +35,11 @@ MACHINE_NAMES = {3: "x86", 8: "MIPS", 40: "ARM", 62: "x86-64", 183: "AArch64", 2
 # What the Android system provides to every app. Anything else a library needs has to be inside the app.
 SYSTEM_LIBRARIES = ("libc.so", "libm.so", "libdl.so", "liblog.so")
 PAGE_SIZE = 16384
+DEFAULT_MIN_API = 25
 
 ET_DYN = 3
 PT_LOAD = 1
+PT_TLS = 7
 SHT_DYNAMIC = 6
 SHT_DYNSYM = 11
 DT_NEEDED = 1
@@ -43,6 +47,8 @@ DT_SONAME = 14
 DT_TEXTREL = 22
 DT_FLAGS = 30
 DF_TEXTREL = 4
+DT_RELR = 36
+DT_ANDROID_RELR = 0x6fffe000
 
 
 class ElfError(Exception):
@@ -167,8 +173,23 @@ class Elf(object):
                     names.append(self._string(strings, name))
         return names
 
+    def has_tag(self, wanted):
+        entries, _ = self.dynamic_entries()
+        return any(tag == wanted for tag, _ in entries)
+
     def has_section(self, name):
         return any(section["name"] == name for section in self.sections)
+
+
+def project_min_api():
+    """The lowest Android version the Unity project supports (AndroidMinSdkVersion in ProjectSettings)."""
+    try:
+        with open(os.path.join(ROOT, "ProjectSettings", "ProjectSettings.asset"), "r", encoding="utf-8") as handle:
+            match = re.search(r"^\s*AndroidMinSdkVersion:\s*(\d+)", handle.read(), re.MULTILINE)
+    except OSError:
+        return DEFAULT_MIN_API
+    level = int(match.group(1)) if match else 0
+    return level if level >= 21 else DEFAULT_MIN_API
 
 
 def declared_functions():
@@ -178,9 +199,11 @@ def declared_functions():
     return set(re.findall(r"^BSE_API\b[^;(]*?\b(bse_[A-Za-z0-9_]+)\s*\(", text, re.MULTILINE))
 
 
-def check(path, abi, system_libraries=SYSTEM_LIBRARIES):
+def check(path, abi, system_libraries=SYSTEM_LIBRARIES, min_api=None):
     """Returns (errors, warnings, details) for the library at path, which is meant for the given ABI."""
     errors, warnings, details = [], [], []
+    if min_api is None:
+        min_api = project_min_api()
     machine, bits, cpu = ABIS[abi]
     with open(path, "rb") as handle:
         data = handle.read()
@@ -234,6 +257,12 @@ def check(path, abi, system_libraries=SYSTEM_LIBRARIES):
 
     if elf.has_text_relocations():
         errors.append("it has text relocations, which Android does not load")
+    if min_api < 29 and any(segment["type"] == PT_TLS for segment in elf.segments):
+        errors.append("it has a thread-local storage segment, which Android before 10 (API 29) cannot load; the project supports API %d" % min_api)
+    if min_api < 28 and elf.has_tag(DT_ANDROID_RELR):
+        errors.append("it has packed relative relocations (DT_ANDROID_RELR), which need API 28; the project supports API %d" % min_api)
+    if min_api < 30 and elf.has_tag(DT_RELR):
+        errors.append("it has relative relocations (DT_RELR), which need API 30; the project supports API %d" % min_api)
 
     soname = elf.soname()
     if soname != "libbse_luau.so":
@@ -247,6 +276,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("libraries", nargs="+", help="libbse_luau.so files")
     parser.add_argument("--abi", choices=sorted(ABIS), help="the ABI the libraries are for; the name of their folder when omitted")
+    parser.add_argument("--min-api", type=int, help="the oldest Android API level to support; ProjectSettings' minimum when omitted")
     options = parser.parse_args()
 
     failed = False
@@ -256,7 +286,7 @@ def main():
             print("%s: the folder '%s' is not an ABI (%s); use --abi" % (path, abi, ", ".join(sorted(ABIS))))
             failed = True
             continue
-        errors, warnings, details = check(path, abi)
+        errors, warnings, details = check(path, abi, min_api=options.min_api)
         print("%s (%s)" % (path, abi))
         for line in details:
             print("  " + line)

@@ -43,7 +43,6 @@ ANDROID_TARGETS = {
     "android-arm32": "armeabi-v7a",
     "android-x64": "x86_64",
 }
-DEFAULT_ANDROID_API = 25
 NDK_VARIABLES = ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "ANDROID_NDK", "NDK_ROOT")
 
 
@@ -204,13 +203,7 @@ def find_ndk(explicit):
 
 def android_api():
     """The lowest Android version the Unity project supports; the library is built against its headers."""
-    try:
-        with open(os.path.join(ROOT, "ProjectSettings", "ProjectSettings.asset"), encoding="utf-8") as handle:
-            match = re.search(r"^\s*AndroidMinSdkVersion:\s*(\d+)", handle.read(), re.MULTILINE)
-    except OSError:
-        return DEFAULT_ANDROID_API
-    level = int(match.group(1)) if match else 0
-    return level if level >= 21 else DEFAULT_ANDROID_API
+    return check_android_lib.project_min_api()
 
 
 def require_tool(command, install):
