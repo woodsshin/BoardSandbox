@@ -5,6 +5,8 @@ using BoardSandbox.Core.Game;
 namespace BoardSandbox.Core.Commands
 {
     // Draws a grid board from the objects on the table; the geometry comes from a "board" event when the mod sends one.
+    // A piece is drawn as the first character of its "label" property when it has one, otherwise as a symbol of its owner.
+    // A "block" in the board event (3 for a sudoku) sets the groups of columns and rows apart with a space and an empty line.
     public static class AsciiBoard
     {
         private const int MaxSide = 60;
@@ -13,11 +15,13 @@ namespace BoardSandbox.Core.Commands
         {
             int columns = 0;
             int rows = 0;
+            int block = 0;
             ViewEvent board = view.GetCustom("board");
             if (board != null)
             {
                 columns = board.Raw["columns"].AsInt();
                 rows = board.Raw["rows"].AsInt();
+                block = board.Raw["block"].AsInt();
             }
             else
             {
@@ -41,7 +45,7 @@ namespace BoardSandbox.Core.Commands
                 int x = (int)Math.Round(o.X) - 1;
                 int y = (int)Math.Round(o.Y) - 1;
                 if (x >= 0 && x < columns && y >= 0 && y < rows)
-                    cells[y, x] = SymbolFor(o.Owner);
+                    cells[y, x] = SymbolFor(o);
             }
 
             int lastX = -1;
@@ -56,7 +60,11 @@ namespace BoardSandbox.Core.Commands
             StringBuilder sb = new StringBuilder();
             sb.Append("    ");
             for (int x = 1; x <= columns; x++)
+            {
                 sb.Append(x.ToString().PadLeft(2)).Append(' ');
+                if (EndsBlock(x, columns, block))
+                    sb.Append(' ');
+            }
             sb.Append('\n');
             for (int y = 0; y < rows; y++)
             {
@@ -65,10 +73,26 @@ namespace BoardSandbox.Core.Commands
                 {
                     bool marked = x == lastX && y == lastY;
                     sb.Append(marked ? '[' : ' ').Append(cells[y, x]).Append(marked ? ']' : ' ');
+                    if (EndsBlock(x + 1, columns, block))
+                        sb.Append(' ');
                 }
                 sb.Append('\n');
+                if (EndsBlock(y + 1, rows, block))
+                    sb.Append('\n');
             }
             return sb.ToString().TrimEnd('\n');
+        }
+
+        // A group of columns or rows ends after every block-th one, except after the last.
+        private static bool EndsBlock(int position, int count, int block)
+        {
+            return block > 1 && position < count && position % block == 0;
+        }
+
+        private static char SymbolFor(ViewObject piece)
+        {
+            string label = piece.Props["label"].AsString();
+            return label.Length > 0 ? label[0] : SymbolFor(piece.Owner);
         }
 
         private static char SymbolFor(int owner)

@@ -18,7 +18,8 @@ namespace BoardSandbox.Client.Geometry
         public const int MaxSize = 64;
 
         // A negative margin or thickness stands for the usual one; both are given in cells.
-        public BoardLayout(int columns, int rows, BoardStyle style = BoardStyle.Lines, float cellSize = 1f, float margin = -1f, float thickness = -1f)
+        public BoardLayout(int columns, int rows, BoardStyle style = BoardStyle.Lines, float cellSize = 1f, float margin = -1f, float thickness = -1f,
+            int block = 1)
         {
             Columns = Mathf.Clamp(columns, 1, MaxSize);
             Rows = Mathf.Clamp(rows, 1, MaxSize);
@@ -26,12 +27,17 @@ namespace BoardSandbox.Client.Geometry
             CellSize = Mathf.Clamp(cellSize, 0.01f, 100f);
             Margin = CellSize * (margin >= 0f ? Mathf.Min(margin, 20f) : style == BoardStyle.Lines ? 0.8f : 0.9f);
             Thickness = CellSize * (thickness >= 0f ? Mathf.Clamp(thickness, 0.01f, 20f) : 0.4f);
+            Block = Mathf.Clamp(block, 1, MaxSize);
         }
 
         public int Columns { get; }
         public int Rows { get; }
         public BoardStyle Style { get; }
         public float CellSize { get; }
+
+        // The squares of a checkered board are shaded alternately in groups of this many columns and rows;
+        // 1 makes a chess board, 3 the 3x3 boxes of a sudoku.
+        public int Block { get; }
 
         // Distance from the outermost coordinate to the edge of the board.
         public float Margin { get; }

@@ -1,6 +1,6 @@
 # Board Sandbox Engine
 
-Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 장면으로 보여 줍니다. 기본으로 오목(Gomoku)과 3D 큐브 퍼즐(Cubic 3x3), 체스(Chess) 모드가 들어 있습니다.
+Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입니다. 게임 규칙은 Luau 스크립트 모드로 작성하고, Unity(C#)는 규칙을 실행·검증하며 결과를 3D 장면으로 보여 줍니다. 기본으로 오목(Gomoku)과 3D 큐브 퍼즐(Cubic 3x3), 체스(Chess), 스도쿠(Sudoku) 모드가 들어 있습니다.
 
 
 ## 목차
@@ -45,7 +45,8 @@ Assets/
 │  └─ Tests/Editor/      NUnit 테스트 (EditMode)
 └─ StreamingAssets/Mods/
    ├─ gomoku/            오목
-   └─ cubic3/            3D 큐브 퍼즐
+   ├─ cubic3/            3D 큐브 퍼즐
+   └─ sudoku/            스도쿠 (1인)
 Native/
 ├─ bse_luau/             C ABI 래퍼(C++17), CMake, Luau 프렐류드, 네이티브 테스트, 분석 도구
 └─ scripts/build_native.py
@@ -584,6 +585,7 @@ sim 1000 seed=1
 | `table.visible`, `table.color`, `table.size`, `table.y` | `true`, `#27313b`, 800, 보드 바로 아래 | 바닥 천 |
 | `board.visible` | `true` | 보드를 그릴지 |
 | `board.style` | `lines` | `lines`(선의 교차점에 말), `checker`(체크무늬 칸에 말) |
+| `board.block` | 1 | `checker` 판의 칸을 이 수만큼씩 묶어 번갈아 칠합니다. 1은 체스판, 3은 스도쿠의 3×3 상자. `board` 이벤트의 `block`이 있으면 그 값이 우선합니다 |
 | `board.columns`, `board.rows` | 없음 | 보드 크기 |
 | `board.cell`, `board.margin`, `board.thickness` | 1, 0.8(`checker`는 0.9), 0.4 | 칸 크기, 가장자리 여백과 판 두께(칸 단위) |
 | `board.colors.slab` / `line` / `light` / `dark` | `#dcb06b`, `#2b1d10`, `#ecd4a0`, `#9a6a3c` | 판, 선, 밝은 칸, 어두운 칸 |
@@ -616,6 +618,7 @@ sim 1000 seed=1
 | `faces` | 없음 | `box`/`cube`의 면에 붙일 색: `{ px, nx, py, ny, pz, nz }` |
 | `face_inset` | 0.1 | 면 색을 가장자리에서 들여 그리는 비율(0~0.45) |
 | `gloss` | 0.55 | 광택(0~1) |
+| `label` | 없음 | 오브젝트 위에 쓰는 글자(스도쿠의 숫자). 밝은 색 위에는 어둡게, 어두운 색 위에는 밝게 씁니다. 텍스트 콘솔의 판 그림에서는 첫 글자가 말 기호가 됩니다 |
 | `shadow` | `pos`가 없으면 `true` | 바닥 그림자 |
 | `visible`, `pick` | `true`, `true` | 그릴지, 클릭·드래그 대상인지 |
 | `tween` | 0 | `pos`가 바뀔 때 미끄러져 가는 시간(초, 최대 5). 회전과 크기는 바로 바뀝니다 |

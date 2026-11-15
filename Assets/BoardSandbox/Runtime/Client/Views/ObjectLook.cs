@@ -53,6 +53,9 @@ namespace BoardSandbox.Client.Views
         public string MeshKey { get; private set; }
 
         public bool Transparent => Color.a < 255;
+
+        // Whether dark text can be read on the object; on a dark object the text is light.
+        public bool IsLight => (0.299f * Color.r + 0.587f * Color.g + 0.114f * Color.b) / 255f > 0.6f;
         public Vector3 HalfExtents => Vector3.Scale(BoardShapes.NaturalSize(Shape), Size) * 0.5f;
 
         // The middle of a free object.

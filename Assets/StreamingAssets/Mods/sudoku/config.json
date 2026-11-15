@@ -1,0 +1,18 @@
+{
+  "id": "sudoku",
+  "name": "Sudoku",
+  "version": "1.0.0",
+  "description": "Put 1-9 in every row, column and 3x3 box exactly once. Click a cell to step through its digits.",
+  "api": 1,
+  "entry": "logic.luau",
+  "players": { "min": 1, "max": 1 },
+  "seats": [
+    { "name": "Player", "color": "#4d8fe6" }
+  ],
+  "options": { "clues": 36, "seed": 0, "strict": false },
+  "client": {
+    "board": { "style": "checker", "columns": 9, "rows": 9, "block": 3 },
+    "click": { "action": "cycle" },
+    "pieces": { "digit": { "shape": "disc" } }
+  }
+}

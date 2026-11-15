@@ -312,6 +312,35 @@ namespace BoardSandbox.Tests
     }
 
     [TestFixture]
+    public class BoardLayoutBlockTests
+    {
+        private static BoardLayout Grouped(int columns, int rows, int block, BoardStyle style = BoardStyle.Checker)
+        {
+            return new BoardLayout(columns, rows, style, 1f, -1f, -1f, block);
+        }
+
+        [Test]
+        public void BlocksAreClamped()
+        {
+            Assert.AreEqual(1, new BoardLayout(9, 9).Block);
+            Assert.AreEqual(3, Grouped(9, 9, 3).Block);
+            Assert.AreEqual(1, Grouped(9, 9, 0).Block);
+            Assert.AreEqual(1, Grouped(9, 9, -3).Block);
+            Assert.AreEqual(BoardLayout.MaxSize, Grouped(9, 9, 1000).Block);
+        }
+
+        [Test]
+        public void BlocksDoNotChangeWhereThingsAre()
+        {
+            BoardLayout plain = new BoardLayout(9, 9, BoardStyle.Checker);
+            BoardLayout grouped = Grouped(9, 9, 3);
+            GeometryAssert.Near(plain.CellToWorld(2, 7), grouped.CellToWorld(2, 7), 1e-6f);
+            Assert.AreEqual(plain.SlabHalfWidth, grouped.SlabHalfWidth, 1e-6);
+            Assert.AreEqual(plain.FitDistance(40f, 1.78f, 0f, 55f), grouped.FitDistance(40f, 1.78f, 0f, 55f), 1e-6);
+        }
+    }
+
+    [TestFixture]
     public class CameraMathTests
     {
         [TestCase(0f, 45f)]
@@ -822,6 +851,93 @@ namespace BoardSandbox.Tests
             foreach (Color32 color in mesh.ColorList)
                 shades.Add(color.r * 65536 + color.g * 256 + color.b);
             Assert.AreEqual(3, shades.Count);
+        }
+
+        // The color of the square of a cell on a checkered board, packed into a number.
+        private static int SquareColor(MeshBuilder mesh, BoardLayout layout, int x, int y)
+        {
+            Vector3 center = layout.CellToWorld(x, y);
+            List<Vector3> v = mesh.VertexList;
+            List<int> t = mesh.TriangleList;
+            for (int i = 0; i < t.Count; i += 3)
+            {
+                Vector3 centroid = (v[t[i]] + v[t[i + 1]] + v[t[i + 2]]) / 3f;
+                if (centroid.y > 0.003f && centroid.y < 0.005f && Mathf.Abs(centroid.x - center.x) < 0.5f && Mathf.Abs(centroid.z - center.z) < 0.5f)
+                {
+                    Color32 color = mesh.ColorList[t[i]];
+                    return color.r * 65536 + color.g * 256 + color.b;
+                }
+            }
+            Assert.Fail("there is no square at " + x + "," + y);
+            return 0;
+        }
+
+        [Test]
+        public void CheckerBoardsShadeTheirBlocksAlternately()
+        {
+            BoardLayout layout = new BoardLayout(9, 9, BoardStyle.Checker, 1f, -1f, -1f, 3);
+            MeshBuilder mesh = BoardShapes.Board(layout);
+            Assert.AreEqual(12 + 2 * 81, mesh.TriangleCount);
+            GeometryAssert.Oriented(mesh);
+
+            int light = SquareColor(mesh, layout, 1, 1);
+            int dark = SquareColor(mesh, layout, 4, 1);
+            Assert.AreNotEqual(light, dark);
+            for (int y = 1; y <= 9; y++)
+            {
+                for (int x = 1; x <= 9; x++)
+                {
+                    int expected = (((x - 1) / 3 + (y - 1) / 3) & 1) == 0 ? light : dark;
+                    Assert.AreEqual(expected, SquareColor(mesh, layout, x, y), "square " + x + "," + y);
+                }
+            }
+        }
+
+        [Test]
+        public void CheckerBoardsWithoutBlocksAreChessBoards()
+        {
+            BoardLayout layout = new BoardLayout(8, 8, BoardStyle.Checker);
+            MeshBuilder mesh = BoardShapes.Board(layout);
+            int light = SquareColor(mesh, layout, 1, 1);
+            int dark = SquareColor(mesh, layout, 2, 1);
+            Assert.AreNotEqual(light, dark);
+            for (int y = 1; y <= 8; y++)
+            {
+                for (int x = 1; x <= 8; x++)
+                    Assert.AreEqual(((x + y) & 1) == 0 ? light : dark, SquareColor(mesh, layout, x, y), "square " + x + "," + y);
+            }
+
+            // A block of 1 is what a board without a block is.
+            MeshBuilder explicitOne = BoardShapes.Board(new BoardLayout(8, 8, BoardStyle.Checker, 1f, -1f, -1f, 1));
+            Assert.AreEqual(mesh.VertexCount, explicitOne.VertexCount);
+            for (int i = 0; i < mesh.VertexCount; i++)
+            {
+                Assert.AreEqual((int)mesh.ColorList[i].r, (int)explicitOne.ColorList[i].r);
+                Assert.AreEqual((int)mesh.ColorList[i].g, (int)explicitOne.ColorList[i].g);
+                Assert.AreEqual((int)mesh.ColorList[i].b, (int)explicitOne.ColorList[i].b);
+            }
+        }
+
+        [Test]
+        public void ABlockLargerThanTheBoardLeavesOneShade()
+        {
+            BoardLayout layout = new BoardLayout(6, 6, BoardStyle.Checker, 1f, -1f, -1f, 9);
+            MeshBuilder mesh = BoardShapes.Board(layout);
+            int shade = SquareColor(mesh, layout, 1, 1);
+            for (int y = 1; y <= 6; y++)
+            {
+                for (int x = 1; x <= 6; x++)
+                    Assert.AreEqual(shade, SquareColor(mesh, layout, x, y), "square " + x + "," + y);
+            }
+        }
+
+        [Test]
+        public void LineBoardsIgnoreTheBlock()
+        {
+            MeshBuilder plain = BoardShapes.Board(new BoardLayout(15, 15));
+            MeshBuilder grouped = BoardShapes.Board(new BoardLayout(15, 15, BoardStyle.Lines, 1f, -1f, -1f, 3));
+            Assert.AreEqual(plain.TriangleCount, grouped.TriangleCount);
+            Assert.AreEqual(plain.VertexCount, grouped.VertexCount);
         }
 
         [TestCase(BoardStyle.Lines)]

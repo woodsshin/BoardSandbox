@@ -69,6 +69,7 @@ namespace BoardSandbox.Client
 
         private GameSession _boundSession;
         private ViewHints _hints = new ViewHints(null);
+        private readonly BoardLabels _labels = new BoardLabels();
         private string _failure;
 
         private bool _pressing;
@@ -482,6 +483,18 @@ namespace BoardSandbox.Client
             return null;
         }
 
+        // The text on the objects of every scene, under the interface.
+        private void DrawLabels()
+        {
+            if (Event.current.type != EventType.Repaint)
+                return;
+            foreach (Panel panel in _panels)
+            {
+                if (panel.Queue != null && panel.Rig != null)
+                    _labels.Draw(panel.Queue.Display, panel.View, panel.Rig.Camera, panel.Area, _theme.BoardLabel);
+            }
+        }
+
         private void DrawTitles()
         {
             if (_panels.Count < 2 || Event.current.type != EventType.Repaint)
@@ -504,6 +517,7 @@ namespace BoardSandbox.Client
             {
                 _theme.Ensure(uiScale > 0f ? uiScale : Mathf.Round(Mathf.Clamp(Screen.height / 900f, 1f, 2.5f) * 4f) / 4f);
                 Event e = Event.current;
+                DrawLabels();
                 DrawTitles();
                 _hud.Draw();
                 if (e.type == EventType.Repaint)

@@ -167,7 +167,7 @@ namespace BoardSandbox.Client.Views
             }
 
             BoardState state = BoardState.Read(model, _stage);
-            if (_layout == null || _boardDirty || _layout.Columns != state.Columns || _layout.Rows != state.Rows)
+            if (_layout == null || _boardDirty || _layout.Columns != state.Columns || _layout.Rows != state.Rows || _layout.Block != state.Block)
                 RebuildBoard(state);
             _state = state;
 
@@ -285,6 +285,25 @@ namespace BoardSandbox.Client.Views
         }
 
         // The nearest object under the ray that lets itself be picked.
+        // Where the top of an object is at this moment and how large it is drawn, for text that is written on it.
+        // False for an object that is not drawn or is shrinking away.
+        public bool TryGetTop(int id, out Vector3 top, out float size, out ObjectLook look)
+        {
+            top = Vector3.zero;
+            size = 0f;
+            look = null;
+            if (_disposed || !_byId.TryGetValue(id, out Visual visual) || visual.Removing || !visual.Look.Visible)
+                return false;
+            look = visual.Look;
+            float grow = Mathf.Max(0f, visual.Scale);
+            Vector3 half = look.HalfExtents;
+            // A free object may be placed by its middle; everything else stands on its foot.
+            float rise = (look.Free && look.Centered ? half.y : half.y * 2f) * grow;
+            size = Mathf.Min(look.Size.x, look.Size.z) * grow;
+            top = visual.Position + new Vector3(0f, visual.Lift + rise, 0f);
+            return true;
+        }
+
         public bool TryPickObject(Ray ray, out PickHit hit)
         {
             hit = default(PickHit);
@@ -535,7 +554,7 @@ namespace BoardSandbox.Client.Views
         {
             _boardDirty = false;
             BoardLayout old = _layout;
-            _layout = _stage.Layout(state.Columns, state.Rows);
+            _layout = _stage.Layout(state.Columns, state.Rows, state.Block);
             if (old == null || old.Columns != _layout.Columns || old.Rows != _layout.Rows || old.CellSize != _layout.CellSize || old.Margin != _layout.Margin)
                 FrameVersion++;
             DestroyWithMesh(ref _boardObject);

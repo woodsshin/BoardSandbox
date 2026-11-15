@@ -176,12 +176,13 @@ namespace BoardSandbox.Client.Geometry
         private static void AddSquares(MeshBuilder builder, BoardLayout layout, BoardPalette palette)
         {
             float half = layout.CellSize * 0.5f;
+            int block = layout.Block;
             for (int y = 1; y <= layout.Rows; y++)
             {
                 for (int x = 1; x <= layout.Columns; x++)
                 {
                     Vector3 c = layout.CellToWorld(x, y, LineHeight);
-                    Color32 color = ((x + y) & 1) == 0 ? palette.Light : palette.Dark;
+                    Color32 color = (((x - 1) / block + (y - 1) / block) & 1) == 0 ? palette.Light : palette.Dark;
                     builder.AddQuad(c + new Vector3(-half, 0f, -half), c + new Vector3(-half, 0f, half),
                         c + new Vector3(half, 0f, half), c + new Vector3(half, 0f, -half), Vector3.up, color);
                 }
