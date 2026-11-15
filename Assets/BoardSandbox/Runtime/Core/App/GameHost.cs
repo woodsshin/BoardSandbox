@@ -57,6 +57,7 @@ namespace BoardSandbox.Core.App
         private readonly Dictionary<int, SeatMode> _seatModes = new Dictionary<int, SeatMode>();
         private readonly Random _aiRandom;
         private double _aiDue = -1;
+        private int _lastComputerSeat;
         private IComputerPlayer _player;
         private Task<JsonValue> _aiTask;
         private CancellationTokenSource _aiCancel;
@@ -163,6 +164,7 @@ namespace BoardSandbox.Core.App
             Console = new CommandConsole(fresh);
             NewGameOptions = mod.Manifest.DefaultOptions.DeepClone();
             _seatModes.Clear();
+            _lastComputerSeat = 0;
             ResetAi();
             _player = ComputerPlayers.Create(mod.Manifest);
             _gameCounted = false;
@@ -209,6 +211,7 @@ namespace BoardSandbox.Core.App
                 Toasts.Add("Could not start the game: " + Describe(e), ToastLevel.Error, Now);
                 return false;
             }
+            _lastComputerSeat = 0;
             ResetAi();
             _gameCounted = false;
             GameStarted?.Invoke();
@@ -287,13 +290,38 @@ namespace BoardSandbox.Core.App
             return true;
         }
 
-        // Whether a person should be able to place pieces for the seat on turn right now.
+        // The seat a person at this computer plays: the seat on turn, or, in a cooperative game, which has no turns, the
+        // first seat the computer does not play. 0 when there is none.
+        public int LocalSeat
+        {
+            get
+            {
+                GameSession s = Session;
+                if (s == null || !s.IsStarted)
+                    return 0;
+                if (!s.Mod.Manifest.Cooperative)
+                    return s.View.Turn;
+                for (int seat = 1; seat <= s.Mod.Manifest.MaxPlayers; seat++)
+                {
+                    if (GetSeatMode(seat) == SeatMode.Human)
+                        return seat;
+                }
+                return 0;
+            }
+        }
+
+        // Whether a person should be able to place pieces right now: for the seat on turn, or in a cooperative game for
+        // any seat that is not played by the computer.
         public bool AcceptsHumanInput
         {
             get
             {
                 GameSession s = Session;
-                return s != null && s.IsStarted && !s.View.IsOver && s.View.Turn > 0 && GetSeatMode(s.View.Turn) == SeatMode.Human;
+                if (s == null || !s.IsStarted || s.View.IsOver)
+                    return false;
+                if (s.Mod.Manifest.Cooperative)
+                    return LocalSeat > 0;
+                return s.View.Turn > 0 && GetSeatMode(s.View.Turn) == SeatMode.Human;
             }
         }
 
@@ -308,7 +336,7 @@ namespace BoardSandbox.Core.App
                 ResetAi();
                 return false;
             }
-            int seat = s.View.Turn;
+            int seat = ComputerSeat(s);
             SeatMode mode = seat > 0 ? GetSeatMode(seat) : SeatMode.Human;
             if (mode == SeatMode.Human)
             {
@@ -375,9 +403,26 @@ namespace BoardSandbox.Core.App
 
             SubmitResult result = Session.Submit(new InputPacket(seat, command, "ai"));
             Report(result);
+            _lastComputerSeat = seat;
             if (!result.IsAccepted)
                 _seatModes.Remove(seat);
             return result.IsAccepted;
+        }
+
+        // The seat the computer is to play now: the seat on turn, or, in a cooperative game, the next seat the computer
+        // plays after the one that played last; 0 when it has none.
+        private int ComputerSeat(GameSession s)
+        {
+            if (!s.Mod.Manifest.Cooperative)
+                return s.View.Turn;
+            int count = s.Mod.Manifest.MaxPlayers;
+            for (int i = 0; i < count; i++)
+            {
+                int seat = (_lastComputerSeat + i) % count + 1;
+                if (GetSeatMode(seat) != SeatMode.Human)
+                    return seat;
+            }
+            return 0;
         }
 
         // Reads the position now and starts the search for the seat's move, which Update picks up when it is due.

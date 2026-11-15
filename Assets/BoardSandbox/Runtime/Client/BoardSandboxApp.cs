@@ -474,7 +474,7 @@ namespace BoardSandbox.Client
                 NetRoom room = _multiplayer.Room;
                 if (room != null)
                     return room.ActingSeat;
-                return _host.Session != null ? _host.Session.View.Turn : 0;
+                return _host.Session != null ? _host.LocalSeat : 0;
             }
         }
 
@@ -697,7 +697,7 @@ namespace BoardSandbox.Client
             if (room != null)
                 room.Submit(command);
             else
-                _host.Submit(_host.Session.View.Turn, command, "human");
+                _host.Submit(_host.LocalSeat, command, "human");
         }
 
         private void Click(Vector2 guiPoint, int button, bool shift, bool hold)

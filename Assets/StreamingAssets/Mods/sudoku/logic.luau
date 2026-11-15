@@ -1,5 +1,6 @@
 --!strict
--- Sudoku for one player: put 1 to 9 in every row, column and 3x3 box exactly once.
+-- Sudoku for one player, or for two who solve it together: put 1 to 9 in every row, column and 3x3 box exactly
+-- once.
 --
 -- Coordinates are x = column and y = row, both 1 to 9, row 1 on top. Every filled cell is a "digit" on the table
 -- whose "label" is its digit; the clues of the puzzle are locked ("given"), the digits the player enters can be
@@ -9,6 +10,14 @@
 -- out and carries the notes of the cell as small labels, and below the grid a pad of "key"s, 1 to 9 and X.
 -- Choosing a digit on the pad tints every cell that holds it strongly and every cell of their rows, columns and
 -- boxes lightly, so the cells where the digit can still go are the ones left plain.
+--
+-- Two players (seat 1, blue, and seat 2, orange) share one grid and play at the same time, nobody waits for a turn
+-- (config.json: "cooperative"). Everything on the table is theirs together: the digits, the notes, the finished
+-- units, the counts under the keys. What each of them has chosen on the pad is their own, and the table shows it in
+-- their colors: the key, the cells it reaches and the notes it lights. The digits are in the color of the player who
+-- put them there, until their unit is finished. A digit that the other player put in a cell is not taken out by the
+-- same digit tapped again, which is what a tap that crossed theirs would do; the eraser takes any digit out. The
+-- puzzle is solved by both of them.
 --
 -- A row, a column or a box whose nine cells all hold the digits of the solution is finished. The table says so with
 -- a wave that runs outwards from the cell that was just filled, one step at a time (the tile of every cell lights
@@ -23,7 +32,7 @@
 --            clear {x, y}          take a digit the player entered out of its cell
 --            cycle {x, y}          the digit after the one in the cell (1 to 9, then empty)
 --            note {x, y, digit}    write a candidate in an empty cell, or rub it out
---            select {digit}        choose a digit (1 to 9), the eraser (10) or nothing (0); again to let go
+--            select {digit}        choose a digit (1 to 9), the eraser (10) or nothing (0) for the seat; again to let go
 --            tap {id, hold}        what a click sends: on a key, select it; on a cell, enter the chosen digit
 --                                  (again to take it out), or with hold, shift or the right button note it.
 --                                  A tap on a filled cell with nothing chosen chooses its digit.
@@ -34,8 +43,10 @@
 --            puzzle  81 digits, 0 or . for an empty cell, to play a puzzle of your own instead of a dealt one
 --
 -- Queries:   state                the clues, how far the puzzle is, the grid and the puzzle as 81 digits (0 is empty),
---                                 what is chosen on the pad, how many of each digit are still to be put on the grid
---                                 (9 digits) and how many cells are locked
+--                                 what seat 1 chose on the pad (selected) and what each seat chose (chosen), who put
+--                                 the digit in each cell (owners: 81 digits, 0 for a clue or an empty cell, else the
+--                                 seat), how many of each digit are still to be put on the grid (9 digits) and how
+--                                 many cells are locked
 --            notes                the cells with notes and their digits
 --            solution             the solution as 81 digits
 --            conflicts            the digits of the player that clash with another digit
@@ -69,8 +80,13 @@ local MAX_SEED = 2147483646
 local GENERATION_NODES = 40000
 local SOLVE_NODES = 50000
 
-local GIVEN_COLOR = "#2f343d"
+-- The seats, in the colors of config.json. A game of one only ever has the first.
+local SEATS = 2
 local ENTRY_COLOR = "#4d8fe6"
+local SEAT_COLORS: { string } = { ENTRY_COLOR, "#e68a2e" }
+local BOTH_COLOR = "#2f343d" -- what both seats chose
+
+local GIVEN_COLOR = "#2f343d"
 local CONFLICT_COLOR = "#ff5c5c"
 local DONE_COLOR = "#1f9d6b" -- a digit of a finished unit
 local DIGIT_SIZE = 0.82 -- the label_size of a digit, as in config.json
@@ -82,7 +98,9 @@ local KEY_STEP = 0.96
 local KEY_ROW = 5.75
 local KEY_LOOKS: { [string]: { [string]: any } } = {
 	idle = { color = "#e8ecf2", label_color = "#2f343d" },
-	chosen = { color = "#4d8fe6", label_color = "#ffffff" },
+	chosen = { color = SEAT_COLORS[1], label_color = "#ffffff" }, -- by seat 1
+	chosen2 = { color = SEAT_COLORS[2], label_color = "#ffffff" }, -- by seat 2
+	both = { color = BOTH_COLOR, label_color = "#ffffff" }, -- by both
 }
 
 -- Under a key a small number says how many of its digit are still to be put on the grid. Its place is a share of
@@ -92,11 +110,16 @@ local COUNT_SIZE = 0.3
 local COUNT_COLOR = "#69727f"
 
 -- How a tile looks: plain, as a cell the chosen digit reaches (lightly tinted), as a cell that holds it (strongly)
--- and as a cell of a finished unit (faintly green).
+-- and as a cell of a finished unit (faintly green). The tint is the color of the seat that chose the digit (reach,
+-- holds for seat 1, reach2, holds2 for seat 2) and a gray when both seats' digits do the same to the cell.
 local TILE_LOOKS: { [string]: { [string]: any } } = {
 	plain = { color = ENTRY_COLOR, alpha = 0 },
-	reach = { color = ENTRY_COLOR, alpha = 0.14 },
-	holds = { color = ENTRY_COLOR, alpha = 0.45 },
+	reach = { color = SEAT_COLORS[1], alpha = 0.14 },
+	holds = { color = SEAT_COLORS[1], alpha = 0.45 },
+	reach2 = { color = SEAT_COLORS[2], alpha = 0.14 },
+	holds2 = { color = SEAT_COLORS[2], alpha = 0.45 },
+	reach_both = { color = "#69727f", alpha = 0.13 },
+	holds_both = { color = "#69727f", alpha = 0.35 },
 	done = { color = "#34c38f", alpha = 0.16 },
 }
 local TILE_HEIGHT = 0.006
@@ -133,7 +156,8 @@ local unique = true
 local strict = false
 local finished = false
 
-local selected = 0 -- the digit chosen on the pad, ERASER, or 0 for none
+local selected: { number } = { 0, 0 } -- the digit each seat chose on the pad, ERASER, or 0 for none
+local entered: { number } = {} -- the seat that put the digit in each cell, 0 for a clue and for an empty cell
 local notes: { number } = {} -- the candidates written in each cell, bit digit - 1 for each
 local placed: { number } = {} -- how often each digit is on the grid
 local tiles: { number } = {} -- the tile object of each cell
@@ -183,7 +207,10 @@ local function color_of(i: number, conflicting: boolean): string
 	if locked[i] then
 		return DONE_COLOR
 	end
-	return if conflicting then CONFLICT_COLOR else ENTRY_COLOR
+	if conflicting then
+		return CONFLICT_COLOR
+	end
+	return SEAT_COLORS[entered[i]] or ENTRY_COLOR
 end
 
 -- Whether the nine cells of a unit hold the digits of the solution.
@@ -243,7 +270,8 @@ local function set_puzzle(cells: { number }, answer: { number })
 	ids = {}
 	flagged = {}
 	notes = table.create(CELLS, 0)
-	selected = 0
+	entered = table.create(CELLS, 0)
+	selected = { 0, 0 }
 	clues = 0
 	for i = 1, CELLS do
 		given[i] = cells[i] ~= 0
@@ -261,52 +289,67 @@ local function announce_board()
 	bse.emit({ t = "board", columns = SIZE, rows = SIZE, block = Grid.BOX })
 end
 
--- 0 for a cell the chosen digit has nothing to do with, 1 for a cell in a row, column or box that holds the
--- digit, 2 for a cell that holds it.
-local function shade_of(i: number): number
-	if selected < 1 or selected > 9 then
+-- 0 for a cell the digit the seat chose has nothing to do with, 1 for a cell in a row, column or box that holds
+-- the digit, 2 for a cell that holds it.
+local function shade_for(seat: number, i: number): number
+	local digit = selected[seat]
+	if digit < 1 or digit > 9 then
 		return 0
 	end
-	if grid[i] == selected then
+	if grid[i] == digit then
 		return 2
 	end
-	if
-		row_count[slot(ROW[i], selected)] > 0
-		or col_count[slot(COLUMN[i], selected)] > 0
-		or box_count[slot(BLOCK[i], selected)] > 0
-	then
+	if row_count[slot(ROW[i], digit)] > 0 or col_count[slot(COLUMN[i], digit)] > 0 or box_count[slot(BLOCK[i], digit)] > 0 then
 		return 1
 	end
 	return 0
 end
 
--- Names what the notes of a cell look like: the notes, and the chosen digit when it is one of them.
+-- The digit of the seat when it is one of the notes in the mask, else 0.
+local function lit_note(seat: number, mask: number): number
+	local digit = selected[seat]
+	if digit >= 1 and digit <= 9 and bit32.btest(mask, bit32.lshift(1, digit - 1)) then
+		return digit
+	end
+	return 0
+end
+
+-- Names what the notes of a cell look like: the notes, and the digits the seats chose when they are among them.
 local function notes_look(i: number): string
 	local mask = notes[i]
 	if mask == 0 then
 		return ""
 	end
-	local lit = selected >= 1 and selected <= 9 and bit32.btest(mask, bit32.lshift(1, selected - 1))
-	return `{mask}:{if lit then selected else 0}`
+	return `{mask}:{lit_note(1, mask)}:{lit_note(2, mask)}`
 end
 
--- The notes of a cell as small labels in three rows of three, the chosen digit set off from the others.
+-- The notes of a cell as small labels in three rows of three, the digits the seats chose set off from the others
+-- in the color of the seat, or in a dark one when both chose the digit.
 local function note_labels(i: number): any
 	local mask = notes[i]
 	if mask == 0 then
 		return false
 	end
+	local first = lit_note(1, mask)
+	local second = lit_note(2, mask)
 	local list = {}
 	for digit = 1, 9 do
 		if bit32.btest(mask, bit32.lshift(1, digit - 1)) then
-			local lit = digit == selected
+			local color = NOTE_COLOR
+			if digit == first and digit == second then
+				color = BOTH_COLOR
+			elseif digit == first then
+				color = SEAT_COLORS[1]
+			elseif digit == second then
+				color = SEAT_COLORS[2]
+			end
 			table.insert(list, {
 				text = tostring(digit),
 				dx = ((digit - 1) % 3 - 1) * NOTE_STEP,
 				dy = ((digit - 1) // 3 - 1) * NOTE_STEP,
 				size = NOTE_SIZE,
-				color = if lit then ENTRY_COLOR else NOTE_COLOR,
-				bold = lit,
+				color = color,
+				bold = digit == first or digit == second,
 			})
 		end
 	end
@@ -319,13 +362,16 @@ local function in_finished_unit(i: number): boolean
 	return unit_done[units[1]] or unit_done[units[2]] or unit_done[units[3]]
 end
 
--- Names how the tile of a cell looks: what the chosen digit makes of it, or else that it is in a finished unit.
+-- Names how the tile of a cell looks: what the chosen digits make of it, or else that it is in a finished unit.
+-- The stronger shade wins, and when both seats make the same of the cell it is the color of neither.
 local function tile_look_of(i: number): string
-	local shade = shade_of(i)
-	if shade == 2 then
-		return "holds"
-	elseif shade == 1 then
-		return "reach"
+	local first = shade_for(1, i)
+	local second = shade_for(2, i)
+	local strongest = math.max(first, second)
+	if strongest == 2 then
+		return if first == second then "holds_both" elseif first == 2 then "holds" else "holds2"
+	elseif strongest == 1 then
+		return if first == second then "reach_both" elseif first == 1 then "reach" else "reach2"
 	end
 	return if in_finished_unit(i) then "done" else "plain"
 end
@@ -339,7 +385,12 @@ local function look_of_key(key: number): string
 	if is_used_up(key) then
 		return "gone"
 	end
-	return if key == selected then "chosen" else "idle"
+	local first = key == selected[1]
+	local second = key == selected[2]
+	if first and second then
+		return "both"
+	end
+	return if first then "chosen" elseif second then "chosen2" else "idle"
 end
 
 -- Names what a key looks like: its look, and for a digit how many of it are still to come.
@@ -381,8 +432,10 @@ end
 -- Brings the tiles and the keys up to date; only what changed is sent to the table.
 local function refresh_table()
 	-- A digit that has been used up can not stay chosen: its key is gone.
-	if is_used_up(selected) then
-		selected = 0
+	for seat = 1, SEATS do
+		if is_used_up(selected[seat]) then
+			selected[seat] = 0
+		end
 	end
 	for i = 1, CELLS do
 		local look = tile_look_of(i)
@@ -439,7 +492,7 @@ end
 local function spawn_cell(i: number, conflicting: boolean)
 	local color = color_of(i, conflicting)
 	ids[i] = bse.view.spawn("digit", COLUMN[i], ROW[i], {
-		owner = if given[i] then nil else 1,
+		owner = if given[i] or entered[i] == 0 then nil else entered[i],
 		props = {
 			label = tostring(grid[i]),
 			color = color,
@@ -463,10 +516,11 @@ local function refresh_flag(i: number)
 	bse.view.set(ids[i], { conflict = now, color = color, label_color = color })
 end
 
--- Puts a digit in a cell (0 takes it out) and brings the table up to date. Everything that can be refused has
--- been checked before this is called.
-local function apply(i: number, digit: number)
+-- Puts a digit of the seat in a cell (0 takes it out) and brings the table up to date. Everything that can be
+-- refused has been checked before this is called.
+local function apply(seat: number, i: number, digit: number)
 	local old = grid[i]
+	local before = entered[i]
 	local r = ROW[i]
 	local c = COLUMN[i]
 	local b = BLOCK[i]
@@ -491,6 +545,7 @@ local function apply(i: number, digit: number)
 		end
 	end
 	grid[i] = digit
+	entered[i] = if digit == 0 then 0 else seat
 
 	local conflicting = is_conflicting(i)
 	if conflicting ~= flagged[i] then
@@ -501,6 +556,10 @@ local function apply(i: number, digit: number)
 		bse.view.remove(ids[i])
 		ids[i] = 0
 	elseif ids[i] == 0 then
+		spawn_cell(i, conflicting)
+	elseif before ~= seat then
+		-- A digit of the other seat is replaced. The owner of an object does not change, so this is a new one.
+		bse.view.remove(ids[i])
 		spawn_cell(i, conflicting)
 	else
 		local color = color_of(i, conflicting)
@@ -515,11 +574,28 @@ local function apply(i: number, digit: number)
 	end
 end
 
-local function check_solved()
+-- What the status says of a solved puzzle; when both seats put digits on the grid it says how many each of them did.
+local function solved_text(): string
+	local by = { 0, 0 }
+	for i = 1, CELLS do
+		local seat = entered[i]
+		if seat >= 1 and seat <= SEATS then
+			by[seat] += 1
+		end
+	end
+	if by[2] == 0 then
+		return `Solved in {moves} moves`
+	end
+	return `Solved in {moves} moves: Blue {by[1]}, Orange {by[2]}`
+end
+
+-- The puzzle is solved for everybody; the winner named is the seat that put the last digit in, or 1 for a puzzle
+-- that was solved when it was dealt.
+local function check_solved(seat: number)
 	if filled == CELLS and bad == 0 then
 		finished = true
-		bse.status(`Solved in {moves} moves`)
-		bse.over({ winner = 1, reason = "solved" })
+		bse.status(solved_text())
+		bse.over({ winner = seat, reason = "solved" })
 	end
 end
 
@@ -612,8 +688,9 @@ function rules.new_game(options: { [string]: any })
 	if not unique then
 		bse.status("This puzzle has more than one solution", "warning")
 	end
+	-- Nobody is on turn, but a seat has to be named: it is the one a simulation without people plays.
 	bse.turn(1)
-	check_solved()
+	check_solved(1)
 end
 
 -- Why the digit may not be put in the cell, or nil when it may. Only the strict game refuses digits.
@@ -739,9 +816,9 @@ local function celebrate(origin: number, units: { number })
 	end
 end
 
--- Puts a digit in a cell or takes it out, as a move of the game.
-local function enter(i: number, digit: number)
-	apply(i, digit)
+-- Puts a digit of the seat in a cell or takes it out, as a move of the game.
+local function enter(seat: number, i: number, digit: number)
+	apply(seat, i, digit)
 	moves += 1
 	refresh_table()
 	if digit ~= 0 then
@@ -750,7 +827,7 @@ local function enter(i: number, digit: number)
 			celebrate(i, units)
 		end
 	end
-	check_solved()
+	check_solved(seat)
 end
 
 local function toggle_note(i: number, digit: number)
@@ -758,12 +835,13 @@ local function toggle_note(i: number, digit: number)
 	refresh_table()
 end
 
--- Chooses a key of the pad, or lets go of it when it is chosen. A digit that has been used up has no key to choose.
-local function choose(key: number): any
+-- Chooses a key of the pad for the seat, or lets go of it when the seat has it chosen. A digit that has been used up
+-- has no key to choose.
+local function choose(seat: number, key: number): any
 	if is_used_up(key) then
 		return bse.reject("DIGIT_USED", `all nine {key}s are already on the grid`, { digit = key })
 	end
-	selected = if key == selected then 0 else key
+	selected[seat] = if key == selected[seat] then 0 else key
 	refresh_table()
 	return nil
 end
@@ -776,23 +854,24 @@ local function why_fixed(i: number): any
 	return bse.reject("CELL_LOCKED", "that cell is in a row, a column or a box that is finished", { x = COLUMN[i], y = ROW[i] })
 end
 
--- A tap on a cell: what it does depends on what is chosen on the pad and on whether it is a note.
-local function tap_cell(i: number, as_note: boolean): any
+-- A tap of the seat on a cell: what it does depends on what the seat chose on the pad and on whether it is a note.
+local function tap_cell(seat: number, i: number, as_note: boolean): any
 	local x = COLUMN[i]
 	local y = ROW[i]
-	if selected == 0 then
+	local pick = selected[seat]
+	if pick == 0 then
 		if grid[i] == 0 then
 			return bse.reject("NOTHING_CHOSEN", "choose a digit on the pad first", { x = x, y = y })
 		end
-		return choose(grid[i])
+		return choose(seat, grid[i])
 	end
 
-	if selected == ERASER then
+	if pick == ERASER then
 		if given[i] or locked[i] then
 			return why_fixed(i)
 		end
 		if grid[i] ~= 0 and not as_note then
-			enter(i, 0)
+			enter(seat, i, 0)
 			return nil
 		end
 		if notes[i] == 0 then
@@ -807,29 +886,36 @@ local function tap_cell(i: number, as_note: boolean): any
 		if grid[i] ~= 0 then
 			return bse.reject("CELL_FILLED", "notes go in empty cells", { x = x, y = y })
 		end
-		toggle_note(i, selected)
+		toggle_note(i, pick)
 		return nil
 	end
 	if given[i] or locked[i] then
 		-- Such a cell can not be changed; a tap on it is a way to choose its digit.
-		if grid[i] == selected then
+		if grid[i] == pick then
 			return why_fixed(i)
 		end
-		return choose(grid[i])
+		return choose(seat, grid[i])
 	end
-	if grid[i] == selected then
-		enter(i, 0)
+	if grid[i] == pick then
+		-- The same digit again takes it out, unless it is the other seat's: that tap most likely crossed theirs.
+		if entered[i] ~= seat and entered[i] ~= 0 then
+			return bse.reject("NOT_YOURS", "the other player put that digit there: use the eraser to take it out", { x = x, y = y })
+		end
+		enter(seat, i, 0)
 		return nil
 	end
-	local conflict = conflict_of(i, selected)
+	local conflict = conflict_of(i, pick)
 	if conflict ~= nil then
 		return conflict
 	end
-	enter(i, selected)
+	enter(seat, i, pick)
 	return nil
 end
 
-function rules.command(_seat: number, cmd: { [string]: any }): any
+function rules.command(seat: number, cmd: { [string]: any }): any
+	if seat < 1 or seat > SEATS or seat ~= math.floor(seat) then
+		return bse.reject("BAD_SEAT", `there is no seat {seat}`, { seat = seat })
+	end
 	local action = cmd.action
 	if action ~= "place" and action ~= "clear" and action ~= "cycle" and action ~= "note" and action ~= "select" and action ~= "tap" then
 		return bse.reject("UNKNOWN_ACTION", "unknown action", { action = if type(action) == "string" then action else nil })
@@ -846,10 +932,10 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		if key < 0 or key > ERASER then
 			return bse.reject("BAD_DIGIT", "choose 1 to 9, 10 for the eraser or 0 for nothing", { digit = key })
 		end
-		if key == 0 and selected == 0 then
+		if key == 0 and selected[seat] == 0 then
 			return bse.reject("UNCHANGED", "nothing is chosen")
 		end
-		return choose(if key == 0 then selected else key)
+		return choose(seat, if key == 0 then selected[seat] else key)
 	end
 
 	if action == "tap" then
@@ -859,13 +945,13 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		end
 		local key = key_of_object[id]
 		if key ~= nil then
-			return choose(key)
+			return choose(seat, key)
 		end
 		local cell = cell_of_tile[id]
 		if cell == nil then
 			return bse.reject("NOT_A_CELL", "tap a cell of the grid or a key of the pad", { id = id })
 		end
-		return tap_cell(cell, cmd.hold == true or cmd.shift == true or cmd.button == 1)
+		return tap_cell(seat, cell, cmd.hold == true or cmd.shift == true or cmd.button == 1)
 	end
 
 	local x = cmd.x
@@ -924,13 +1010,13 @@ function rules.command(_seat: number, cmd: { [string]: any }): any
 		end
 	end
 
-	enter(i, digit)
+	enter(seat, i, digit)
 	return nil
 end
 
 function rules.legal_commands(seat: number): { any }
 	local list = {}
-	if finished or seat ~= 1 then
+	if finished or seat < 1 or seat > SEATS then
 		return list
 	end
 	for i = 1, CELLS do
@@ -951,7 +1037,7 @@ end
 -- A cell where the grid is not right yet gets the right digit. Where a wrong digit stands in the way of that, in
 -- strict mode or because all nine of the digit are on the grid already, the wrong digit is taken out first.
 function rules.random_command(seat: number): any
-	if finished or seat ~= 1 then
+	if finished or seat < 1 or seat > SEATS then
 		return nil
 	end
 	local moves_left: { any } = {}
@@ -987,6 +1073,11 @@ local function remaining_text(): string
 	return table.concat(counts)
 end
 
+-- Who put the digit in each cell, as 81 digits: 0 for a clue or an empty cell, else the seat.
+local function owners_text(): string
+	return table.concat(entered)
+end
+
 local function locked_count(): number
 	local count = 0
 	for i = 1, CELLS do
@@ -1011,7 +1102,9 @@ function rules.query(name: string, args: any): any
 			solved = finished,
 			board = table.concat(grid),
 			puzzle = puzzle_text(),
-			selected = selected,
+			selected = selected[1],
+			chosen = { selected[1], selected[2] },
+			owners = owners_text(),
 			remaining = remaining_text(),
 			locked = locked_count(),
 		}
@@ -1093,7 +1186,9 @@ function rules.snapshot(): any
 		tiles = table.clone(tiles),
 		keys = table.clone(keys),
 		notes = table.clone(notes),
-		selected = selected,
+		selected = selected[1],
+		chosen = table.clone(selected),
+		owners = owners_text(),
 		seed = seed_used,
 		unique = unique,
 		strict = strict,
@@ -1124,11 +1219,15 @@ function rules.restore(data: any)
 		refuse_snapshot("the grid does not match the size of the puzzle")
 	end
 
-	-- Everything is checked before anything is changed.
+	-- Everything is checked before anything is changed. A snapshot of a game of one has no owners: every digit the
+	-- player entered is the first seat's.
+	local owner_text = data.owners
+	local has_owners = type(owner_text) == "string" and #owner_text == CELLS
 	local new_grid: { number } = {}
 	local new_given: { boolean } = {}
 	local new_solution: { number } = {}
 	local new_ids: { number } = {}
+	local new_entered: { number } = {}
 	local new_clues = 0
 	for i = 1, CELLS do
 		local digit = string.byte(grid_text, i) - 48
@@ -1141,9 +1240,19 @@ function rules.restore(data: any)
 		if type(id) ~= "number" or (id ~= 0) ~= (digit ~= 0) or (locked == 1 and digit ~= answer) then
 			refuse_snapshot("the cells do not match the table")
 		end
+		local entry = digit ~= 0 and locked == 0
+		local who = 0
+		if has_owners then
+			who = string.byte(owner_text, i) - 48
+		elseif entry then
+			who = 1
+		end
+		if who < 0 or who > SEATS or (who ~= 0) ~= entry then
+			refuse_snapshot("the owners do not match the grid")
+		end
 		if id ~= 0 then
 			local object = bse.view.get(id)
-			if object == nil or object.kind ~= "digit" or object.x ~= COLUMN[i] or object.y ~= ROW[i] then
+			if object == nil or object.kind ~= "digit" or object.x ~= COLUMN[i] or object.y ~= ROW[i] or (object.owner or 0) ~= who then
 				refuse_snapshot("the cells do not match the table")
 			end
 		end
@@ -1151,6 +1260,7 @@ function rules.restore(data: any)
 		new_given[i] = locked == 1
 		new_solution[i] = answer
 		new_ids[i] = id
+		new_entered[i] = who
 		if locked == 1 then
 			new_clues += 1
 		end
@@ -1159,7 +1269,6 @@ function rules.restore(data: any)
 	local tile_list = data.tiles
 	local key_list = data.keys
 	local note_list = data.notes
-	local chosen = data.selected
 	if
 		type(tile_list) ~= "table"
 		or #tile_list ~= CELLS
@@ -1167,11 +1276,29 @@ function rules.restore(data: any)
 		or #key_list ~= KEYS
 		or type(note_list) ~= "table"
 		or #note_list ~= CELLS
-		or not is_integer(chosen)
-		or chosen < 0
-		or chosen > ERASER
 	then
 		refuse_snapshot("the pad and the notes do not match the puzzle")
+	end
+	-- What each seat chose; a snapshot of a game of one only has what the first seat chose.
+	local new_selected: { number } = { 0, 0 }
+	local chosen = data.chosen
+	if type(chosen) == "table" then
+		if #chosen ~= SEATS then
+			refuse_snapshot("the pad does not match the seats")
+		end
+		for seat = 1, SEATS do
+			local pick = chosen[seat]
+			if not is_integer(pick) or pick < 0 or pick > ERASER then
+				refuse_snapshot("the pad does not match the puzzle")
+			end
+			new_selected[seat] = pick
+		end
+	else
+		local pick = data.selected
+		if not is_integer(pick) or pick < 0 or pick > ERASER then
+			refuse_snapshot("the pad does not match the puzzle")
+		end
+		new_selected[1] = pick
 	end
 	local new_cell_of_tile: { [number]: number } = {}
 	local new_key_of_object: { [number]: number } = {}
@@ -1202,12 +1329,15 @@ function rules.restore(data: any)
 	notes = table.clone(note_list)
 	cell_of_tile = new_cell_of_tile
 	key_of_object = new_key_of_object
-	selected = chosen
+	entered = new_entered
+	selected = new_selected
 	clues = new_clues
 	recount()
 	-- A digit that has been used up has no key to be chosen on.
-	if is_used_up(selected) then
-		selected = 0
+	for seat = 1, SEATS do
+		if is_used_up(selected[seat]) then
+			selected[seat] = 0
+		end
 	end
 	remember_looks()
 	moves = clamp_integer(data.moves, 0, 0, 1000000)

@@ -87,11 +87,67 @@ return rules";
             return JsonValue.NewObject().Set("action", "place_stone").Set("x", x).Set("y", y);
         }
 
+        // The classic sudoku puzzle and its solution, 81 digits each (0 is an empty cell).
+        private const string SudokuPuzzle = "530070000600195000098000060800060003400803001700020006060000280000419005000080079";
+        private const string SudokuSolved = "534678912672195348198342567859761423426853791713924856961537284287419635345286179";
+
+        private static JsonValue PutDigit(int x, int y, int digit)
+        {
+            return JsonValue.NewObject().Set("action", "place").Set("x", x).Set("y", y).Set("digit", digit);
+        }
+
+        private static JsonValue Choose(int digit)
+        {
+            return JsonValue.NewObject().Set("action", "select").Set("digit", digit);
+        }
+
+        private static ViewObject DigitAt(ViewModel view, int x, int y)
+        {
+            foreach (ViewObject o in view.Objects)
+            {
+                if (o.Kind == "digit" && (int)o.X == x && (int)o.Y == y)
+                    return o;
+            }
+            return null;
+        }
+
+        private static string KeyColor(ViewModel view, string label)
+        {
+            foreach (ViewObject o in view.Objects)
+            {
+                if (o.Kind == "key" && o.Props["label"].AsString() == label)
+                    return o.Props["color"].AsString();
+            }
+            return null;
+        }
+
+        private static string Owners(GameHost host)
+        {
+            return host.Session.Query("state")["owners"].AsString();
+        }
+
+        private static string Table(ViewModel view)
+        {
+            JsonValue all = JsonValue.NewArray();
+            foreach (ViewEvent e in view.Synthesize())
+                all.Add(e.Raw);
+            return all.ToJson();
+        }
+
+        // A game of the given manifest block, played by one or two seats, whose rules do nothing.
+        private static ModPackage Custom(string multiplayer)
+        {
+            string manifest = "{\"id\":\"free\",\"name\":\"Free\",\"api\":1,\"entry\":\"main.luau\",\"players\":{\"min\":1,\"max\":2}," +
+                              "\"multiplayer\":" + multiplayer + "}";
+            return new ModPackage(manifest, new Dictionary<string, string> { { "main.luau", "local rules = {} function rules.new_game() bse.turn(1) end function rules.command() end return rules" } });
+        }
+
         [Test]
         public void TheManifestSaysHowAGameIsShared()
         {
             ModManifest gomoku = TestSupport.LoadGomoku().Manifest;
             Assert.IsFalse(gomoku.SplitScreen);
+            Assert.IsFalse(gomoku.Cooperative);
             Assert.AreEqual(2, gomoku.RoomPlayers);
             Assert.AreEqual("", gomoku.SeedOption);
             ModManifest race = Race().Manifest;
@@ -198,6 +254,176 @@ return rules";
                 Assert.IsTrue(guest.IsClosed);
                 Assert.IsTrue(room.IsClosed);
                 StringAssert.Contains("host", guest.ClosedReason);
+            }
+        }
+
+        [Test]
+        public void TheManifestSaysWhetherTheSeatsPlayTogether()
+        {
+            Assert.IsTrue(Custom("{\"cooperative\":true}").Manifest.Cooperative);
+            Assert.IsFalse(Custom("{\"cooperative\":false}").Manifest.Cooperative);
+            Assert.IsFalse(Custom("{}").Manifest.Cooperative);
+            Assert.IsFalse(Custom("{\"cooperative\":\"yes\"}").Manifest.Cooperative);
+
+            // Every player of a split game has a table of their own, so there is nothing to play together.
+            ModManifest split = Custom("{\"mode\":\"split\",\"cooperative\":true}").Manifest;
+            Assert.IsTrue(split.SplitScreen);
+            Assert.IsFalse(split.Cooperative);
+
+            ModManifest sudoku = TestSupport.LoadMod("sudoku").Manifest;
+            Assert.IsTrue(sudoku.Cooperative);
+            Assert.AreEqual(2, sudoku.RoomPlayers);
+        }
+
+        [Test]
+        public void ACooperativeGameIsPlayedByBothSeatsAtOnce()
+        {
+            using (GameHost host = Host())
+            {
+                Assert.IsTrue(host.SelectMod("sudoku"));
+                host.SetOption("puzzle", JsonValue.Of(SudokuPuzzle));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"));
+                Assert.IsTrue(host.StartNewGame());
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                NetClientRoom cy = new NetClientRoom(host.Mod, network.Join("Cy"));
+                Pump(room, bob, cy);
+
+                Assert.AreEqual(1, room.LocalPlayer.Seat);
+                Assert.AreEqual(2, bob.LocalPlayer.Seat);
+                Assert.AreEqual(0, cy.LocalPlayer.Seat);
+                Assert.AreEqual(1, host.Session.View.Turn, "the game names a seat, but nobody waits for it");
+
+                // Both seats may act, and the one who watches may not.
+                Assert.IsTrue(room.CanAct);
+                Assert.AreEqual(1, room.ActingSeat);
+                Assert.IsTrue(bob.CanAct);
+                Assert.AreEqual(2, bob.ActingSeat);
+                Assert.IsFalse(cy.CanAct);
+                Assert.AreEqual(0, cy.ActingSeat);
+
+                // The second seat goes first and twice in a row; the host plays in between.
+                bob.Submit(PutDigit(3, 1, 4));
+                bob.Submit(PutDigit(4, 1, 6));
+                Pump(room, bob, cy);
+                room.Submit(PutDigit(7, 1, 9));
+                bob.Submit(PutDigit(8, 1, 1));
+                Pump(room, bob, cy);
+                Assert.AreEqual("002200120", Owners(host).Substring(0, 9));
+                Assert.AreEqual(2, DigitAt(host.Session.View, 3, 1).Owner);
+                Assert.AreEqual(1, DigitAt(host.Session.View, 7, 1).Owner);
+
+                // A watcher can not act, and a command that it sends anyway is turned down by the host with a note.
+                cy.Submit(PutDigit(9, 1, 2));
+                INetTransport eve = network.Join("Eve");
+                Func<string, bool> send = text => eve.Send(eve.HostId, System.Text.Encoding.UTF8.GetBytes(text));
+                send("{\"t\":\"hello\",\"proto\":1,\"mod\":\"sudoku\",\"hash\":\"" + host.Mod.ContentHash + "\",\"name\":\"Eve\"}");
+                Pump(room, bob, cy);
+                Assert.AreEqual(0, room.Players[3].Seat);
+                send("{\"t\":\"cmd\",\"command\":{\"action\":\"place\",\"x\":9,\"y\":1,\"digit\":2}}");
+                Pump(room, bob, cy);
+                bool told = false;
+                while (eve.Poll(out NetEvent reply))
+                    told |= reply.Kind == NetEventKind.Data && System.Text.Encoding.UTF8.GetString(reply.Data).Contains("watching this game");
+                Assert.IsTrue(told);
+                Assert.AreEqual('0', host.Session.Query("state")["board"].AsString()[8]);
+
+                // Everybody sees the same table, and each seat's choice on the pad is shown in its color.
+                room.Submit(Choose(5));
+                bob.Submit(Choose(7));
+                Pump(room, bob, cy);
+                Assert.AreEqual("[5,7]", host.Session.Query("state")["chosen"].ToJson());
+                string table = Table(host.Session.View);
+                Assert.AreEqual(table, Table(bob.LocalBoard.Queue.Display));
+                Assert.AreEqual(table, Table(cy.LocalBoard.Queue.Display));
+                Assert.AreEqual("#4d8fe6", KeyColor(cy.LocalBoard.Queue.Display, "5"));
+                Assert.AreEqual("#e68a2e", KeyColor(cy.LocalBoard.Queue.Display, "7"));
+
+                // The host's undo takes back the last move of whoever made it.
+                Assert.IsTrue(host.Undo(2));
+                Pump(room, bob, cy);
+                Assert.AreEqual("[0,0]", host.Session.Query("state")["chosen"].ToJson());
+                Assert.AreEqual(Table(host.Session.View), Table(bob.LocalBoard.Queue.Display));
+
+                // A late guest takes a free seat and plays on at once.
+                bob.Dispose();
+                Pump(room, cy);
+                Assert.AreEqual(2, cy.LocalPlayer.Seat);
+                Assert.IsTrue(cy.CanAct);
+                cy.Submit(PutDigit(9, 1, 2));
+                Pump(room, cy);
+                Assert.AreEqual("002200122", Owners(host).Substring(0, 9));
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void TheGameIsOverForBothSeatsOnceThePuzzleIsSolved()
+        {
+            using (GameHost host = Host())
+            {
+                Assert.IsTrue(host.SelectMod("sudoku"));
+                host.SetOption("puzzle", JsonValue.Of(SudokuPuzzle));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"));
+                Assert.IsTrue(host.StartNewGame());
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                Pump(room, bob);
+
+                int k = 0;
+                for (int i = 0; i < 81; i++)
+                {
+                    if (SudokuPuzzle[i] != '0')
+                        continue;
+                    JsonValue move = PutDigit(i % 9 + 1, i / 9 + 1, SudokuSolved[i] - '0');
+                    if (k++ % 2 == 0)
+                        room.Submit(move);
+                    else
+                        bob.Submit(move);
+                    Pump(room, bob);
+                }
+                Assert.IsTrue(host.Session.View.IsOver);
+                Assert.IsTrue(bob.LocalBoard.Queue.Display.IsOver);
+                Assert.IsFalse(room.CanAct);
+                Assert.IsFalse(bob.CanAct);
+                Assert.AreEqual(0, room.ActingSeat);
+                Assert.AreEqual(0, bob.ActingSeat);
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void ACooperativeSeatThatTheComputerPlaysIsLeftToTheComputer()
+        {
+            using (GameHost host = Host())
+            {
+                Assert.IsTrue(host.SelectMod("sudoku"));
+                host.SetOption("puzzle", JsonValue.Of(SudokuPuzzle));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"));
+                Assert.IsTrue(host.StartNewGame());
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                Pump(room, bob);
+
+                // The host hands its own seat to the computer: it does not play it any more, the guest does.
+                Assert.IsTrue(host.SetSeatMode(1, SeatMode.Random));
+                Assert.IsFalse(room.CanAct);
+                Assert.AreEqual(0, room.ActingSeat);
+                room.Submit(PutDigit(3, 1, 4));
+                Assert.AreEqual('0', host.Session.Query("state")["board"].AsString()[2]);
+                Assert.IsTrue(bob.CanAct);
+                bob.Submit(PutDigit(3, 1, 4));
+                Pump(room, bob);
+                Assert.AreEqual('4', host.Session.Query("state")["board"].AsString()[2]);
+
+                // And the other way round: a guest in a seat that the computer plays is not heard.
+                Assert.IsTrue(host.SetSeatMode(1, SeatMode.Human));
+                Assert.IsTrue(host.SetSeatMode(2, SeatMode.Random));
+                bob.Submit(PutDigit(4, 1, 6));
+                Pump(room, bob);
+                Assert.AreEqual('0', host.Session.Query("state")["board"].AsString()[3]);
+                Assert.IsTrue(room.CanAct);
+                room.Dispose();
             }
         }
 

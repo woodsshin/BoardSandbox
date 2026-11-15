@@ -373,6 +373,130 @@ namespace BoardSandbox.Tests
             }
         }
 
+        // The first empty cell of the sudoku on the table and the digit that belongs there.
+        private static JsonValue RightDigit(GameHost host)
+        {
+            string board = host.Session.Query("state")["board"].AsString();
+            string solution = host.Session.Query("solution").AsString();
+            for (int i = 0; i < 81; i++)
+            {
+                if (board[i] == '0')
+                    return JsonValue.NewObject().Set("action", "place").Set("x", i % 9 + 1).Set("y", i / 9 + 1).Set("digit", solution[i] - '0');
+            }
+            return null;
+        }
+
+        private static string Owners(GameHost host)
+        {
+            return host.Session.Query("state")["owners"].AsString();
+        }
+
+        private static int Entries(string owners, char seat)
+        {
+            int count = 0;
+            foreach (char c in owners)
+                count += c == seat ? 1 : 0;
+            return count;
+        }
+
+        [Test]
+        public void InACooperativeGamePeopleAndTheComputerPlayAtTheSameTime()
+        {
+            using (GameHost host = NewHost())
+            {
+                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.StartNewGame());
+                Assert.IsTrue(host.Mod.Manifest.Cooperative);
+                Assert.AreEqual(1, host.LocalSeat);
+                Assert.IsTrue(host.AcceptsHumanInput);
+
+                // The computer takes the second seat and plays when its delay is up; the first seat stays a person's.
+                Assert.IsTrue(host.SetSeatMode(2, SeatMode.Random));
+                Assert.IsTrue(host.AcceptsHumanInput);
+                Assert.AreEqual(1, host.LocalSeat);
+                Assert.IsFalse(host.Update());
+                _time = 0.4;
+                Assert.IsFalse(host.Update());
+                Assert.AreEqual(0, Entries(Owners(host), '2'));
+                _time = 0.6;
+                Assert.IsTrue(host.Update());
+                Assert.AreEqual(1, Entries(Owners(host), '2'));
+
+                // The person plays on without waiting for the computer, and the computer goes on without waiting for them.
+                Assert.IsTrue(host.Submit(1, RightDigit(host)).IsAccepted);
+                Assert.IsTrue(host.Submit(1, RightDigit(host)).IsAccepted);
+                Assert.AreEqual(2, Entries(Owners(host), '1'));
+                Assert.IsFalse(host.Update());
+                _time = 1.8;
+                Assert.IsTrue(host.Update());
+                Assert.AreEqual(2, Entries(Owners(host), '2'));
+
+                // Whoever the computer plays, the person plays the other seat.
+                Assert.IsTrue(host.SetSeatMode(2, SeatMode.Human));
+                Assert.IsTrue(host.SetSeatMode(1, SeatMode.Random));
+                Assert.AreEqual(2, host.LocalSeat);
+                Assert.IsTrue(host.AcceptsHumanInput);
+                Assert.IsTrue(host.Submit(host.LocalSeat, RightDigit(host)).IsAccepted);
+                Assert.AreEqual(3, Entries(Owners(host), '2'), "the computer's two and the person's one");
+            }
+        }
+
+        [Test]
+        public void TwoComputerSeatsTakeTurnsAndNobodyIsLeftToTheirPlayer()
+        {
+            using (GameHost host = NewHost())
+            {
+                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.StartNewGame());
+                Assert.IsTrue(host.SetSeatMode(1, SeatMode.Random));
+                Assert.IsTrue(host.SetSeatMode(2, SeatMode.Random));
+                Assert.AreEqual(0, host.LocalSeat);
+                Assert.IsFalse(host.AcceptsHumanInput);
+
+                host.Update();
+                List<string> sequence = new List<string>();
+                for (int i = 1; i <= 4; i++)
+                {
+                    string before = Owners(host);
+                    _time = i;
+                    Assert.IsTrue(host.Update(), "move " + i);
+                    string after = Owners(host);
+                    for (int cell = 0; cell < 81; cell++)
+                    {
+                        if (before[cell] != after[cell])
+                            sequence.Add(after[cell].ToString());
+                    }
+                    host.Update();
+                }
+                Assert.AreEqual("1,2,1,2", string.Join(",", sequence));
+
+                // Once the computer is out of a seat there is nothing for it to play.
+                Assert.IsTrue(host.SetSeatMode(1, SeatMode.Human));
+                Assert.IsTrue(host.SetSeatMode(2, SeatMode.Human));
+                _time = 10;
+                Assert.IsFalse(host.Update());
+                Assert.AreEqual(1, host.LocalSeat);
+            }
+        }
+
+        [Test]
+        public void ACooperativeGameStopsAcceptingInputWhenItIsOver()
+        {
+            using (GameHost host = NewHost())
+            {
+                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.StartNewGame());
+                JsonValue move;
+                while ((move = RightDigit(host)) != null)
+                    Assert.IsTrue(host.Submit(1, move).IsAccepted);
+                Assert.IsTrue(host.Session.View.IsOver);
+                Assert.IsFalse(host.AcceptsHumanInput);
+                Assert.IsTrue(host.SetSeatMode(2, SeatMode.Random));
+                _time = 5;
+                Assert.IsFalse(host.Update());
+            }
+        }
+
         [Test]
         public void TheComputerMovesAreMarkedAsComputerInput()
         {
