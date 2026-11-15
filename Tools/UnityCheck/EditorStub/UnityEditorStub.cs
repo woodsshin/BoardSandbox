@@ -7,7 +7,26 @@ namespace UnityEditor
 {
     public enum BuildTarget
     {
+        Android = 13,
         StandaloneWindows64 = 19
+    }
+
+    [Flags]
+    public enum AndroidArchitecture : uint
+    {
+        None = 0,
+        ARMv7 = 1,
+        ARM64 = 2,
+        X86_64 = 8,
+        All = 4294967295
+    }
+
+    public static class PlayerSettings
+    {
+        public static class Android
+        {
+            public static AndroidArchitecture targetArchitectures { get; set; }
+        }
     }
 
     [AttributeUsage(AttributeTargets.Method)]
@@ -40,6 +59,11 @@ namespace UnityEditor
 
     public class AssetImporter
     {
+        public string assetPath
+        {
+            get { return null; }
+        }
+
         public static AssetImporter GetAtPath(string path)
         {
             return null;
@@ -52,6 +76,11 @@ namespace UnityEditor
 
     public sealed class PluginImporter : AssetImporter
     {
+        public static PluginImporter[] GetImporters(BuildTarget platform)
+        {
+            return null;
+        }
+
         public void SetCompatibleWithAnyPlatform(bool enable)
         {
         }
@@ -120,6 +149,49 @@ namespace UnityEditor
     public static class EditorBuildSettings
     {
         public static EditorBuildSettingsScene[] scenes { get; set; }
+    }
+}
+
+namespace UnityEditor.Build
+{
+    public interface IOrderedCallback
+    {
+        int callbackOrder { get; }
+    }
+
+    public interface IPreprocessBuildWithReport : IOrderedCallback
+    {
+        void OnPreprocessBuild(UnityEditor.Build.Reporting.BuildReport report);
+    }
+
+    public class BuildFailedException : Exception
+    {
+        public BuildFailedException(string message) : base(message)
+        {
+        }
+
+        public BuildFailedException(Exception innerException) : base(innerException.Message, innerException)
+        {
+        }
+    }
+}
+
+namespace UnityEditor.Build.Reporting
+{
+    public struct BuildSummary
+    {
+        public BuildTarget platform
+        {
+            get { return default; }
+        }
+    }
+
+    public class BuildReport
+    {
+        public BuildSummary summary
+        {
+            get { return default; }
+        }
     }
 }
 
