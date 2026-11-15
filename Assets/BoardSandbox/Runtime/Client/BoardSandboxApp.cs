@@ -30,13 +30,17 @@ namespace BoardSandbox.Client
         private const float GestureThreshold = 18f;
         private const double ComputerDelaySeconds = 0.45;
 
-        // The game that opens with the app: the cube, so that the first thing on screen is a game and not an empty
-        // table. An empty Initial Mod leaves the choice to the player, see ModCatalog.FindStartup.
+        // The game that sits on the table when the app opens: the cube, so that behind the list of games there is a game
+        // and not an empty table. An empty Initial Mod leaves the choice to the player, see ModCatalog.FindStartup.
         private const string DefaultGame = "cubic3";
 
         [SerializeField] private string initialMod = DefaultGame;
         [SerializeField] private string[] extraModFolders = new string[0];
         [SerializeField] private bool startGame = true;
+
+        // Opens the list of games over the first game, so that the player starts by choosing one. With no game on the
+        // table the list opens whatever this says.
+        [SerializeField] private bool openGameList = true;
 
         // 0 follows the height of the screen.
         [SerializeField] private float uiScale = 0f;
@@ -185,7 +189,7 @@ namespace BoardSandbox.Client
                 else
                     _host.SelectMod(first.Mod);
             }
-            if (_host.Session == null)
+            if (_host.Session == null || openGameList)
                 _hud.OpenLibrary();
         }
 

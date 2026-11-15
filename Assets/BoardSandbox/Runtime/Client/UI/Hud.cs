@@ -111,15 +111,13 @@ namespace BoardSandbox.Client.UI
                 _agents.Close();
         }
 
-        // Leaves the room the local player is in. A guest has no game of their own on the table to come back to, so
-        // they land in the list of games, as when the host closes the room. A host keeps playing the game they have.
-        // Call it between two frames, not from inside OnGUI.
+        // Leaves the room the local player is in, a guest leaving the room of somebody else or a host closing their own.
+        // Either way the game of the room is over for them, so the list of games opens, as it does for a guest when the
+        // host closes the room. Call it between two frames, not from inside OnGUI.
         private void LeaveRoom()
         {
-            bool guest = GuestRoom != null;
             _multiplayer.Leave();
-            if (guest)
-                OpenLibrary();
+            OpenLibrary();
         }
 
         // True while a text field has the keyboard, so that shortcuts leave the typed characters alone.
