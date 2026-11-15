@@ -1,7 +1,7 @@
 --!strict
--- The model of a 3x3 face-turning cube puzzle. It knows nothing about the platform: where every sticker sits,
--- what the eighteen face moves do to them and to the 26 little cubes, how the cube unfolds into a net of text,
--- scrambles and the solved test.
+-- The model of a 3x3 cube puzzle. It knows nothing about the platform: where every sticker sits, what the eighteen
+-- face moves and the nine moves of the middle layers do to them and to the 26 little cubes, how the cube unfolds
+-- into a net of text, scrambles and the solved test.
 --
 -- Stickers are numbered like in the usual facelet notation: faces U R F D L B, nine stickers each, read row by row
 -- as the face looks from outside in the unfolded net below. A "slot" is one of the 54 places of a sticker.
@@ -11,15 +11,21 @@
 --           D
 
 export type Move = {
-	face: number, -- 1..6, an index into Cube.FACES
+	face: number, -- 1..6, an index into Cube.FACES; 7..9 for the slices M, E and S (an index into Cube.SLICES plus 6)
 	turns: number, -- 1 = clockwise, 2 = half turn, 3 = counter-clockwise
 	name: string, -- "R", "R2" or "R'"
+	axis: { number }, -- the direction that a clockwise turn is seen from: where the face looks, for a slice the face it follows
+	layer: number, -- the layer that turns: 1 = the outer one that the axis points at (a face), 0 = the middle one (a slice)
 	perm: { number }, -- the sticker in slot i moves to slot perm[i]
 }
 
 local Cube = {}
 
 Cube.FACES = { "U", "R", "F", "D", "L", "B" }
+
+-- The middle layers: M lies between L and R, E between U and D and S between F and B. As in the usual notation each
+-- one turns like the face that it follows: M like L, E like D and S like F.
+Cube.SLICES = { "M", "E", "S" }
 Cube.SLOTS = 54
 
 -- The size of the unfolded net. Every face is a block of 3x3 points; the blocks are one point apart.
@@ -36,7 +42,9 @@ local COLORS = {
 	{ name = "slate", letter = "K", hex = "#2d3347" },
 }
 
-local FACE_INDEX: { [string]: number } = { U = 1, R = 2, F = 3, D = 4, L = 5, B = 6 }
+-- A turn is numbered like a face, 1..6 in the order of Cube.FACES, and 7..9 for the slices M, E and S.
+local TURN_INDEX: { [string]: number } = { U = 1, R = 2, F = 3, D = 4, L = 5, B = 6, M = 7, E = 8, S = 9 }
+local TURN_NAMES = { "U", "R", "F", "D", "L", "B", "M", "E", "S" }
 local OPPOSITE = { 4, 5, 6, 1, 2, 3 }
 
 -- x points right, y up and z towards the viewer. For every face: the direction it looks to, and the directions in
@@ -44,6 +52,11 @@ local OPPOSITE = { 4, 5, 6, 1, 2, 3 }
 local NORMALS = { { 0, 1, 0 }, { 1, 0, 0 }, { 0, 0, 1 }, { 0, -1, 0 }, { -1, 0, 0 }, { 0, 0, -1 } }
 local RIGHTS = { { 1, 0, 0 }, { 0, 0, -1 }, { 1, 0, 0 }, { 1, 0, 0 }, { 0, 0, 1 }, { -1, 0, 0 } }
 local DOWNS = { { 0, 0, 1 }, { 0, -1, 0 }, { 0, -1, 0 }, { 0, 0, -1 }, { 0, -1, 0 }, { 0, -1, 0 } }
+
+-- For every turn: the axis a clockwise turn is seen from and the layer along that axis that turns, the outer one at
+-- the tip of the axis for a face and the middle one for a slice. M follows L, E follows D and S follows F.
+local AXES = { NORMALS[1], NORMALS[2], NORMALS[3], NORMALS[4], NORMALS[5], NORMALS[6], NORMALS[5], NORMALS[4], NORMALS[3] }
+local LAYERS = { 1, 1, 1, 1, 1, 1, 0, 0, 0 }
 
 -- Column and row of the top left sticker of every face in the net.
 local ORIGIN_X = { 5, 9, 5, 5, 1, 13 }
@@ -84,14 +97,15 @@ local function quarter_clockwise(axis: { number }, v: { number }): { number }
 	return { axis[1] * along - cx, axis[2] * along - cy, axis[3] * along - cz }
 end
 
--- The outer layer of a face turns: every sticker on a little cube of that layer lands on another slot.
-local function quarter_permutation(face: number): { number }
-	local axis = NORMALS[face]
+-- A layer turns clockwise: every sticker on a little cube of that layer lands on another slot.
+local function quarter_permutation(turn: number): { number }
+	local axis = AXES[turn]
+	local layer = LAYERS[turn]
 	local perm: { number } = {}
 	for slot = 1, Cube.SLOTS do
 		local p = slot_position[slot]
 		local n = slot_normal[slot]
-		if p[1] * axis[1] + p[2] * axis[2] + p[3] * axis[3] == 1 then
+		if p[1] * axis[1] + p[2] * axis[2] + p[3] * axis[3] == layer then
 			p = quarter_clockwise(axis, p)
 			n = quarter_clockwise(axis, n)
 		end
@@ -111,34 +125,41 @@ end
 
 local MOVES: { Move } = {}
 
-for face = 1, 6 do
-	local quarter = quarter_permutation(face)
+for turn = 1, 9 do
+	local quarter = quarter_permutation(turn)
 	local half = compose(quarter, quarter)
 	local counter = compose(half, quarter)
-	local letter = Cube.FACES[face]
-	MOVES[(face - 1) * 3 + 1] = { face = face, turns = 1, name = letter, perm = quarter }
-	MOVES[(face - 1) * 3 + 2] = { face = face, turns = 2, name = letter .. "2", perm = half }
-	MOVES[(face - 1) * 3 + 3] = { face = face, turns = 3, name = letter .. "'", perm = counter }
+	local letter = TURN_NAMES[turn]
+	local axis, layer = AXES[turn], LAYERS[turn]
+	MOVES[(turn - 1) * 3 + 1] = { face = turn, turns = 1, name = letter, axis = axis, layer = layer, perm = quarter }
+	MOVES[(turn - 1) * 3 + 2] = { face = turn, turns = 2, name = letter .. "2", axis = axis, layer = layer, perm = half }
+	MOVES[(turn - 1) * 3 + 3] = { face = turn, turns = 3, name = letter .. "'", axis = axis, layer = layer, perm = counter }
 end
 
 local SUFFIX_TURNS: { [string]: number } = { [""] = 1, ["'"] = 3, ["2"] = 2, ["2'"] = 2, ["'2"] = 2 }
 
--- The eighteen moves, face by face: clockwise, half turn, counter-clockwise.
+-- The 27 moves: the six faces and then the slices M, E and S, each one clockwise, half turn, counter-clockwise.
 function Cube.all_moves(): { Move }
 	return MOVES
 end
 
+-- A move of a face (1..6, an index into Cube.FACES) or of a slice (7..9).
 function Cube.move(face: number, turns: number): Move
 	return MOVES[(face - 1) * 3 + turns]
+end
+
+-- The middle layer that is square to an axis (1 = x, 2 = y, 3 = z): M, E or S.
+function Cube.slice(axis: number, turns: number): Move
+	return MOVES[(6 + axis - 1) * 3 + turns]
 end
 
 function Cube.inverse(move: Move): Move
 	return MOVES[(move.face - 1) * 3 + 4 - move.turns]
 end
 
--- "R", "R'", "R2" (and "R2'"); nil for anything else.
+-- "R", "R'", "R2" (and "R2'") for a face or a middle layer (M, E, S); nil for anything else.
 function Cube.parse(token: string): Move?
-	local letter, suffix = string.match(token, "^([URFDLB])([2']*)$")
+	local letter, suffix = string.match(token, "^([URFDLBMES])([2']*)$")
 	if letter == nil or suffix == nil then
 		return nil
 	end
@@ -146,7 +167,7 @@ function Cube.parse(token: string): Move?
 	if turns == nil then
 		return nil
 	end
-	return MOVES[(FACE_INDEX[letter] - 1) * 3 + turns]
+	return MOVES[(TURN_INDEX[letter] - 1) * 3 + turns]
 end
 
 -- Moves separated by blanks or commas. When a token is not a move, the result is nil and the token.
@@ -311,11 +332,11 @@ local function apply(m: { number }, v: { number }): { number }
 end
 
 local QUARTERS: { { number } } = {}
-for face = 1, 6 do
-	local x = quarter_clockwise(NORMALS[face], { 1, 0, 0 })
-	local y = quarter_clockwise(NORMALS[face], { 0, 1, 0 })
-	local z = quarter_clockwise(NORMALS[face], { 0, 0, 1 })
-	QUARTERS[face] = { x[1], y[1], z[1], x[2], y[2], z[2], x[3], y[3], z[3] }
+for turn = 1, 9 do
+	local x = quarter_clockwise(AXES[turn], { 1, 0, 0 })
+	local y = quarter_clockwise(AXES[turn], { 0, 1, 0 })
+	local z = quarter_clockwise(AXES[turn], { 0, 0, 1 })
+	QUARTERS[turn] = { x[1], y[1], z[1], x[2], y[2], z[2], x[3], y[3], z[3] }
 end
 
 -- The direction a face looks to.
@@ -357,12 +378,13 @@ end
 
 -- Turns the cubies of a layer; the result lists which entries of the list moved.
 function Cube.turn_cubies(cubies: { Cubie }, move: Move): { number }
-	local axis = NORMALS[move.face]
+	local axis = move.axis
+	local layer = move.layer
 	local quarter = QUARTERS[move.face]
 	local moved: { number } = {}
 	for index, cubie in cubies do
 		local p = cubie.pos
-		if p[1] * axis[1] + p[2] * axis[2] + p[3] * axis[3] == 1 then
+		if p[1] * axis[1] + p[2] * axis[2] + p[3] * axis[3] == layer then
 			moved[#moved + 1] = index
 			for _ = 1, move.turns do
 				cubie.pos = apply(quarter, cubie.pos)

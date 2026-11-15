@@ -84,7 +84,7 @@ local function perform(sequence: { Move })
 				t = "fx",
 				kind = "rotate",
 				ids = turning,
-				axis = Cube.normal(move.face),
+				axis = move.axis,
 				pivot = { 0, 0, 0 },
 				degrees = if move.turns == 3 then 90 else -90 * move.turns,
 				seconds = if move.turns == 2 then HALF_SECONDS else QUARTER_SECONDS,
@@ -112,8 +112,19 @@ local function clicked_cubie(cmd: { [string]: any }): (Cubie?, number?)
 	return cubies[index], Cube.face_of(cmd.normal)
 end
 
--- A drag along a sticker turns the layer that the sticker would move in. The layer turns around the axis that is
--- square to both the sticker and the drag.
+-- The turn that takes the layer of a cubie along an axis (1 = x, 2 = y, 3 = z) clockwise: the turn of the face on
+-- that side for an outer layer, M, E or S for the middle one.
+local function clockwise_turn(axis: number, layer: number): Move
+	if layer == 0 then
+		return Cube.slice(axis, 1)
+	end
+	local outward = { 0, 0, 0 }
+	outward[axis] = layer
+	return Cube.move(Cube.face_of(outward) :: number, 1)
+end
+
+-- A drag along a sticker turns the layer that the sticker would move in, the middle layer as well as the outer ones.
+-- The layer turns around the axis that is square to both the sticker and the drag.
 local function move_for_drag(cubie: Cubie, face: number, drag: any): (Move?, string?)
 	if type(drag) ~= "table" then
 		return nil, "drag must be a direction"
@@ -135,19 +146,14 @@ local function move_for_drag(cubie: Cubie, face: number, drag: any): (Move?, str
 	if math.abs(cross[axis]) < 0.5 then
 		return nil, "the drag has no clear direction"
 	end
-	local layer = cubie.pos[axis]
-	if layer == 0 then
-		return nil, "only the outer layers turn"
-	end
-	local outward = { 0, 0, 0 }
-	outward[axis] = layer
-	local turned = Cube.face_of(outward) :: number
+	local clockwise = clockwise_turn(axis, cubie.pos[axis])
 	-- Where the sticker goes when the layer turns clockwise, compared with where the drag goes.
+	local around = clockwise.axis
 	local p = { cubie.pos[1] + n[1] * 0.5, cubie.pos[2] + n[2] * 0.5, cubie.pos[3] + n[3] * 0.5 }
-	local a = { -outward[1], -outward[2], -outward[3] }
+	local a = { -around[1], -around[2], -around[3] }
 	local v = { a[2] * p[3] - a[3] * p[2], a[3] * p[1] - a[1] * p[3], a[1] * p[2] - a[2] * p[1] }
 	local along = v[1] * d[1] + v[2] * d[2] + v[3] * d[3]
-	return Cube.move(turned, if along >= 0 then 1 else 3), nil
+	return (if along >= 0 then clockwise else Cube.inverse(clockwise)), nil
 end
 
 function rules.new_game(options: { [string]: any })

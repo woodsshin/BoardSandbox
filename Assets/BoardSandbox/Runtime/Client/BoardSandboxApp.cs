@@ -30,7 +30,11 @@ namespace BoardSandbox.Client
         private const float GestureThreshold = 18f;
         private const double ComputerDelaySeconds = 0.45;
 
-        [SerializeField] private string initialMod = "";
+        // The game that opens with the app: the cube, so that the first thing on screen is a game and not an empty
+        // table. An empty Initial Mod leaves the choice to the player, see ModCatalog.FindStartup.
+        private const string DefaultGame = "cubic3";
+
+        [SerializeField] private string initialMod = DefaultGame;
         [SerializeField] private string[] extraModFolders = new string[0];
         [SerializeField] private bool startGame = true;
 
