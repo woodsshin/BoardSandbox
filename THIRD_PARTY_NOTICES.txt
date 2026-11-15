@@ -1,7 +1,8 @@
 Third-party software in the native library
 ==========================================
 
-Assets/BoardSandbox/Plugins/Windows/x86_64/bse_luau.dll contains the following software.
+Assets/BoardSandbox/Plugins/Windows/x86_64/bse_luau.dll and Assets/BoardSandbox/Plugins/Android/<ABI>/libbse_luau.so
+contain the following software.
 
 
 Luau 0.745
@@ -31,10 +32,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-Runtime components of the zig build
------------------------------------
+Runtime components of the builds
+--------------------------------
 
 A DLL built with Native/scripts/build_native.py (zig) also contains these runtime libraries:
 
   LLVM libc++, libc++abi and libunwind - Apache License 2.0 with LLVM Exceptions - https://llvm.org/LICENSE.txt
   mingw-w64 runtime - public domain and permissive licenses (ZPL 2.1, BSD) - https://www.mingw-w64.org/
+
+A libbse_luau.so built with the Android NDK (Native/scripts/build_native.py android, or the android-native workflow)
+also contains these runtime libraries of the NDK:
+
+  LLVM libc++, libc++abi, libunwind and the compiler-rt builtins - Apache License 2.0 with LLVM Exceptions - https://llvm.org/LICENSE.txt
+
+It calls the C library, math library and dynamic linker library of Android (libc, libm, libdl), which every device provides.
