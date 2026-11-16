@@ -19,7 +19,8 @@ namespace BoardSandbox.Core.App
         // The computer plays a random legal move.
         Random,
 
-        // The computer plays the move its engine finds (ModManifest.AiEngine), thinking harder with every game.
+        // The computer plays the move the mod's own player finds (rules.query("think"), or the engine named by
+        // ModManifest.AiEngine), thinking harder with every game.
         Ai
     }
 
@@ -110,7 +111,7 @@ namespace BoardSandbox.Core.App
         public int AiLevelCount => _player != null ? Session.Mod.Manifest.AiLevels.Count : 0;
         public int AiLevel => _player != null ? AiProgress.LevelIndex(Session.Mod.Manifest.Id, AiLevelCount) + 1 : 0;
 
-        // What the player may spend on a move at this level; for gomoku the number of simulations.
+        // What the player may spend on a move at this level; what the number means is up to the mod.
         public int AiEffort => _player != null ? Session.Mod.Manifest.AiLevels[AiLevel - 1] : 0;
 
         // A search for the computer's move is under way.
@@ -166,6 +167,7 @@ namespace BoardSandbox.Core.App
             _seatModes.Clear();
             _lastComputerSeat = 0;
             ResetAi();
+            (_player as IDisposable)?.Dispose();
             _player = ComputerPlayers.Create(mod.Manifest);
             _gameCounted = false;
             SessionReplaced?.Invoke();
@@ -470,7 +472,7 @@ namespace BoardSandbox.Core.App
             _aiTask = null;
             if (_aiCancel != null)
             {
-                // The search notices at its next simulation and its result is dropped.
+                // The result of the search is dropped; a search that has not started yet does not start.
                 _aiCancel.Cancel();
                 _aiCancel = null;
             }
@@ -485,6 +487,9 @@ namespace BoardSandbox.Core.App
         // Counts a finished game between a person and the thinking computer player; the next one is a level harder.
         private void OnCommandProcessed(InputPacket packet, SubmitResult result)
         {
+            // Whatever the search was started for, the game is no longer that, also when the command showed nothing.
+            if (result.IsAccepted)
+                StopThinking();
             GameSession s = Session;
             if (_gameCounted || _player == null || s == null || !result.IsAccepted || !s.View.IsOver)
                 return;
@@ -542,6 +547,8 @@ namespace BoardSandbox.Core.App
                 return;
             _disposed = true;
             StopThinking();
+            (_player as IDisposable)?.Dispose();
+            _player = null;
             Simulation.Cancel();
             Simulation.Wait(3000);
             Session?.Dispose();

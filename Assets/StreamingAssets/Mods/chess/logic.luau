@@ -22,6 +22,7 @@
 
 local chess = require("./chess")
 local pieces = require("./pieces")
+local ai = require("./ai")
 
 type Move = chess.Move
 type Position = chess.Position
@@ -686,6 +687,28 @@ function rules.query(name: string, args: any): any
 			end
 		end
 		return { depth = depth, nodes = chess.perft(chess.copy(target), depth) }
+	elseif name == "think" then
+		-- The computer player ("ai" in config.json): the engine asks a second VM, restored to this position, for the
+		-- command of args.seat. args.effort is the level from config.json, here the positions the search may look at.
+		local seat = if type(args) == "table" then args.seat else nil
+		if finished or seat ~= pos.side or #legal == 0 then
+			return nil
+		end
+		if type(args.seed) == "number" then
+			math.randomseed(args.seed)
+		end
+		-- Going back to a position of this game is a step towards a draw by repetition.
+		local seen: { [string]: boolean } = {}
+		if repetition_limit > 0 then
+			for i = 1, #rep do
+				seen[rep[i]] = true
+			end
+		end
+		local found = ai.choose(pos, clamp_integer(args.effort, 1000, 1, 1000000), { halfmove_limit = halfmove_limit, seen = seen })
+		if found.move == nil then
+			return nil
+		end
+		return command_for(found.move)
 	end
 	return nil
 end

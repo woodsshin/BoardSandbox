@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using BoardSandbox.Core.Ai;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
 using BoardSandbox.Core.Luau;
@@ -69,6 +71,14 @@ namespace BoardSandbox.Tests
             if (!result.IsAccepted)
                 throw new InvalidOperationException("expected (" + x + "," + y + ") to be accepted but got " + result);
             return result;
+        }
+
+        // The command the computer player the mod wrote in Luau (rules.query("think")) gives for the seat; null when
+        // it has none.
+        public static JsonValue Think(GameSession session, int seat, int effort, int seed = 1)
+        {
+            using (LuauComputerPlayer player = new LuauComputerPlayer())
+                return player.Prepare(session, seat, effort, seed)(CancellationToken.None);
         }
 
         public static string TempDirectory()

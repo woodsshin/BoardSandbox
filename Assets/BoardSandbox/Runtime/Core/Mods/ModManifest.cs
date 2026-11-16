@@ -38,6 +38,8 @@ namespace BoardSandbox.Core.Mods
         public const int SupportedApi = 1;
         public const int MaxSeats = 16;
         public const int MaxRoomPlayers = 8;
+        // The computer player the mod writes itself in Luau (LuauComputerPlayer).
+        public const string DefaultAiEngine = "luau";
         public const int MaxAiLevels = 16;
         public const int MaxAiEffort = 1000000;
 
@@ -77,11 +79,12 @@ namespace BoardSandbox.Core.Mods
         // Presentation hints for a client; the core never interprets them.
         public JsonValue Client { get; private set; }
 
-        // The thinking computer player the mod asks for ("ai.engine"); empty when it has only random moves.
+        // The thinking computer player the mod asks for: "luau" when "ai" gives levels and names no engine, which is
+        // the mod's own rules.query("think"); the name in "ai.engine" otherwise; empty when it has only random moves.
         public string AiEngine { get; private set; }
 
         // The effort of that player per level ("ai.levels"), rising with the games played against it. What a
-        // number means is up to the engine; for gomoku_mcts it is simulations per move.
+        // number means is up to the player; the mod's own gets it as args.effort.
         public IReadOnlyList<int> AiLevels { get; private set; }
 
         public SeatInfo GetSeat(int seat)
@@ -176,6 +179,8 @@ namespace BoardSandbox.Core.Mods
                 throw new ModException("'ai.levels' must not hold more than " + MaxAiLevels + " numbers.");
             if (manifest.AiEngine.Length > 0 && levels.Count == 0)
                 throw new ModException("'ai.levels' must hold at least one number when 'ai.engine' is set.");
+            if (manifest.AiEngine.Length == 0 && levels.Count > 0)
+                manifest.AiEngine = DefaultAiEngine;
             manifest.AiLevels = levels;
             return manifest;
         }

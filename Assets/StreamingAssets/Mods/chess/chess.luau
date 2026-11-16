@@ -857,6 +857,8 @@ return {
 	start_position = start_position,
 	copy = copy,
 	legal_moves = legal_moves,
+	pseudo_moves = pseudo_moves,
+	attacked = attacked,
 	make = make,
 	unmake = unmake,
 	in_check = in_check,
