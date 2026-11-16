@@ -45,6 +45,9 @@ plays random moves; if that fails you get the error back.
 - `api` is always 1. `entry` is the script that returns the rules table.
 - `players`: 1 <= min <= max <= 16. `seats` names and colors the players in seat order.
 - `options`: defaults handed to `rules.new_game`; the player can edit numbers, strings and booleans.
+- `ai` (optional): `""ai"": { ""levels"": [50, 500, 5000] }` gives the game a computer player that thinks. The
+  script answers `rules.query(""think"", args)` (see below); `levels` is the effort it is handed, one level per
+  game played against it. Leave `ai` out and the computer plays `rules.random_command`.
 - `client`: how the game looks and takes input (see below).
 
 The file must be plain JSON (no comments). Seat colors are `#rrggbb`.
@@ -60,7 +63,7 @@ The entry script returns a table of functions. State lives in local variables of
 | `rules.random_command(seat)` | strongly recommended | Returns one legal command for the seat, or `nil` when there is none. Powers the computer player and the automatic check. |
 | `rules.legal_commands(seat)` | optional | Returns the list of all legal commands. |
 | `rules.snapshot()` / `rules.restore(data)` | strongly recommended | Save and load the rule state as a JSON-like value. Both together enable undo and redo. |
-| `rules.query(name, args)` | optional | Answers console queries. |
+| `rules.query(name, args)` | optional | Answers console queries. With `""ai""` in config.json, `rules.query(""think"", { seat, effort, seed })` returns the command the computer plays for `seat` (or `nil` for none). |
 
 Rules of the contract:
 
@@ -74,6 +77,11 @@ Rules of the contract:
 - The engine saves and restores the pieces, the turn and the result itself. `snapshot` holds only your own
   state. `restore` must re-emit custom events such as `board` and `last_move`.
 - Use `math.random` for randomness; the engine seeds it.
+- The computer player is yours to write: `think` runs in a second VM that was restored to the position (so it
+  needs `snapshot` and `restore`), may take seconds instead of 250 ms, and must return a command that
+  `rules.command` accepts for `args.seat`. Search with your own state (make a move, look, take it back) and
+  leave the state as it was. `args.effort` is the number from `ai.levels`; spend more work for a higher one.
+  Call `math.randomseed(args.seed)` if it uses `math.random`.
 - Sandbox: no `io`, `os`, `loadstring`, `dofile`, `getfenv`, `setfenv`. A call may take 250 ms and the VM
   64 MB. `require(""./other"")` loads `other.luau` relative to the calling file.
 - Luau is typed Lua 5.1 with extras (`+=`, `continue`, string interpolation with backticks, `if a then b else c`

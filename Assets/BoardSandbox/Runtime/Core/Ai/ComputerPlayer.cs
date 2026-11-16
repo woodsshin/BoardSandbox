@@ -3,22 +3,23 @@ using System.Collections.Generic;
 using System.Threading;
 using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
+using BoardSandbox.Core.Luau;
 using BoardSandbox.Core.Mods;
 
 namespace BoardSandbox.Core.Ai
 {
-    // A computer player that thinks instead of playing at random. A mod asks for one by name in config.json:
+    // A computer player that thinks instead of playing at random. A mod asks for one in config.json:
     //
-    //     "ai": { "engine": "gomoku_mcts", "levels": [100, 500, 2000] }
+    //     "ai": { "levels": [60, 600, 3000] }
     //
-    // "levels" is the effort the engine may spend on a move, growing with the games played against it; what the
-    // number means is up to the engine.
+    // "levels" is the effort the player may spend on a move, growing with the games played against it; what the
+    // number means is up to whoever thinks. Without "engine" that is the mod itself, in Luau (LuauComputerPlayer).
     public interface IComputerPlayer
     {
         string Engine { get; }
 
         // Reads the position from the session on the calling thread. The returned search touches neither the session
-        // nor the VM, so it may run on another thread; it gives the command to submit for the seat. Throws
+        // nor its VM, so it may run on another thread; it gives the command to submit for the seat. Throws
         // GameSessionException when the game is not one the engine can play.
         Func<CancellationToken, JsonValue> Prepare(GameSession session, int seat, int effort, int seed);
     }
@@ -29,8 +30,7 @@ namespace BoardSandbox.Core.Ai
         private static readonly Dictionary<string, Func<IComputerPlayer>> Factories =
             new Dictionary<string, Func<IComputerPlayer>>(StringComparer.Ordinal)
             {
-                { GomokuMctsPlayer.EngineName, () => new GomokuMctsPlayer() },
-                { ChessMctsPlayer.EngineName, () => new ChessMctsPlayer() }
+                { LuauComputerPlayer.EngineName, () => new LuauComputerPlayer() }
             };
 
         // Adds an engine, or replaces the one of that name.
@@ -65,63 +65,123 @@ namespace BoardSandbox.Core.Ai
         }
     }
 
-    // Gomoku by Monte Carlo tree search; the effort is the number of simulations per move. It reads the game through
-    // rules.query("state"), which must give size, win_length, exact_win, current and board as the gomoku mod does,
-    // and answers with { action = "place_stone", x, y }.
-    public sealed class GomokuMctsPlayer : IComputerPlayer
+    // The computer player a mod writes itself. The engine knows no game: it asks the rules of the mod for the move,
+    //
+    //     rules.query("think", { seat = 2, effort = 600, seed = 12345 })  -->  { action = "place_stone", x = 8, y = 8 }
+    //
+    // and submits what comes back like any other input. The question is put to a second VM of the mod that was brought
+    // to the position with rules.restore, so the game stays responsive while the script thinks and the script may take
+    // far longer than a command (Vm.CallTimeoutMs). The mod therefore needs rules.snapshot, rules.restore and
+    // rules.query. The VM is kept for the next move, so whatever the script remembers between two moves stays.
+    public sealed class LuauComputerPlayer : IComputerPlayer, IDisposable
     {
-        public const string EngineName = "gomoku_mcts";
+        public const string EngineName = "luau";
 
-        // The tree of the last search, kept for the next move of the game. A search takes it out while it runs, so
-        // two searches never share it.
-        private GomokuMcts _idle = new GomokuMcts();
+        // The name of the query that asks for the move.
+        public const string Query = "think";
+
+        // The VM of the last search. A search takes it out while it runs, so two searches never share one.
+        private readonly object _gate = new object();
+        private LuauVm _idle;
+        private ModPackage _mod;
+        private bool _disposed;
 
         public string Engine => EngineName;
 
-        // What the last finished search found; null before the first.
-        public GomokuSearchResult LastResult { get; private set; }
+        // The limits of the VM that thinks; changes apply to the next VM that is made.
+        public VmOptions Vm { get; set; } = new VmOptions { MemoryLimitMb = 256, CallTimeoutMs = 30000 };
 
         public Func<CancellationToken, JsonValue> Prepare(GameSession session, int seat, int effort, int seed)
         {
             if (session == null)
                 throw new ArgumentNullException(nameof(session));
-            if (!session.Capabilities.Query)
-                throw new GameSessionException("NOT_SUPPORTED", "the engine '" + EngineName + "' needs rules.query(\"state\")");
-            GomokuPosition position = ReadPosition(session.Query("state"));
-            if (position.Current != seat)
-                throw new GameSessionException("NOT_YOUR_TURN", "seat " + seat + " is not to move");
-            if (position.IsFull)
-                throw new GameSessionException("GAME_OVER", "the board is full");
+            if (!session.Capabilities.Query || !session.Capabilities.Snapshot)
+            {
+                throw new GameSessionException("NOT_SUPPORTED",
+                    "a computer player in Luau needs rules.query(\"" + Query + "\"), rules.snapshot and rules.restore");
+            }
+            if (session.View.IsOver)
+                throw new GameSessionException("GAME_OVER", "the game is over");
+            string snapshot = session.CaptureSnapshot();
+            ModPackage mod = session.Mod;
+            VmOptions options = Vm.Clone();
+            JsonValue restore = JsonValue.NewObject().Set("snapshot", snapshot);
+            JsonValue think = JsonValue.NewObject()
+                .Set("name", Query)
+                .Set("args", JsonValue.NewObject().Set("seat", seat).Set("effort", effort).Set("seed", seed));
 
             return cancel =>
             {
-                GomokuMcts search = Interlocked.Exchange(ref _idle, null) ?? new GomokuMcts();
-                GomokuSearchResult result = search.Search(position, effort, new Random(seed), cancel);
-                LastResult = result;
-                Interlocked.Exchange(ref _idle, search);
-                return JsonValue.NewObject()
-                    .Set("action", "place_stone")
-                    .Set("x", result.Move % position.Size + 1)
-                    .Set("y", result.Move / position.Size + 1);
+                cancel.ThrowIfCancellationRequested();
+                LuauVm vm = Take(mod, options);
+                bool healthy = false;
+                try
+                {
+                    Ask(vm, "restore", restore);
+                    cancel.ThrowIfCancellationRequested();
+                    JsonValue command = Ask(vm, "query", think)["value"];
+                    healthy = true;
+                    return command.IsObject ? command : null;
+                }
+                finally
+                {
+                    // A VM that failed may be anywhere; the next search starts with a new one.
+                    if (!healthy || !Return(mod, vm))
+                        vm.Dispose();
+                }
             };
         }
 
-        public static GomokuPosition ReadPosition(JsonValue state)
+        private LuauVm Take(ModPackage mod, VmOptions options)
         {
-            if (state == null || !state.IsObject)
-                throw new GameSessionException("NOT_SUPPORTED", "rules.query(\"state\") gave no position");
-            int size = state["size"].AsInt(0);
-            int winLength = state["win_length"].AsInt(0);
-            if (size < GomokuPosition.MinSize || size > GomokuPosition.MaxSize || winLength < 2 || winLength > size)
-                throw new GameSessionException("NOT_SUPPORTED", "the engine '" + EngineName + "' cannot play a board of this size");
-            try
+            LuauVm vm;
+            lock (_gate)
             {
-                return GomokuPosition.Parse(size, winLength, state["exact_win"].AsBool(), state["board"].AsString(null), state["current"].AsInt(0));
+                vm = _idle;
+                _idle = null;
+                if (vm != null && !ReferenceEquals(_mod, mod))
+                {
+                    vm.Dispose();
+                    vm = null;
+                }
             }
-            catch (FormatException e)
+            return vm ?? mod.CreateVm(options);
+        }
+
+        private bool Return(ModPackage mod, LuauVm vm)
+        {
+            lock (_gate)
             {
-                throw new GameSessionException("NOT_SUPPORTED", e.Message, e);
+                if (_disposed || _idle != null)
+                    return false;
+                _idle = vm;
+                _mod = mod;
+                return true;
             }
+        }
+
+        // Gives the idle VM back. A search that is still running finishes and disposes its own.
+        public void Dispose()
+        {
+            LuauVm vm;
+            lock (_gate)
+            {
+                _disposed = true;
+                vm = _idle;
+                _idle = null;
+                _mod = null;
+            }
+            vm?.Dispose();
+        }
+
+        private static JsonValue Ask(LuauVm vm, string method, JsonValue args)
+        {
+            JsonValue response = vm.CallJson(method, args);
+            vm.TakeLogs();
+            if (response["ok"].AsBool())
+                return response;
+            JsonValue error = response["error"];
+            throw new GameSessionException(error["code"].AsString("SCRIPT_ERROR"), error["message"].AsString("the script failed"));
         }
     }
 }

@@ -38,14 +38,15 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 ```
 Assets/
 ├─ BoardSandbox/
-│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜), Agents(AI 콘솔), Ai(생각하는 컴퓨터 플레이어)
+│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜), Agents(AI 콘솔), Ai(모드의 Luau 컴퓨터 플레이어를 부르는 부분과 단계 기록)
 │  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동
 │  ├─ Editor/            메뉴, 네이티브 플러그인 설정, Android 빌드 전 검사
 │  ├─ Plugins/Windows/x86_64/   bse_luau.dll
 │  ├─ Plugins/Android/<ABI>/    libbse_luau.so (arm64-v8a, armeabi-v7a, x86_64)
 │  └─ Tests/Editor/      NUnit 테스트 (EditMode)
 └─ StreamingAssets/Mods/
-   ├─ gomoku/            오목
+   ├─ gomoku/            오목 (logic.luau 규칙, ai.luau 컴퓨터 플레이어)
+   ├─ chess/             체스 (logic.luau, chess.luau 규칙, pieces.luau 기물 모양, ai.luau 컴퓨터 플레이어)
    ├─ cubic3/            3D 큐브 퍼즐
    └─ sudoku/            스도쿠 (1인, 또는 방에서 2인 협동)
 Native/
@@ -96,7 +97,7 @@ flowchart TD
 
 멀티플레이에서는 호스트의 `NetHostRoom`이 세션의 이벤트를 참가자에게 보내고, 참가자의 `NetClientRoom`이 받은 이벤트를 자기 `PlaybackQueue`에 넣습니다. 참가자의 입력은 호스트에서 좌석과 차례를 확인한 뒤(차례가 없는 협동 게임은 좌석만 확인합니다) `GameSession.Submit`으로 들어갑니다. 메시지는 JSON이며 `hello`, `welcome`, `roster`, `sync`, `ev`, `cmd`, `note`, `finished`, `bye`가 있습니다.
 
-- **모드로 게임 추가**: `config.json`과 `.luau` 파일이 든 폴더 하나가 게임 하나입니다.
+- **모드로 게임 추가**: `config.json`과 `.luau` 파일이 든 폴더 하나가 게임 하나입니다. 규칙, 화면, 입력, 컴퓨터 플레이어까지 게임에 관한 것은 모두 그 폴더의 Luau와 JSON에 있고, C# 쪽에는 특정 게임을 아는 코드가 없습니다.
 - **게임 선택 화면**: 앱에 들어 있는 게임과 로컬 폴더의 게임을 한 목록에서 검색하고 고릅니다. 모드는 출처(`Built-in`, `Local`, `Workshop`)를 갖고, 출처별로 모드를 읽어 오는 부분은 `IModSource`로 분리돼 있습니다.
 - **장면도 모드가 정함**: 보드, 테이블, 배경, 조명, 카메라, 표시(마커), 말의 모양·크기·위치·회전·면 색을 `config.json`과 Luau에서 정합니다. 클릭, 드래그, 키 입력도 모드가 명령으로 받습니다.
 - **Steam 멀티플레이**: 게임을 고르면 그 게임을 하는 방 목록이 나오고, 방을 열거나 들어갑니다. 한 판을 함께 두는 게임은 한 화면을 동기화하고, 각자 푸는 게임은 화면을 나눠 서로의 판을 봅니다.
@@ -202,7 +203,7 @@ Cubic 3x3의 조작: 면을 클릭하면 시계 방향, 오른쪽 클릭이나 `
 
   - 옵션은 모드의 `options` 기본값을 보여 줍니다. 불리언은 체크박스, 숫자와 문자열은 입력란이고, 그 밖의 값은 읽기 전용입니다. 바꾼 값은 다음 새 게임과 Simulation 패널에 적용됩니다.
   - `Computer` 좌석은 모드의 무작위 합법 수를 0.45초 간격으로 둡니다. 모드가 `random_command` 또는 `legal_commands`를 제공하지 않으면 선택할 수 없습니다(안내 토스트). 컴퓨터가 둘 수를 못 찾거나 수가 거부되면 그 좌석은 `Human`으로 돌아갑니다. 되돌린 시점이 컴퓨터 차례면 컴퓨터가 다시 둡니다. 차례가 없는 협동 게임에서는 컴퓨터가 맡은 좌석이 여럿이면 번갈아 두고, 사람 좌석에는 영향을 주지 않습니다.
-  - 모드가 `config.json`의 `ai`로 엔진을 지정하면(오목, 체스) `Computer` 좌석은 무작위 대신 그 엔진으로 수를 찾습니다([컴퓨터 플레이어](#컴퓨터-플레이어)). 좌석 목록 아래에 `Computer level 1/3 (100 simulations)`처럼 현재 단계가 표시되고, 사람과 컴퓨터의 대국이 끝날 때마다 한 단계씩 올라갑니다.
+  - 모드가 `config.json`에 `ai`를 쓰고 스크립트에서 수를 고르면(오목, 체스) `Computer` 좌석은 무작위 대신 그 스크립트가 고른 수를 둡니다([컴퓨터 플레이어](#컴퓨터-플레이어)). 좌석 목록 아래에 `Computer level 1/3 (effort 50)`처럼 현재 단계가 표시되고, 사람과 컴퓨터의 대국이 끝날 때마다 한 단계씩 올라갑니다.
 - **오른쪽 도구 열**: `Fit view`, `Console`, `Simulation`.
   - **Simulation 패널**: `Games`(기본 1000, 1~1,000,000)와 `Seed`(기본 1)를 정해 `Run`하면 무작위 대국을 백그라운드로 돌리고 진행률과 결과를 보여 줍니다. `Cancel`로 중단합니다. 화면에는 아무것도 그리지 않고, 진행 중인 게임에도 영향이 없습니다.
 - **콘솔 창**: 화면 아래. 명령 입력(`↑`/`↓`로 입력 기록 이동)과 스크립트 로그(`bse.log` 등)가 함께 나옵니다.
@@ -403,7 +404,7 @@ Mods/
 | `seats` | 아니오 | `[{ "name": "Black", "color": "#161616" }, ...]`. `max`개까지 읽고, 생략한 이름은 `Player N`, 생략한 색은 기본 8색 팔레트를 순환합니다. 색은 `#rrggbb` |
 | `options` | 아니오 | 새 게임 옵션의 기본값 객체 |
 | `multiplayer` | 아니오 | `{ "mode": "split", "players": 4, "seed_option": "seed", "cooperative": false }`. `mode`가 `split`이면 분할 화면, 그 밖에는 한 화면입니다. `cooperative`가 `true`인 한 화면 게임은 차례 없이 모든 좌석이 동시에 입력하고 함께 이깁니다([멀티플레이](#멀티플레이)) |
-| `ai` | 아니오 | `{ "engine": "gomoku_mcts", "levels": [100, 500, 2000] }`. 생각하는 컴퓨터 플레이어([컴퓨터 플레이어](#컴퓨터-플레이어)). `engine`을 쓰면 `levels`는 1~1000000인 수 1~16개가 있어야 합니다 |
+| `ai` | 아니오 | `{ "levels": [50, 500, 5000] }`. 모드가 Luau로 쓴 생각하는 컴퓨터 플레이어를 켭니다([컴퓨터 플레이어](#컴퓨터-플레이어)). `levels`는 단계별 탐색량으로 1~1000000인 수 1~16개이며, 뜻은 모드가 정합니다. `engine`은 C# 호스트가 등록한 엔진을 쓸 때만 적고(생략하면 `luau`), `engine`을 쓰면 `levels`가 있어야 합니다 |
 | `client` | 아니오 | 화면 표시 힌트 ([클라이언트 힌트](#클라이언트-힌트)) |
 
 오목의 `config.json`:
@@ -421,7 +422,7 @@ Mods/
     { "name": "White", "color": "#f3efe6" }
   ],
   "options": { "size": 15, "win_length": 5, "exact_win": false },
-  "ai": { "engine": "gomoku_mcts", "levels": [100, 500, 2000] },
+  "ai": { "levels": [50, 500, 5000] },
   "client": {
     "board": { "style": "lines" },
     "stage": { "camera": { "pitch": 89 } },
@@ -433,30 +434,46 @@ Mods/
 
 ### 컴퓨터 플레이어
 
-`Computer` 좌석은 기본으로 모드의 무작위 합법 수(`random_command`)를 둡니다. 모드가 `config.json`에 `ai.engine`을 쓰면 C# 쪽 엔진이 수를 찾습니다. 지금 있는 엔진은 오목용 `gomoku_mcts`와 체스용 `chess_mcts`이고, 다른 게임의 엔진은 `IComputerPlayer`를 구현해 `ComputerPlayers.Register(이름, 팩토리)`로 추가합니다. 이 빌드가 모르는 엔진 이름이면 그 모드는 무작위 수로 둡니다.
+`Computer` 좌석은 기본으로 모드의 무작위 합법 수(`random_command`)를 둡니다. 생각하는 컴퓨터 플레이어는 모드가 Luau로 직접 씁니다. C# 쪽에는 어떤 게임의 수읽기도 들어 있지 않고, 수를 물어보고 받은 명령을 제출하는 일만 합니다(`LuauComputerPlayer`).
 
-**단계**: `ai.levels`는 단계별 탐색량이고 두 엔진 모두에서 한 수에 돌리는 MCTS 시뮬레이션 횟수입니다. 오목과 체스는 `[100, 500, 2000]`이라 첫 판은 100번, 둘째 판은 500번, 셋째 판부터 2,000번을 돌립니다. 사람 좌석과 엔진 좌석이 함께 있는 대국이 끝나면(승패 무관) 한 판으로 세며, 되돌렸다가 다시 끝내도 같은 판입니다. 컴퓨터끼리의 대국과 무작위 컴퓨터와의 대국은 세지 않습니다. 판 수는 모드 id별로 따로 세고(오목을 많이 두어도 체스는 첫 단계부터) `persistentDataPath/ai_progress.json`에 저장되어 앱을 다시 켜도 이어집니다(파일을 지우면 첫 단계로 돌아갑니다).
+1. `config.json`에 `"ai": { "levels": [50, 500, 5000] }`를 씁니다.
+2. 규칙 스크립트의 `rules.query`가 이름 `"think"`에 답합니다.
 
-**`gomoku_mcts`** (`Runtime/Core/Ai`):
+```lua
+function rules.query(name: string, args: any): any
+	if name == "think" then
+		-- args.seat: 둘 좌석, args.effort: 지금 단계의 levels 값, args.seed: 무작위 시드
+		math.randomseed(args.seed)
+		return { action = "place_stone", x = 8, y = 8 }   -- rules.command가 받는 명령. 둘 수가 없으면 nil
+	end
+	return nil
+end
+```
 
-- **MCTS**: 시뮬레이션 한 번은 UCB1로 트리를 내려가 새 국면 하나를 더하고, 거기서 끝까지 두어 본 결과를 지나온 국면에 더합니다. 가장 많이 방문한 수를 둡니다.
-- **조브리스트 해싱**: (칸, 돌 색)마다 고정된 64비트 난수를 두고 국면의 해시를 놓인 돌의 XOR로 유지합니다(`ZobristKeys`, 둘 차례도 포함). 트리의 국면은 이 해시를 키로 하는 전치표에 들어가므로 수순만 다른 같은 국면은 통계를 공유하고, 같은 대국의 다음 수 탐색은 이전 탐색의 결과에서 이어집니다.
-- **모양 인식**: 빈 점마다 그곳에 돌을 두면 네 방향 각각에서 생기는 모양(이, 삼, 열린 삼, 사, 열린 사, 오)을 양쪽 색에 대해 알고 있습니다(`GomokuShapes`, `GomokuPosition`). 한 줄의 좌우 네 칸 패턴으로 판정하므로 `XX_X` 같은 끊어진 삼·사도 보고, 돌이 놓일 때 그 줄 위의 점만 다시 계산합니다. 네 방향을 합쳐 4-4, 4-3(바로 이기는 수), 3-3을 구분합니다.
-- **수 후보와 강제수**: 돌에서 두 칸 안의 빈 점만 후보로 봅니다. 오, 상대 오의 방어, 바로 이기는 수(열린 사, 4-4, 4-3), 상대의 그런 수가 놓일 점은 트리와 플레이아웃 모두에서 따로 생각하지 않고 둡니다. 나머지 후보는 모양 점수 순으로 정렬해 방문 수가 늘수록 더 많이 펼치고(progressive widening), 플레이아웃도 모양이 좋은 점을 주로 둡니다(24수에서 끊고 무승부로 침).
-- **사 연속 수읽기**: 시뮬레이션 전에, 사를 연달아 두어(상대는 한 점으로만 막을 수 있음) 이기는 수순이 있는지 찾아 있으면 바로 둡니다. 상대에게 그런 수순이 있으면 그것을 없애는 수만 남겨 탐색합니다. 읽는 양은 시뮬레이션 횟수에 비례하므로 단계가 오를수록 긴 수순을 읽습니다.
-- **입출력**: 국면은 `rules.query("state")`로 읽고(`size`, `win_length`, `exact_win`, `current`, `board`가 오목 모드와 같은 형식이어야 함) `{ action = "place_stone", x, y }`를 냅니다. 오목을 고쳐 만든 모드도 이 형식을 지키면 엔진을 쓸 수 있습니다.
-- **실행**: 탐색은 VM을 쓰지 않으므로 작업 스레드에서 돌고, 수는 컴퓨터 지연(0.45초)과 탐색이 모두 끝났을 때 둡니다. 탐색 중에 되돌리기, 새 게임, 콘솔 명령 등으로 판이 바뀌면 그 탐색은 버리고 다시 시작합니다.
+- **실행**: 엔진은 진행 중인 게임의 VM이 아니라 **같은 모드로 만든 두 번째 VM**에 지금 국면을 `rules.restore`로 넣고 거기서 `think`를 부릅니다. 그래서 모드에 `rules.snapshot`, `rules.restore`, `rules.query`가 모두 있어야 하고(없으면 `NOT_SUPPORTED` 토스트와 함께 그 좌석이 `Human`으로 돌아갑니다), `think` 안에서는 스크립트 자신의 상태를 마음대로 써도 됩니다(수를 두어 보고 되돌리기 등). 게임에는 돌려준 명령만 반영됩니다.
+- **시간**: 이 VM의 한도는 호출당 30초, 메모리 256 MB입니다(명령의 250 ms 한도와 별개, `LuauComputerPlayer.Vm`). 작업 스레드에서 돌기 때문에 생각하는 동안에도 화면과 입력은 멈추지 않습니다. 수는 컴퓨터 지연(0.45초)과 탐색이 모두 끝났을 때 둡니다. 탐색 중에 되돌리기, 새 게임, 콘솔 명령 등으로 판이 바뀌면 그 결과는 버리고 다시 묻습니다. 실행 중인 `think` 호출 자체는 중간에 끊지 못하므로(끝나면 결과만 버림) `effort`로 한 수의 시간을 짧게 유지하는 편이 좋습니다.
+- **기억**: 두 번째 VM은 다음 수에도 다시 쓰이므로 스크립트의 지역 변수(표, 캐시)는 수 사이에 남습니다. 다만 탐색이 버려지거나 오류가 나면 새 VM으로 바뀌므로 남아 있다고 가정하면 안 됩니다. 국면은 매번 `restore`로 들어옵니다.
+- **결과 처리**: 돌려준 명령은 사람의 입력과 똑같이 `rules.command`의 검증을 거칩니다. `nil`을 돌려주거나, 스크립트 오류·시간 초과가 나거나, 명령이 거부되면 토스트로 알리고 그 좌석은 `Human`으로 돌아갑니다.
+- **단계**: `ai.levels`는 단계별 탐색량이고 `args.effort`로 전달됩니다. 사람 좌석과 생각하는 컴퓨터 좌석이 함께 있는 대국이 끝나면(승패 무관) 한 판으로 세며, 되돌렸다가 다시 끝내도 같은 판입니다. 컴퓨터끼리의 대국과 무작위 컴퓨터와의 대국은 세지 않습니다. 판 수는 모드 id별로 따로 세고 `persistentDataPath/ai_progress.json`에 저장되어 앱을 다시 켜도 이어집니다(파일을 지우면 첫 단계로 돌아갑니다).
+- **콘솔에서 확인**: `query think {"seat":1,"effort":500,"seed":1}`은 진행 중인 게임의 VM에서 같은 질문을 합니다(이때는 명령의 250 ms 한도가 적용됩니다).
 
-30판씩 두게 한 결과(선후 교대, 15×15, 첫 두 수는 중앙 부근 무작위, 승 1점·무승부 0.5점): 2,000 대 500은 21.5점, 500 대 100은 21.5점, 2,000 대 100은 24점. 모양 인식을 넣기 전의 엔진(2,000번)을 상대로는 100번이 25점, 500번이 21점, 2,000번이 26점이었습니다. 한 수의 탐색 시간은 개발 장비의 .NET 8에서 2,000번 기준 약 0.1초였고 Unity(Mono, IL2CPP)와 휴대 기기에서는 재 보지 않았습니다.
+`ai.engine`에 다른 이름을 쓰면 C# 호스트가 `ComputerPlayers.Register(이름, 팩토리)`로 등록한 `IComputerPlayer`가 대신 수를 찾습니다. 이 앱이 등록해 둔 것은 `luau` 하나뿐이고, 모르는 이름이면 그 모드는 무작위 수로 둡니다.
 
-**`chess_mcts`** (`Runtime/Core/Ai`):
+들어 있는 두 게임의 플레이어는 각 모드 폴더의 `ai.luau`입니다. `bse`를 쓰지 않는 순수 Luau 모듈이라 다른 게임을 만들 때 참고하거나 그대로 가져다 고칠 수 있습니다.
 
-- **국면과 수 생성**: `ChessPosition`이 체스 규칙(캐슬링, 앙파상, 승급, 체크)을 C#로 따로 구현합니다. 알려진 perft 수치와 맞고, 체스 모드가 내는 합법 수와 같은지 테스트합니다. 조브리스트 해시는 기물, 둘 차례, 캐슬링 권리, 앙파상 열을 포함합니다.
-- **MCTS**: 체스는 무작위로 끝까지 두어 봐도 국면의 가치를 알 수 없어서, 시뮬레이션은 트리를 내려가 새 국면 하나를 더한 뒤 플레이아웃 대신 **한 수 더 내다본 평가**로 끝납니다. 새 국면의 모든 합법 수를 두어 보고 기물 교환이 끝날 때까지 읽은(quiescence) 정적 평가(기물 가치, 기물-칸 표, 비숍 쌍, 맨 킹 몰기)를 승률로 바꿔 씁니다. 같은 평가가 각 수의 첫 추정이 되어 좋아 보이는 수부터 탐색하고(PUCT), 위로 올릴 때는 시뮬레이션 평균과 최선 응수의 값을 섞어 반박수 하나가 바로 반영되게 합니다.
-- **전치표와 반복**: 국면은 해시를 키로 하는 전치표에 들어가 수순만 다른 같은 국면이 통계를 공유하고 다음 수 탐색이 이어받습니다. 대국에서 이미 나온 국면으로 돌아가는 수는 무승부로 봅니다(모드가 지난 국면을 알려 주지 않아 엔진이 자기가 본 국면을 기억합니다. 되돌리면 이 기억은 지워집니다).
-- **입출력**: 국면은 `rules.query("state")`의 `fen`, `plies`, `finished`로 읽고 `{ action = "move", uci = "e2e4" }`를 냅니다. `halfmove_limit` 옵션을 따릅니다.
+**오목** (`Mods/gomoku/ai.luau`, `levels` `[50, 500, 5000]`, `effort`는 탐색이 놓아 보는 돌의 수):
 
-같은 엔진끼리 10판씩 두게 한 결과(선후 교대, 첫 네 수 무작위, 160수에서 끊고 형세로 판정): 500 대 100은 7점(5승 4무 1패), 2,000 대 500은 6.5점(5승 3무 2패). 판 수가 적어 오차가 큽니다. 한 수의 탐색 시간은 개발 장비의 .NET 8에서 2,000번 기준 평균 0.15초, 교환이 많은 국면에서 0.7초였고 Unity와 휴대 기기에서는 재 보지 않았습니다. 100번에서도 한 수 메이트, 공짜 기물, 포크는 놓치지 않지만(테스트), 사람 상대 실력은 재 보지 않았고 오프닝 책과 엔드게임 표는 없습니다.
+- 가로·세로·대각선으로 `win_length`칸짜리 구간마다 양쪽 돌 수를 세어 두고 돌을 놓고 뺄 때마다 고칩니다. 한쪽 돌만 있는 구간이 그쪽의 가치이고, 구간을 채우거나 상대 구간을 막는 점이 먼저 둘 후보입니다. 한 수만 더 놓으면 완성되는 구간이 있으면 그 점(자기 것이면 승리, 상대 것이면 방어)만 봅니다.
+- 돌에서 두 칸 안의 점 가운데 좋은 순서로 루트 14개, 그 아래 9개를 알파-베타로 탐색하며 한 수씩 깊이를 늘립니다(iterative deepening). 사(한 수 남은 줄)는 반드시 받아야 하므로 그 응수는 깊이를 쓰지 않고 6수까지 더 따라가서, 사를 연달아 두어 이기는 수순을 읽습니다.
+- `size`, `win_length`, `exact_win` 옵션을 그대로 따릅니다.
+
+**체스** (`Mods/chess/ai.luau`, `levels` `[1000, 6000, 30000]`, `effort`는 탐색이 보는 국면 수):
+
+- 규칙 모듈 `chess.luau`의 수 생성과 `make`/`unmake`를 그대로 쓰는 알파-베타 탐색입니다. 잡는 수를 먼저 보고(MVV-LVA), 조용한 수는 킬러·히스토리 순서로 보며, 체크는 한 수 더 읽고, 줄 끝에서는 잡는 수가 끝날 때까지 읽습니다(quiescence).
+- 평가는 기물 가치, 기물-칸 표, 비숍 쌍이고, 기물이 적은 끝내기에서 크게 앞서면 상대 킹을 구석으로 몰고 자기 킹을 붙입니다.
+- 대국에서 이미 나온 국면으로 돌아가는 수는 무승부로 봅니다(`repetition` 옵션이 0이면 보지 않음). `halfmove_limit` 옵션을 따릅니다.
+
+단계끼리 두게 한 결과(선후 교대, 승 1점·무승부 0.5점, 개발 장비의 네이티브 Luau VM): 오목 20판씩(15×15, 첫 두 수는 중앙 부근 무작위)에서 5,000 대 500은 16점, 500 대 50은 14점, 5,000 대 50은 19점이었고, 체스 10판씩(첫 네 수 무작위)에서 6,000 대 1,000은 7.5점, 30,000 대 6,000은 8점이었습니다. 판 수가 적어 오차가 큽니다. 한 수의 시간은 오목 5,000에서 평균 0.07초(최대 0.15초), 체스 30,000에서 평균 0.33초(최대 0.46초)였습니다. Unity 안(Mono, IL2CPP)과 휴대 기기에서의 시간은 재 보지 않았고, 사람 상대 실력도 재 보지 않았습니다. 이전 버전의 C# MCTS 엔진(`gomoku_mcts`, `chess_mcts`)과는 다른 알고리즘이며 둘을 맞붙여 비교하지는 않았습니다.
 
 ### 규칙 스크립트
 
@@ -469,7 +486,7 @@ Mods/
 | `rules.legal_commands(seat)` | 아니오 | 합법 명령 목록. 콘솔 `legal`에 쓰이며 `random_command`가 없을 때 무작위 선택의 후보가 됩니다 |
 | `rules.random_command(seat)` | 아니오 | 합법 명령 하나(없으면 `nil`). `Computer` 좌석, `random`, `ff`, `sim`에 쓰입니다. 둘 다 없으면 이 기능들을 쓸 수 없습니다 |
 | `rules.snapshot()`, `rules.restore(data)` | 아니오 (둘 다) | 규칙 상태를 JSON으로 직렬화되는 값으로 저장하고 복원합니다. 둘 다 있어야 되돌리기, 다시 실행, `goto`, `save`, `load`가 켜집니다 |
-| `rules.query(name, args)` | 아니오 | 콘솔 `query`에 답할 값을 반환합니다 |
+| `rules.query(name, args)` | 아니오 | 콘솔 `query`에 답할 값을 반환합니다. 이름 `think`는 컴퓨터 플레이어의 질문입니다: `args`는 `{ seat, effort, seed }`이고 그 좌석이 둘 명령(없으면 `nil`)을 반환합니다([컴퓨터 플레이어](#컴퓨터-플레이어)) |
 
 - **거부는 상태를 바꾸기 전에 합니다.** 화면 객체를 바꾸거나 이벤트를 내보낸 뒤 거부를 반환하면 스크립트 오류(`INVALID_REJECTION`)로 처리됩니다.
 - **스냅샷의 범위**: 엔진이 화면 객체, 차례, 종료 상태를 함께 저장하고 복원합니다. `snapshot`/`restore`에는 규칙 자신의 상태만 넣으면 됩니다. 복원할 때 화면 미러가 비워졌다가 복원 이벤트로 다시 채워지므로, 클라이언트가 읽는 사용자 정의 이벤트(`board`, `last_move`, `stage`)는 `restore`에서도 다시 내보내야 합니다.
@@ -509,7 +526,8 @@ Mods/
   "name": "Race to 10",
   "api": 1,
   "entry": "main.luau",
-  "players": { "min": 2, "max": 2 }
+  "players": { "min": 2, "max": 2 },
+  "ai": { "levels": [1] }
 }
 ```
 
@@ -558,6 +576,9 @@ end
 function rules.query(name: string, args: any): any
 	if name == "scores" then
 		return scores
+	elseif name == "think" then
+		-- 컴퓨터 플레이어("ai"): 이 게임은 큰 수를 더하는 것이 언제나 최선입니다
+		return { action = "add", amount = 3 }
 	end
 	return nil
 end
@@ -574,7 +595,7 @@ end
 return rules
 ```
 
-화면 객체가 없는 예제이므로 콘솔에서 진행합니다.
+화면 객체가 없는 예제이므로 콘솔에서 진행합니다. 왼쪽 패널에서 좌석을 `Computer`로 바꾸면 `think`가 고른 수를 둡니다(`ai`를 빼면 `random_command`의 무작위 수).
 
 ```
 play add amount=2
@@ -586,7 +607,7 @@ ff 20 seed=3
 sim 1000 seed=1
 ```
 
-기준 구현은 `Assets/StreamingAssets/Mods/gomoku`(격자 보드)와 `Assets/StreamingAssets/Mods/cubic3`(3D 오브젝트, 연출, 클릭·드래그·키 입력, 분할 화면)입니다.
+기준 구현은 `Assets/StreamingAssets/Mods/gomoku`(격자 보드, Luau 컴퓨터 플레이어)와 `Assets/StreamingAssets/Mods/cubic3`(3D 오브젝트, 연출, 클릭·드래그·키 입력, 분할 화면)입니다.
 
 ### 클라이언트 힌트
 
@@ -727,7 +748,7 @@ using (GameHost host = new GameHost(catalog))
 ```
 
 - `GameSession`은 VM 하나와 화면 미러(`View`), 기록을 가집니다. 한 VM은 한 번에 한 스레드에서만 호출하세요. 서로 다른 VM은 동시에 써도 됩니다(시뮬레이션이 별도 VM을 백그라운드 스레드에서 돌립니다).
-- 좌석 모드는 `SeatMode.Human`, `Random`(무작위 수), `Ai`(모드의 엔진)입니다. `host.HasAi`, `AiLevel`, `AiLevelCount`, `AiEffort`, `AiProgress`로 엔진 유무와 단계를 읽고, `GameHostOptions.AiProgress`에 파일 경로를 준 `AiProgress`를 넘기면 판 수가 저장됩니다. `AiThreaded = false`는 탐색을 `Update` 안에서 실행합니다.
+- 좌석 모드는 `SeatMode.Human`, `Random`(무작위 수), `Ai`(모드가 Luau로 쓴 플레이어, `rules.query("think")`)입니다. `host.HasAi`, `AiLevel`, `AiLevelCount`, `AiEffort`, `AiProgress`로 플레이어 유무와 단계를 읽고, `GameHostOptions.AiProgress`에 파일 경로를 준 `AiProgress`를 넘기면 판 수가 저장됩니다. `AiThreaded = false`는 탐색을 `Update` 안에서 실행합니다.
 - `GameHost`는 UI가 필요로 하는 것을 묶습니다: 모드 목록(`ModCatalog`), 좌석별 사람/컴퓨터, 컴퓨터 플레이어 스케줄, 토스트, 콘솔, 거부 기록, 백그라운드 시뮬레이션. `StartGame(mod)`는 모드를 고르고 새 게임까지 시작하며, `IsRunning(mod)`는 그 모드의 같은 버전(내용 해시가 같음)이 진행 중인지 알려 줍니다.
 - `ModCatalog`는 `IModSource` 목록에서 모드를 모읍니다. 항목(`ModEntry`)은 모드와 출처(`ModOrigin`: `BuiltIn`, `Local`, `Workshop`)를 가지며, `Search(query, origin)`이 이름, id, 설명으로 찾아 출처, 이름 순으로 돌려줍니다. `Refresh()`는 소스를 다시 읽고, `FindStartup(id)`는 [시작 규칙](#시작-규칙)의 게임을 고릅니다.
 - `IModSource`는 `Origin`, `Description`(찾아보는 곳, 안내 문구에 쓰임), `Discover()`(`ModDiscovery`: 모드와 읽지 못한 모드의 오류)로 이루어집니다. 폴더를 읽는 `FolderModSource`가 들어 있고, `Discover()`가 예외를 던져도 오류로 보고될 뿐 다른 소스는 그대로 읽힙니다.
@@ -776,7 +797,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 | 종류 | 실행 방법 | 범위 |
 |---|---|---|
-| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, APK(zip) 안의 내장 게임 읽기, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 오목 컴퓨터 플레이어(조브리스트 해시, MCTS, 단계), 체스 컴퓨터 플레이어(수 생성 perft, 모드와의 합법 수 일치, 전술, 단계), 기하·장면·오브젝트 계산 |
+| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, APK(zip) 안의 내장 게임 읽기, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, Luau 컴퓨터 플레이어(두 번째 VM에서의 실행, 시간 한도, 오류 처리, 단계), 오목과 체스 모드의 `ai.luau`(전술, 단계 간 승률), 기하·장면·오브젝트 계산 |
 | dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 장면)는 빼고 실행합니다 |
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
 
@@ -797,7 +818,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 | Android | NDK로 만든 ARM64, ARMv7, x86_64 라이브러리가 `Plugins/Android`에 들어 있고, 모두 ELF 검사(CPU, 필요한 라이브러리 libc·libm·libdl뿐, 내보낸 함수 10개, 64비트 16KB 정렬)를 통과했습니다. 이 라이브러리가 없던 IL2CPP 빌드는 앱이 시작했지만 게임을 불러오지 못했습니다. 내장 게임을 APK 안에서 읽는 `ZipModSource`는 dotnet 하네스에서, 실제 내장 게임을 APK 모양(`assets/Mods`, 서명 블록 포함)으로 압축해 폴더에서 읽을 때와 같은 결과(`ContentHash` 포함)가 나오고 모두 시작되는 것까지 확인했습니다. 라이브러리와 이 읽기를 넣은 빌드를 기기에서 실행해 보는 것은 하지 못했습니다 |
 | 스크립팅 백엔드 | Mono 기준으로 작성했습니다. IL2CPP는 Android 빌드로 만들어 앱이 시작하는 것까지만 확인했습니다 |
 
-기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 생각하는 컴퓨터 플레이어는 오목(`gomoku_mcts`)과 체스(`chess_mcts`)에만 있고 다른 게임은 무작위 수를 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
+기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 생각하는 컴퓨터 플레이어는 모드가 Luau로 쓰며([컴퓨터 플레이어](#컴퓨터-플레이어)) 들어 있는 게임 가운데 오목과 체스에만 있고, 다른 게임은 무작위 수를 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
 
 ## 라이선스
 

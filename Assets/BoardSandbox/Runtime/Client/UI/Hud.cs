@@ -645,7 +645,7 @@ namespace BoardSandbox.Client.UI
             }
             if (_host.HasAi && _host.Session != null && manifest == _host.Session.Mod.Manifest)
             {
-                GUILayout.Label("Computer level " + _host.AiLevel + "/" + _host.AiLevelCount + " (" + _host.AiEffort + " simulations)", _theme.Muted);
+                GUILayout.Label("Computer level " + _host.AiLevel + "/" + _host.AiLevelCount + " (effort " + _host.AiEffort + ")", _theme.Muted);
             }
         }
 

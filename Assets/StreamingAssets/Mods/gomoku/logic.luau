@@ -1,4 +1,6 @@
 --!strict
+local ai = require("./ai")
+
 local rules = {}
 
 local DEFAULT_SIZE = 15
@@ -187,6 +189,22 @@ function rules.query(name: string, args: any): any
 			board = table.concat(cells),
 			last = if moves > 0 then { x = last_x, y = last_y } else nil,
 		}
+	elseif name == "think" then
+		-- The computer player ("ai" in config.json): the engine asks a second VM, restored to this position, for the
+		-- command of args.seat. args.effort is the level from config.json, here the stones the search may place.
+		local seat = if type(args) == "table" then args.seat else nil
+		if finished or seat ~= current then
+			return nil
+		end
+		if type(args.seed) == "number" then
+			math.randomseed(args.seed)
+		end
+		local found = ai.choose(cells, size, win_length, exact_win, current, clamp_integer(args.effort, 100, 1, 1000000))
+		if found.move == 0 then
+			return nil
+		end
+		local offset = found.move - 1
+		return { action = "place_stone", x = offset % size + 1, y = offset // size + 1 }
 	end
 	return nil
 end
