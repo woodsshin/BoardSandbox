@@ -1,7 +1,7 @@
 {
   "id": "gostop",
   "name": "Go-Stop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Korean hwatu. Choose two players (Matgo, go or stop from 7 points) or three (from 3 points). Click a card in your hand to play it; bombs, shaking, ppeok, kisses, sweeps and bonus cards are in. Set the other seats to Computer to play against the rule-based player (level 1) or the Monte Carlo player (levels 2 and 3). Hwatu artwork: Marcus Richert, based on Louie Mantia, Jr. - CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/), https://commons.wikimedia.org/wiki/File:Hwatu_overview.svg",
   "api": 1,
   "entry": "logic.luau",
@@ -18,15 +18,15 @@
       "background": "#0f1f17",
       "board": { "visible": false },
       "table": { "color": "#1f6b45", "y": 0 },
-      "camera": { "pitch": 89, "target": [0, 0, 0], "radius": 9.8, "min_pitch": 40, "left_drag": "none" },
+      "camera": { "pitch": 89, "target": [0, 0, 0], "radius": 8.6, "min_pitch": 40, "left_drag": "none" },
       "light": { "direction": [-0.2, 1, 0.3], "ambient": 0.75, "intensity": 0.3 },
       "markers": { "shadow": { "visible": false } }
     },
     "click": { "action": "click", "target": "object" },
     "pieces": {
       "card": { "shape": "box", "size": [1, 0.02, 1.63], "color": "#f4f1ea", "anchor": "bottom", "shadow": false, "gloss": 0.05, "tween": 0.25, "image": "cards.png" },
-      "button": { "shape": "box", "size": [3.6, 0.06, 0.9], "color": "#f4f1ea", "anchor": "bottom", "shadow": false, "gloss": 0.1, "label_size": 0.13, "label_color": "#1a1a1a" },
-      "text": { "shape": "box", "size": [6, 0.01, 0.6], "alpha": 0, "anchor": "bottom", "shadow": false, "pick": false, "label_size": 0.085, "label_color": "#ffe9a8" }
+      "button": { "shape": "box", "size": [3.6, 0.06, 0.9], "color": "#f4f1ea", "anchor": "bottom", "shadow": false, "gloss": 0.1, "label_size": 0.5, "label_color": "#1a1a1a" },
+      "text": { "shape": "box", "size": [1, 0.01, 1], "alpha": 0, "anchor": "bottom", "shadow": false, "pick": false, "label_size": 0.4, "label_color": "#ffe9a8" }
     }
   }
 }

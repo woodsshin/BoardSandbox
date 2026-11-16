@@ -22,7 +22,9 @@ local ATLAS_W, ATLAS_H = 1680, 2380
 local CELL_W, CELL_H, CELL_PAD = 210, 340, 2
 local BACK = 48
 
-local STEP_SECONDS = 0.42
+local STEP_SECONDS = 0.5
+local PLAY_SECONDS = 0.7
+local FLIP_SECONDS = 0.6
 
 local STOCK_X, STOCK_Z = -7.6, 0
 local FLOOR_X = { -0.95, 0.95, -2.85, 2.85, -4.75, 4.75 }
@@ -43,7 +45,7 @@ local EVENT_TEXT: { [string]: string } = {
 }
 
 type Place = { x: number, z: number, hand_scale: number, hand_step: number, cap_z: number, cap_scale: number, cap_step: number,
-	groups: { number }, wrap: number, row: number, panel_x: number, panel_z: number, towards: number }
+	groups: { number }, wrap: number, row: number, panel_x: number, panel_z: number, towards: number, text: number, detail: number, gap: number }
 
 -- options
 local option_players = 0
@@ -86,15 +88,15 @@ local function place_of(state: State, seat: number): Place
 	local offset = (seat - viewer) % n
 	if offset == 0 then
 		return { x = 0, z = 6.9, hand_scale = 1, hand_step = 1.08, cap_z = 4.3, cap_scale = 0.72, cap_step = 0.4,
-			groups = { -9.2, -6.9, -2.9, 1.2 }, wrap = 16, row = 0.55, panel_x = -6.4, panel_z = 5.65, towards = 1 }
+			groups = { -9.2, -6.9, -2.9, 1.2 }, wrap = 16, row = 0.55, panel_x = -5.2, panel_z = 5.42, towards = 1, text = 0.38, detail = 0.27, gap = 0.42 }
 	elseif n == 2 then
 		return { x = 0, z = -6.9, hand_scale = 0.7, hand_step = 0.5, cap_z = -4.3, cap_scale = 0.72, cap_step = 0.4,
-			groups = { -9.2, -6.9, -2.9, 1.2 }, wrap = 16, row = -0.55, panel_x = -6.4, panel_z = -5.65, towards = -1 }
+			groups = { -9.2, -6.9, -2.9, 1.2 }, wrap = 16, row = -0.55, panel_x = -5.2, panel_z = -5.95, towards = -1, text = 0.38, detail = 0.27, gap = 0.42 }
 	end
 	-- Three players: the next player sits to the right, the one after to the left.
 	local cx = if offset == 1 then 4.9 else -4.9
 	return { x = cx, z = -7.0, hand_scale = 0.55, hand_step = 0.36, cap_z = -4.75, cap_scale = 0.42, cap_step = 0.2,
-		groups = { cx - 4.0, cx - 2.75, cx - 0.9, cx + 0.95 }, wrap = 12, row = -0.38, panel_x = cx, panel_z = -5.95, towards = -1 }
+		groups = { cx - 4.0, cx - 2.75, cx - 0.9, cx + 0.95 }, wrap = 12, row = -0.38, panel_x = cx, panel_z = -6.15, towards = -1, text = 0.32, detail = 0.23, gap = 0.38 }
 end
 
 local function set_card(id: number, x: number, y: number, z: number, scale: number, up: boolean, pick: boolean)
@@ -132,9 +134,22 @@ local function floor_slot(month: number): number
 	return 1
 end
 
+local function seat_name(state: State, seat: number): string
+	local viewer = if view_seat >= 1 and view_seat <= state.n then view_seat else 0
+	if viewer == 0 then
+		return SEAT_NAMES[seat]
+	elseif seat == viewer then
+		return "나"
+	elseif state.n == 2 then
+		return "상대"
+	end
+	return `상대 {seat}`
+end
+
+-- The first line of a player: whose turn, the score now, and what doubles it.
 local function seat_text(state: State, seat: number): string
 	local parts: { string } = {}
-	local name = SEAT_NAMES[seat]
+	local name = seat_name(state, seat)
 	if state.phase ~= "over" and state.turn == seat then
 		name = "▶ " .. name
 	end
@@ -144,7 +159,7 @@ local function seat_text(state: State, seat: number): string
 		table.insert(parts, `{state.go[seat]}고`)
 	end
 	if state.shake[seat] > 0 then
-		table.insert(parts, `흔들기 {state.shake[seat]}`)
+		table.insert(parts, `흔들기 ×{2 ^ state.shake[seat]}`)
 	end
 	if state.ppeok[seat] > 0 then
 		table.insert(parts, `뻑 {state.ppeok[seat]}`)
@@ -152,7 +167,42 @@ local function seat_text(state: State, seat: number): string
 	if state.pass[seat] > 0 then
 		table.insert(parts, `폭탄 {state.pass[seat]}`)
 	end
-	return table.concat(parts, "  ")
+	return table.concat(parts, "   ")
+end
+
+-- The second line: what the score is made of.
+local function detail_text(state: State, seat: number): string
+	local c = G.count(state.cap[seat])
+	local _, animal, junk = G.score(c)
+	local parts: { string } = {}
+	local function add(name: string, count: number, points: number)
+		table.insert(parts, if points > 0 then `{name} {count}장 {points}점` else `{name} {count}장`)
+	end
+	local bright = 0
+	if c.bright == 5 then
+		bright = 15
+	elseif c.bright == 4 then
+		bright = 4
+	elseif c.bright == 3 then
+		bright = if c.rain == 1 then 2 else 3
+	end
+	add("광", c.bright, bright)
+	add("열끗", animal, math.max(0, animal - 4))
+	if c.bird == 3 then
+		table.insert(parts, "고도리 5점")
+	end
+	add("띠", c.ribbon, math.max(0, c.ribbon - 4))
+	if c.red == 3 then
+		table.insert(parts, "홍단 3점")
+	end
+	if c.blue == 3 then
+		table.insert(parts, "청단 3점")
+	end
+	if c.grass == 3 then
+		table.insert(parts, "초단 3점")
+	end
+	add("피", junk, math.max(0, junk - 9))
+	return table.concat(parts, " · ")
 end
 
 local function result_lines(state: State): (string, string, string)
@@ -160,7 +210,7 @@ local function result_lines(state: State): (string, string, string)
 	if result.winner == 0 then
 		return "나가리 (무승부)", "아무도 스톱하지 못했습니다", ""
 	end
-	local name = SEAT_NAMES[result.winner]
+	local name = seat_name(state, result.winner)
 	local how = ""
 	if result.how == "chongtong" then
 		how = "총통"
@@ -181,7 +231,7 @@ local function result_lines(state: State): (string, string, string)
 	local pays: { string } = {}
 	for seat = 1, state.n do
 		if seat ~= result.winner then
-			local text = `{SEAT_NAMES[seat]} -{result.pays[seat]}`
+			local text = `{seat_name(state, seat)} -{result.pays[seat]}점`
 			local f = result.flags[seat]
 			if f.pibak then
 				text ..= " 피박"
@@ -214,7 +264,7 @@ local function sync_controls()
 		show_button(1, "2인 맞고 (7점)", { action = "players", count = 2 }, -2.6)
 		show_button(2, "3인 고스톱 (3점)", { action = "players", count = 3 }, 2.6)
 		show_button(3, nil, nil, 0)
-		bse.view.set(banner, { label = "몇 명이 칠까요?", labels = {} })
+		bse.view.set(banner, { label = "몇 명이 칠까요?", labels = { { text = "2인 맞고는 7점, 3인 고스톱은 3점부터 고·스톱", dx = 0, dy = 0.5, size = 0.3, color = "#f2efe2" } } })
 		return
 	end
 
@@ -239,7 +289,7 @@ local function sync_controls()
 			end
 			show_button(3, nil, nil, 0)
 		elseif state.phase == "gostop" then
-			line1 = `{SEAT_NAMES[seat]} {G.score_of(state, seat)}점 - 고 또는 스톱`
+			line1 = `{seat_name(state, seat)} {G.score_of(state, seat)}점 - 고 또는 스톱`
 			show_button(1, "고", { action = "go" }, -2)
 			show_button(2, "스톱", { action = "stop" }, 2)
 			show_button(3, nil, nil, 0)
@@ -258,16 +308,23 @@ local function sync_controls()
 			end
 		end
 	end
+	if head == "" then
+		head, line1 = line1, ""
+	end
 	local small: { any } = {}
 	if line1 ~= "" then
-		table.insert(small, { text = line1, dx = 0, dy = 0.11, size = 0.07, color = "#f2efe2" })
+		table.insert(small, { text = line1, dx = 0, dy = 0.5, size = 0.32, color = "#f2efe2", bold = true })
 	end
 	if line2 ~= "" then
-		table.insert(small, { text = line2, dx = 0, dy = 0.2, size = 0.06, color = "#f2efe2" })
+		table.insert(small, { text = line2, dx = 0, dy = 0.92, size = 0.3, color = "#f2efe2", bold = true })
 	end
 	bse.view.set(banner, { label = head, labels = small })
 	for seat = 1, state.n do
-		bse.view.set(panels[seat], { label = seat_text(state, seat) })
+		local p = place_of(state, seat)
+		bse.view.set(panels[seat], {
+			label = seat_text(state, seat),
+			labels = { { text = detail_text(state, seat), dx = 0, dy = p.gap, size = p.detail, color = "#f2efe2" } },
+		})
 	end
 end
 
@@ -305,8 +362,12 @@ local function sync()
 			local z = FLOOR_Z[slot % 2 + 1]
 			local at = 0
 			for _, id in pile do
-				local choice = state.phase == "pick" and (state.pick[1] == id or state.pick[2] == id)
-				set_card(id, x - 0.3 + at * 0.3, 0.02 + at * 0.03, z, if choice then 1.12 else 1, true, choice)
+				if state.phase == "pick" and (state.pick[1] == id or state.pick[2] == id) then
+					-- The two cards to choose between are held up large, side by side.
+					set_card(id, if state.pick[1] == id then -1.5 else 1.5, 1.2, 2.45, 1.9, true, true)
+				else
+					set_card(id, x - 0.3 + at * 0.3, 0.02 + at * 0.03, z, 1, true, false)
+				end
 				at += 1
 			end
 			for _, id in state.attached[month] do
@@ -342,26 +403,50 @@ local function sync()
 	sync_controls()
 end
 
-local function step(_state: State, what: string, data: any)
-	if what == "event" then
-		table.insert(events, EVENT_TEXT[data] or tostring(data))
+-- The pauses of one command. The screen plays pauses faster while more of them wait behind (1 + 0.5 for each), so
+-- the command is first run on a copy to count its pauses, and each pause is then made longer by as much.
+local counting = false
+local pauses_total = 0
+local pauses_done = 0
+
+local function pause(seconds: number)
+	pauses_done += 1
+	if counting then
 		return
-	elseif what == "steal" then
-		table.insert(events, `피 {data}장 뺏음`)
+	end
+	local behind = math.max(0, pauses_total - pauses_done)
+	bse.emit({ t = "fx", kind = "wait", seconds = math.min(10, seconds * (1 + 0.5 * behind)) })
+end
+
+local function step(_state: State, what: string, data: any)
+	if what == "event" or what == "steal" then
+		if not counting then
+			table.insert(events, if what == "steal" then `피 {data}장 뺏음` else EVENT_TEXT[data] or tostring(data))
+		end
 		return
 	end
 	if headless then
 		return
 	end
-	sync()
-	bse.emit({ t = "fx", kind = "wait", seconds = STEP_SECONDS })
+	if what == "flip" then
+		-- The card is turned over on the stock, large, before it goes where it belongs. By now the card played from
+		-- the hand has landed.
+		if not counting then
+			set_card(data, STOCK_X + 0.3, 1.0, STOCK_Z, 1.35, true, false)
+		end
+		pause(FLIP_SECONDS)
+	end
+	if not counting then
+		sync()
+	end
+	pause(if what == "played" then PLAY_SECONDS else STEP_SECONDS)
 end
 
 local function spawn_table()
 	if headless then
 		return
 	end
-	banner = bse.view.spawn("text", 0, 0, { props = { pos = { 0, 0.02, -2.85 }, label = "" } })
+	banner = bse.view.spawn("text", 0, 0, { props = { pos = { 0, 0.02, -3.1 }, label = "", label_size = 0.44 } })
 	for i = 1, 3 do
 		buttons[i] = bse.view.spawn("button", 0, 0, { props = { pos = { 0, 0.02, 2.85 }, visible = false, pick = false, label = "" } })
 		button_cmd[i] = false
@@ -387,7 +472,7 @@ local function start(players: number)
 		end
 		for seat = 1, state.n do
 			local p = place_of(state, seat)
-			panels[seat] = bse.view.spawn("text", 0, 0, { owner = seat, props = { pos = { p.panel_x, 0.02, p.panel_z }, label = "", label_size = 0.075 } })
+			panels[seat] = bse.view.spawn("text", 0, 0, { owner = seat, props = { pos = { p.panel_x, 0.02, p.panel_z }, label = "", label_size = p.text } })
 		end
 	end
 end
@@ -541,10 +626,15 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 
 	-- The rules check the command on a copy first, so that a refusal leaves everything as it was.
 	local trial = G.clone(state)
-	local code, message = G.apply(trial, command)
+	counting = true
+	pauses_done = 0
+	local code, message = G.apply(trial, command, step)
+	counting = false
 	if code ~= nil then
 		return bse.reject(code, message or code)
 	end
+	pauses_total = pauses_done
+	pauses_done = 0
 
 	prompt = nil
 	table.clear(events)
