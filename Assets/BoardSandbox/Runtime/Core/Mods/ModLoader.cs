@@ -50,7 +50,7 @@ namespace BoardSandbox.Core.Mods
                 foreach (string file in System.IO.Directory.EnumerateFiles(root, "*" + ScriptExtension, SearchOption.AllDirectories))
                 {
                     string relative = RelativePath(root, Path.GetFullPath(file));
-                    if (!relative.EndsWith(ScriptExtension, StringComparison.Ordinal) || IsHidden(relative))
+                    if (!IsScriptPath(relative))
                         continue;
                     if (sources.Count >= ModPackage.MaxFiles)
                         throw new ModException("the mod has more than " + ModPackage.MaxFiles + " script files.");
@@ -103,6 +103,13 @@ namespace BoardSandbox.Core.Mods
         {
             string relative = file.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             return relative.Replace('\\', '/');
+        }
+
+        // Whether a file of a mod is one of its scripts: a .luau file with no part of its path starting with a dot. The path
+        // is relative to the folder of the mod and uses '/'. Every way of reading a mod decides this the same way.
+        internal static bool IsScriptPath(string relative)
+        {
+            return relative.EndsWith(ScriptExtension, StringComparison.Ordinal) && !IsHidden(relative);
         }
 
         private static bool IsHidden(string relative)

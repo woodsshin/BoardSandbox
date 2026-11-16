@@ -1,0 +1,73 @@
+name: android-native
+
+# Builds libbse_luau.so for Android (arm64-v8a, armeabi-v7a, x86_64) with the Android NDK that GitHub's runner carries,
+# checks the libraries (Native/scripts/check_android_lib.py) and commits them to Assets/BoardSandbox/Plugins/Android on
+# the branch that was built, so that the Unity project only has to be pulled. Start it from the Actions tab (Run
+# workflow) on any branch, or push a change under Native/.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "Native/**"
+      - ".github/workflows/android-native.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        shell: bash
+        run: |
+          echo "NDK: ${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-none}}"
+          cmake --version | head -n 1
+          ninja --version
+
+      - name: Build the libraries
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 Native/scripts/build_native.py android --ndk "${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" 2>&1 | tee build.log || {
+            status=$?
+            message="$(tail -n 40 build.log | sed -e 's/%/%25/g' -e ':a;N;$!ba;s/\n/%0A/g')"
+            echo "::error title=The Android build failed::${message}"
+            exit "$status"
+          }
+
+      - name: Check the libraries
+        shell: bash
+        run: python3 Native/scripts/check_android_lib.py Assets/BoardSandbox/Plugins/Android/*/libbse_luau.so
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bse_luau-android
+          path: Assets/BoardSandbox/Plugins/Android/*/libbse_luau.so
+
+      - name: Commit the libraries
+        if: github.ref_type == 'branch'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Assets/BoardSandbox/Plugins/Android
+          if git diff --cached --quiet; then
+            echo "The libraries in the repository are up to date."
+            exit 0
+          fi
+          git commit -m "Build the Android native library"
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+          exit 1

@@ -218,10 +218,7 @@ namespace BoardSandbox.Client
         // The games that come with the app are listed first, so that nothing else can take their ids.
         private List<IModSource> ModSources()
         {
-            List<IModSource> sources = new List<IModSource>
-            {
-                new FolderModSource(Path.Combine(Application.streamingAssetsPath, "Mods"), ModOrigin.BuiltIn)
-            };
+            List<IModSource> sources = new List<IModSource> { BuiltInModSource() };
             string environment = Environment.GetEnvironmentVariable("BSE_MODS_DIR");
             if (!string.IsNullOrEmpty(environment))
             {
@@ -235,6 +232,16 @@ namespace BoardSandbox.Client
             }
             AddLocalFolder(sources, LocalModsFolder);
             return sources;
+        }
+
+        // StreamingAssets is a folder everywhere except Android, where it is packed into the APK and the folder System.IO
+        // would be given ("jar:file://...!/assets") does not exist. There the games are read out of the APK itself, which
+        // Application.dataPath names.
+        private static IModSource BuiltInModSource()
+        {
+            return Application.platform == RuntimePlatform.Android
+                ? BuiltInMods.FromAndroidPackage(Application.dataPath)
+                : BuiltInMods.FromFolder(Application.streamingAssetsPath);
         }
 
         private static string LocalModsFolder => Path.Combine(Application.persistentDataPath, "Mods");
