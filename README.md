@@ -120,6 +120,8 @@ flowchart TD
 
 Android용 `libbse_luau.so`(Luau 0.745와 NDK의 libc++를 정적으로 포함, 외부 의존은 모든 기기에 있는 libc, libm, libdl뿐)는 ABI별로 `Assets/BoardSandbox/Plugins/Android/<ABI>/`에 들어 있습니다. 이 라이브러리가 빠진 Android 빌드는 만들어지고 설치되고 시작도 하지만 게임을 하나도 불러오지 못하고 `Unable to load DLL 'bse_luau'` 오류가 납니다. 그래서 Android 빌드를 시작하기 전에 선택한 CPU(Player Settings의 Target Architectures)마다 라이브러리가 있는지 검사하고, 없으면 빌드를 중단하고 이유를 알려 줍니다(`NativePluginBuildCheck`).
 
+Android에서는 `StreamingAssets`가 APK(zip 파일) 안에 들어가 폴더로 열 수 없습니다(`Application.streamingAssetsPath`가 `jar:file://…/base.apk!/assets`). 그래서 앱에 들어 있는 게임은 APK를 zip으로 열어 `assets/Mods`에서 직접 읽습니다([모드](#모드)). 이 읽기가 없던 빌드는 게임 목록이 비어 `No games found`가 나왔습니다.
+
 ## 빠른 시작
 
 1. Unity Hub에서 **Add > Add project from disk**로 이 폴더를 열고 6000.3.x 에디터를 선택합니다.
@@ -354,12 +356,14 @@ AI 에이전트에게 원하는 게임을 설명하면 에이전트가 `config.j
 
 | 순서 | 위치 | 출처 |
 |---|---|---|
-| 1 | `Assets/StreamingAssets/Mods` (빌드에서는 `<앱>_Data/StreamingAssets/Mods`) | `Built-in` |
+| 1 | `Assets/StreamingAssets/Mods` (빌드에서는 `<앱>_Data/StreamingAssets/Mods`, Android에서는 APK 안의 `assets/Mods`) | `Built-in` |
 | 2 | 환경 변수 `BSE_MODS_DIR` (여러 개면 `;`로 구분) | `Local` |
 | 3 | `BoardSandboxApp`의 Extra Mod Folders | `Local` |
 | 4 | `Application.persistentDataPath/Mods` (Windows: `%USERPROFILE%\AppData\LocalLow\<회사>\<제품>\Mods`) | `Local` |
 
 `Workshop` 출처는 목록, 필터, 정렬에서 쓸 수 있는 값이지만 이 앱에는 Workshop 폴더를 읽는 소스가 없습니다. 소스를 더하려면 `IModSource`를 구현해 `BoardSandboxApp.ModSources()`가 만드는 목록의 끝에 넣습니다([C#에서 사용하기](#c에서-사용하기)).
+
+**Android**: 1번은 `Application.dataPath`가 가리키는 APK를 `ZipModSource`로 열어 `assets/Mods/<id>/` 아래의 `config.json`과 `.luau` 파일을 읽습니다(`BuiltInMods.FromAndroidPackage`). 파일을 풀어 내지 않고 메모리로 읽으므로 이 모드에는 폴더가 없고(`ModPackage.Directory`가 `null`) AI 콘솔로 고칠 수 없습니다. 내용과 `ContentHash`는 폴더에서 읽을 때와 같아서 데스크톱과 같은 방에서 플레이할 수 있습니다. APK를 읽지 못하면 게임 선택 화면의 `Problems`와 오류 토스트에 이유가 나옵니다. 기기에 게임을 직접 넣으려면 4번 위치에 폴더를 넣고 `Rescan`합니다. 예: `adb push <게임 폴더> /sdcard/Android/data/<패키지 이름>/files/Mods/`(앱을 지우면 이 폴더도 함께 지워집니다).
 
 모드는 앱을 시작할 때와 게임 선택 화면에서 `Rescan`을 누를 때 읽습니다. 스크립트를 고친 뒤에는 `Rescan`하고 다시 `Play`해야 고친 내용으로 시작합니다. 진행 중인 게임은 `Rescan`으로 바뀌지 않으며, `New game`(`N`)은 그 게임을 읽어 온 그대로의 스크립트로 다시 시작합니다.
 
@@ -772,7 +776,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 | 종류 | 실행 방법 | 범위 |
 |---|---|---|
-| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 오목 컴퓨터 플레이어(조브리스트 해시, MCTS, 단계), 체스 컴퓨터 플레이어(수 생성 perft, 모드와의 합법 수 일치, 전술, 단계), 기하·장면·오브젝트 계산 |
+| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, APK(zip) 안의 내장 게임 읽기, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, 오목 컴퓨터 플레이어(조브리스트 해시, MCTS, 단계), 체스 컴퓨터 플레이어(수 생성 perft, 모드와의 합법 수 일치, 전술, 단계), 기하·장면·오브젝트 계산 |
 | dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 장면)는 빼고 실행합니다 |
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
 
@@ -788,7 +792,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 | C# 코드 | Unity 6000.3.19f1에서 열어 실행해 왔습니다(멀티플레이 추가분은 아래 행). 로직은 dotnet 하네스 테스트(480개)를 통과했고, Unity 코드는 공개 참조 소스로 만든 UnityEngine 어셈블리를 기준으로 컴파일 검사를 합니다 |
 | Steam 멀티플레이 | 방과 동기화 로직은 루프백 전송으로 테스트했고, Steam 연동 코드는 Steamworks.NET 소스와 함께 컴파일 검사만 했습니다. 실제 Steam 로비 생성·검색·참가, P2P 전송, 분할 화면과 로딩 화면의 표시는 확인하지 못했습니다 |
 | AI 콘솔 | 요청 구성, 답의 파일 블록 처리, 검사·자동 수정·되돌리기, 자식 프로세스 실행(가짜 에이전트 스크립트), chat completions 호출(로컬 가짜 서버)은 Linux의 dotnet 하네스 테스트로 확인했습니다. 실제 Claude Code·Codex·Gemini·Antigravity·Grok CLI와 실제 API 호출, Windows에서의 프로세스 실행, Unity 안에서의 창 표시와 한글 입력은 확인하지 못했습니다 |
-| Android | NDK로 만든 ARM64, ARMv7, x86_64 라이브러리가 `Plugins/Android`에 들어 있고, 모두 ELF 검사(CPU, 필요한 라이브러리 libc·libm·libdl뿐, 내보낸 함수 10개, 64비트 16KB 정렬)를 통과했습니다. 이 라이브러리가 없던 IL2CPP 빌드는 앱이 시작해 게임 목록까지 읽었지만 게임을 불러오지 못했습니다. 라이브러리를 넣은 빌드를 기기에서 실행해 보는 것은 하지 못했습니다 |
+| Android | NDK로 만든 ARM64, ARMv7, x86_64 라이브러리가 `Plugins/Android`에 들어 있고, 모두 ELF 검사(CPU, 필요한 라이브러리 libc·libm·libdl뿐, 내보낸 함수 10개, 64비트 16KB 정렬)를 통과했습니다. 이 라이브러리가 없던 IL2CPP 빌드는 앱이 시작했지만 게임을 불러오지 못했습니다. 내장 게임을 APK 안에서 읽는 `ZipModSource`는 dotnet 하네스에서, 실제 내장 게임을 APK 모양(`assets/Mods`, 서명 블록 포함)으로 압축해 폴더에서 읽을 때와 같은 결과(`ContentHash` 포함)가 나오고 모두 시작되는 것까지 확인했습니다. 라이브러리와 이 읽기를 넣은 빌드를 기기에서 실행해 보는 것은 하지 못했습니다 |
 | 스크립팅 백엔드 | Mono 기준으로 작성했습니다. IL2CPP는 Android 빌드로 만들어 앱이 시작하는 것까지만 확인했습니다 |
 
 기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델·이미지 에셋은 없습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 생각하는 컴퓨터 플레이어는 오목(`gomoku_mcts`)과 체스(`chess_mcts`)에만 있고 다른 게임은 무작위 수를 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
