@@ -46,3 +46,19 @@ also contains these runtime libraries of the NDK:
   LLVM libc++, libc++abi, libunwind and the compiler-rt builtins - Apache License 2.0 with LLVM Exceptions - https://llvm.org/LICENSE.txt
 
 It calls the C library, math library and dynamic linker library of Android (libc, libm, libdl), which every device provides.
+
+
+Artwork in the games
+====================
+
+Assets/StreamingAssets/Mods/gostop/cards.png (the hwatu cards of Go-Stop)
+
+  Adapted from "Hwatu overview.svg" by Marcus Richert, based on Hanafuda graphics by Louie Mantia, Jr.
+  https://commons.wikimedia.org/wiki/File:Hwatu_overview.svg
+
+  Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+  https://creativecommons.org/licenses/by-sa/4.0/
+
+  Changes: the 48 cards were cut apart and rendered to one PNG, a white card face was put behind the line art, the
+  cards were put in Korean month order, and a card back and three bonus cards were added
+  (Tools/Hwatu/make_atlas.py). cards.png is distributed under the same license.

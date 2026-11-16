@@ -304,14 +304,18 @@ namespace BoardSandbox.Tests
             Assert.AreEqual(0, fromArchive.Errors.Count);
             Assert.Greater(fromArchive.Mods.Count, 0);
             Assert.AreEqual(fromFolder.Mods.Count, fromArchive.Mods.Count);
+            int images = 0;
             for (int i = 0; i < fromFolder.Mods.Count; i++)
             {
                 string id = fromFolder.Mods[i].Manifest.Id;
                 Assert.AreEqual(id, fromArchive.Mods[i].Manifest.Id);
                 Assert.AreEqual(fromFolder.Mods[i].Sources.Count, fromArchive.Mods[i].Sources.Count, id);
+                Assert.AreEqual(fromFolder.Mods[i].Assets.Count, fromArchive.Mods[i].Assets.Count, id);
                 Assert.AreEqual(fromFolder.Mods[i].ContentHash, fromArchive.Mods[i].ContentHash, id);
                 Assert.IsNull(fromArchive.Mods[i].Directory, id);
+                images += fromArchive.Mods[i].Assets.Count;
             }
+            Assert.Greater(images, 0, "the cards of Go-Stop are read out of the archive");
         }
 
         [Test]

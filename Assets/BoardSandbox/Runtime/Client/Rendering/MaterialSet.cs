@@ -11,16 +11,19 @@ namespace BoardSandbox.Client.Rendering
     {
         public const string OpaqueShaderName = "BoardSandbox/Basic";
         public const string OverlayShaderName = "BoardSandbox/Overlay";
+        public const string ImageShaderName = "BoardSandbox/Image";
 
         private static readonly int LightDirectionId = Shader.PropertyToID("_BseLightDirection");
         private static readonly int LightColorId = Shader.PropertyToID("_BseLightColor");
         private static readonly int LightLevelsId = Shader.PropertyToID("_BseLightLevels");
 
         private static readonly string[] OpaqueFallbacks = { "Universal Render Pipeline/Unlit", "Unlit/Color", "Sprites/Default" };
+        private static readonly string[] ImageFallbacks = { "Unlit/Texture", "Universal Render Pipeline/Unlit", "Sprites/Default" };
         private static readonly string[] OverlayFallbacks = { "Sprites/Default", "Unlit/Transparent Cutout", "Universal Render Pipeline/Unlit" };
 
         private readonly Shader _opaque;
         private readonly Shader _overlay;
+        private readonly Shader _image;
         private readonly Dictionary<ulong, Material> _pieces = new Dictionary<ulong, Material>();
         private readonly Dictionary<uint, Material> _overlays = new Dictionary<uint, Material>();
         private readonly List<Material> _owned = new List<Material>();
@@ -29,6 +32,7 @@ namespace BoardSandbox.Client.Rendering
         {
             _opaque = Find(OpaqueShaderName, OpaqueFallbacks);
             _overlay = Find(OverlayShaderName, OverlayFallbacks);
+            _image = Find(ImageShaderName, ImageFallbacks);
             if (_opaque == null || _overlay == null)
                 throw new InvalidOperationException("No usable shader was found; '" + OpaqueShaderName + "' should be in a Resources folder.");
 
@@ -49,6 +53,18 @@ namespace BoardSandbox.Client.Rendering
             material.color = color;
             SetFloat(material, "_Glossiness", Mathf.Clamp01(gloss));
             _pieces[key] = material;
+            return material;
+        }
+
+        // A material that shows an image of a mod. It is made anew on every call and belongs to the caller, who
+        // destroys it together with the texture; null when no shader can show a texture.
+        public Material CreateImage(Texture texture)
+        {
+            if (_image == null || texture == null)
+                return null;
+            Material material = new Material(_image) { name = "Image " + texture.name };
+            material.mainTexture = texture;
+            material.color = Color.white;
             return material;
         }
 

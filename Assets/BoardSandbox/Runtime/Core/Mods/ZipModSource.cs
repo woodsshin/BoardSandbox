@@ -104,6 +104,7 @@ namespace BoardSandbox.Core.Mods
         {
             string manifestJson;
             Dictionary<string, string> sources = new Dictionary<string, string>(StringComparer.Ordinal);
+            Dictionary<string, byte[]> assets = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             try
             {
                 manifestJson = ReadText(manifest);
@@ -120,12 +121,20 @@ namespace BoardSandbox.Core.Mods
                         throw new ModException("the mod has more than " + ModPackage.MaxFiles + " script files.");
                     sources[relative] = ReadText(files[relative]);
                 }
+                foreach (KeyValuePair<string, ZipArchiveEntry> file in files)
+                {
+                    if (!ModPackage.IsAssetPath(file.Key))
+                        continue;
+                    if (assets.Count >= ModPackage.MaxAssets)
+                        throw new ModException("the mod has more than " + ModPackage.MaxAssets + " image files.");
+                    assets[file.Key] = ReadBytes(file.Value);
+                }
             }
             catch (Exception e) when (IsReadFailure(e))
             {
                 throw new ModException("cannot read the mod in '" + location + "' (" + e.GetType().Name + "): " + e.Message, e);
             }
-            return new ModPackage(manifestJson, sources);
+            return new ModPackage(manifestJson, sources, assets, null);
         }
 
         private static string ReadText(ZipArchiveEntry entry)
@@ -135,6 +144,18 @@ namespace BoardSandbox.Core.Mods
             using (Stream stream = entry.Open())
             using (StreamReader reader = new StreamReader(stream, Utf8, true))
                 return reader.ReadToEnd();
+        }
+
+        private static byte[] ReadBytes(ZipArchiveEntry entry)
+        {
+            if (entry.Length > ModPackage.MaxAssetBytes)
+                throw new ModException("'" + entry.FullName + "' is larger than " + ModPackage.MaxAssetBytes + " bytes.");
+            using (Stream stream = entry.Open())
+            using (MemoryStream buffer = new MemoryStream())
+            {
+                stream.CopyTo(buffer);
+                return buffer.ToArray();
+            }
         }
 
         // What reading a file out of an archive can throw: the file cannot be opened or read, or it is not a zip archive.

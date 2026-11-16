@@ -373,5 +373,57 @@ namespace BoardSandbox.Tests
                     Assert.IsTrue(vm.CallJson("ping")["ok"].AsBool());
             }
         }
+
+        [Test]
+        public void ImagesOfAModAreReadAndArePartOfItsHash()
+        {
+            string plain = NewDirectory();
+            TestSupport.WriteFile(plain, "config.json", Manifest("pictures"));
+            TestSupport.WriteFile(plain, "main.luau", "return {}");
+            ModPackage without = ModLoader.LoadDirectory(plain);
+            Assert.AreEqual(0, without.Assets.Count);
+            Assert.AreEqual(new ModPackage(Manifest("pictures"), new Dictionary<string, string> { { "main.luau", "return {}" } }).ContentHash,
+                without.ContentHash, "a mod without images keeps the hash it had");
+
+            string root = NewDirectory();
+            TestSupport.WriteFile(root, "config.json", Manifest("pictures"));
+            TestSupport.WriteFile(root, "main.luau", "return {}");
+            File.WriteAllBytes(Path.Combine(root, "cards.png"), new byte[] { 1, 2, 3 });
+            Directory.CreateDirectory(Path.Combine(root, "art"));
+            File.WriteAllBytes(Path.Combine(root, "art", "Back.JPG"), new byte[] { 4 });
+            File.WriteAllBytes(Path.Combine(root, "notes.txt"), new byte[] { 5 });
+            Directory.CreateDirectory(Path.Combine(root, ".hidden"));
+            File.WriteAllBytes(Path.Combine(root, ".hidden", "x.png"), new byte[] { 6 });
+
+            ModPackage mod = ModLoader.LoadDirectory(root);
+            Assert.AreEqual(2, mod.Assets.Count);
+            Assert.AreEqual(3, mod.Assets["cards.png"].Length);
+            Assert.AreEqual(3, mod.Assets["cards.png"][2]);
+            Assert.AreEqual(4, mod.Assets["art/Back.JPG"][0]);
+            Assert.AreNotEqual(without.ContentHash, mod.ContentHash);
+
+            File.WriteAllBytes(Path.Combine(root, "cards.png"), new byte[] { 1, 2, 4 });
+            Assert.AreNotEqual(mod.ContentHash, ModLoader.LoadDirectory(root).ContentHash, "another picture is another mod");
+        }
+
+        [Test]
+        public void ImagePathsAreCheckedAndLimited()
+        {
+            Assert.IsTrue(ModPackage.IsAssetPath("cards.png"));
+            Assert.IsTrue(ModPackage.IsAssetPath("art/back.jpeg"));
+            Assert.IsFalse(ModPackage.IsAssetPath("cards.svg"));
+            Assert.IsFalse(ModPackage.IsAssetPath("../cards.png"));
+            Assert.IsFalse(ModPackage.IsAssetPath("/cards.png"));
+            Assert.IsFalse(ModPackage.IsAssetPath("art\\cards.png"));
+            Assert.IsFalse(ModPackage.IsAssetPath("c:/cards.png"));
+            Assert.IsFalse(ModPackage.IsAssetPath(".git/cards.png"));
+            Assert.IsFalse(ModPackage.IsAssetPath(""));
+
+            Dictionary<string, string> sources = new Dictionary<string, string> { { "main.luau", "return {}" } };
+            Assert.Throws<ModException>(() => new ModPackage(Manifest("pictures"), sources,
+                new Dictionary<string, byte[]> { { "../x.png", new byte[1] } }, null));
+            Assert.Throws<ModException>(() => new ModPackage(Manifest("pictures"), sources,
+                new Dictionary<string, byte[]> { { "big.png", new byte[ModPackage.MaxAssetBytes + 1] } }, null));
+        }
     }
 }

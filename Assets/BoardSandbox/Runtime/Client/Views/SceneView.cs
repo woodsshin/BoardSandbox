@@ -37,6 +37,9 @@ namespace BoardSandbox.Client.Views
             public GameObject Shade;
             public MeshFilter Filter;
             public MeshRenderer Renderer;
+            public GameObject Decal;
+            public MeshFilter DecalFilter;
+            public MeshRenderer DecalRenderer;
             public Vector3 Position;
             public Vector3 MoveFrom;
             public float MoveElapsed;
@@ -62,6 +65,9 @@ namespace BoardSandbox.Client.Views
         private readonly List<GameObject> _rings = new List<GameObject>();
         private readonly List<Mesh> _ownedMeshes = new List<Mesh>();
         private readonly HashSet<int> _effectIds = new HashSet<int>();
+        private readonly Dictionary<string, Material> _images = new Dictionary<string, Material>(StringComparer.Ordinal);
+        private readonly List<UnityEngine.Object> _ownedImages = new List<UnityEngine.Object>();
+        private IReadOnlyDictionary<string, byte[]> _assets;
 
         private GameObject _boardObject;
         private GameObject _tableObject;
@@ -136,15 +142,18 @@ namespace BoardSandbox.Client.Views
         }
 
         // Starts over for another game; every piece disappears at once.
-        public void Bind(ViewHints hints, ModManifest manifest)
+        // assets: the image files of the mod by path (ModPackage.Assets), for objects that show an "image".
+        public void Bind(ViewHints hints, ModManifest manifest, IReadOnlyDictionary<string, byte[]> assets = null)
         {
             _hints = hints ?? new ViewHints(null);
             _manifest = manifest;
+            _assets = assets;
             _syncedVersion = -1;
             _state = null;
             _stageEvent = null;
             Overflowed = false;
             ClearPieces();
+            ClearImages();
             HideMarkers();
             SetEffect(null, 0f);
             ApplyStage(StageSettings.Resolve(_hints.Client, null));
@@ -332,6 +341,7 @@ namespace BoardSandbox.Client.Views
                 return;
             _disposed = true;
             ObjectUtil.Destroy(_root);
+            ClearImages();
             foreach (Mesh mesh in _ownedMeshes)
                 ObjectUtil.Destroy(mesh);
             _ownedMeshes.Clear();
@@ -448,6 +458,103 @@ namespace BoardSandbox.Client.Views
             visual.Filter.sharedMesh = SharedMesh(look.MeshKey, look.BuildMesh);
             Color32 tint = look.Stickers == null ? look.Color : new Color32(255, 255, 255, look.Color.a);
             visual.Renderer.sharedMaterial = look.Transparent ? _materials.Overlay(tint) : _materials.Piece(tint, look.Gloss);
+            RestyleDecal(visual);
+        }
+
+        // The image on top of an object is a flat rectangle of its own just above the top face, a child of the body so
+        // that it moves, turns and grows with it.
+        private void RestyleDecal(Visual visual)
+        {
+            ObjectLook look = visual.Look;
+            Material material = look.Image == null ? null : ImageMaterial(look.Image);
+            if (material == null)
+            {
+                if (visual.Decal != null)
+                    visual.Decal.SetActive(false);
+                return;
+            }
+            if (visual.Decal == null)
+            {
+                visual.Decal = new GameObject("Image") { layer = _layer };
+                visual.Decal.transform.SetParent(visual.Body.transform, false);
+                visual.DecalFilter = visual.Decal.AddComponent<MeshFilter>();
+                visual.DecalRenderer = visual.Decal.AddComponent<MeshRenderer>();
+                Unlit(visual.DecalRenderer);
+            }
+            string key = "image:" + look.Shape + (look.Centered ? ":c:" : ":f:") + look.ImageKey;
+            if (!_meshes.TryGetValue(key, out Mesh mesh))
+            {
+                mesh = Own(ImageMesh(look, key));
+                _meshes[key] = mesh;
+            }
+            visual.DecalFilter.sharedMesh = mesh;
+            visual.DecalRenderer.sharedMaterial = material;
+            visual.Decal.SetActive(true);
+        }
+
+        private static Mesh ImageMesh(ObjectLook look, string name)
+        {
+            Vector3 natural = BoardShapes.NaturalSize(look.Shape);
+            float halfX = natural.x * 0.5f;
+            float halfZ = natural.z * 0.5f;
+            // Just above the top face, in the space of the object, which is scaled with it.
+            float top = (look.Centered ? natural.y * 0.5f : natural.y) * 1.01f;
+            float left = look.ImageX;
+            float right = look.ImageX + look.ImageWidth;
+            // Images count from their top edge, textures from their bottom edge.
+            float upper = 1f - look.ImageY;
+            float lower = 1f - look.ImageY - look.ImageHeight;
+
+            // The top of the image is on the far side of the table, which is +z in the scene.
+            Mesh mesh = new Mesh { name = name };
+            mesh.vertices = new[]
+            {
+                new Vector3(-halfX, top, -halfZ), new Vector3(-halfX, top, halfZ), new Vector3(halfX, top, halfZ), new Vector3(halfX, top, -halfZ)
+            };
+            mesh.normals = new[] { Vector3.up, Vector3.up, Vector3.up, Vector3.up };
+            mesh.uv = new[] { new Vector2(left, lower), new Vector2(left, upper), new Vector2(right, upper), new Vector2(right, lower) };
+            mesh.triangles = new[] { 0, 1, 2, 0, 2, 3 };
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        // The material that shows an image file of the mod; null when the mod has no such file or it is no image.
+        // Asked once per file: a file that cannot be shown is remembered as such.
+        private Material ImageMaterial(string path)
+        {
+            if (_images.TryGetValue(path, out Material known))
+                return known;
+            Material material = null;
+            if (_assets != null && _assets.TryGetValue(path, out byte[] bytes) && bytes != null && bytes.Length > 0)
+            {
+                Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, true) { name = path };
+                if (texture.LoadImage(bytes, true))
+                {
+                    texture.wrapMode = TextureWrapMode.Clamp;
+                    texture.filterMode = FilterMode.Trilinear;
+                    texture.anisoLevel = 4;
+                    material = _materials.CreateImage(texture);
+                }
+                if (material == null)
+                {
+                    ObjectUtil.Destroy(texture);
+                }
+                else
+                {
+                    _ownedImages.Add(texture);
+                    _ownedImages.Add(material);
+                }
+            }
+            _images[path] = material;
+            return material;
+        }
+
+        private void ClearImages()
+        {
+            foreach (UnityEngine.Object item in _ownedImages)
+                ObjectUtil.Destroy(item);
+            _ownedImages.Clear();
+            _images.Clear();
         }
 
         // Returns false once the piece has finished shrinking away.

@@ -353,7 +353,7 @@ namespace BoardSandbox.Client
                     panel.Queue = queues[i];
                     panel.FramedVersion = -1;
                     panel.OverflowReported = false;
-                    panel.View.Bind(_hints, _manifest);
+                    panel.View.Bind(_hints, _manifest, (_multiplayer?.Room != null ? _multiplayer.Room.Mod : _boundSession?.Mod)?.Assets);
                 }
                 if (ReferenceEquals(panel.Queue, acting))
                     _active = panel;
