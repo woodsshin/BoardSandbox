@@ -782,7 +782,9 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 하네스는 환경 변수 `BSE_NATIVE_DIR`(네이티브 라이브러리 폴더)와 `BSE_MODS_DIR`(모드 폴더)을 따릅니다. `Tools/UnityCheck`는 Unity 없이 C# 컴파일을 검사하는 개발용 프로젝트로, UnityEngine 타입이 든 어셈블리 `.reference/UnityEngine.dll`이 있어야 빌드됩니다. `.reference/Steamworks.NET/`에 Steamworks.NET 패키지의 `Runtime` 소스를 두면 Steam 연동 코드도 함께 검사합니다. `.reference`는 저장소에 포함하지 않습니다.
 
-### 빌드 : [다운로드](https://drive.google.com/file/d/1_2vO5xoq66Gf55g6tXKK89JYEZO3Eki4/view?usp=drive_link)
+### 빌드
+- 윈도우 빌드 : [다운로드](https://drive.google.com/file/d/1_2vO5xoq66Gf55g6tXKK89JYEZO3Eki4/view?usp=drive_link)
+- 안드로이드 빌드 : [다운로드](https://drive.google.com/file/d/1SPcVkRUQnaPEPeV-nXK4K22yn-9Bdz_e/view?usp=sharing)
 
 ## 상태와 제한
 
