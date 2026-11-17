@@ -444,6 +444,7 @@ namespace BoardSandbox.Client
                 foreach (Panel panel in _panels)
                 {
                     panel.Queue.Update(delta);
+                    panel.View.ViewerSeat = ViewerSeat(panel);
                     panel.View.Sync(panel.Queue.Display);
                     panel.View.SetEffect(panel.Queue.ActiveEffect, panel.Queue.Progress);
                     if (panel.View.Overflowed && !panel.OverflowReported)
@@ -481,6 +482,45 @@ namespace BoardSandbox.Client
                 panel.View.SetPreview(show, _hoverX, _hoverY, color);
             }
         }
+
+        // The seat whose player looks at the board, 0 for none; a game may show each seat something else (the own
+        // cards). In a room that is the seat of this player. At one computer it is the person on turn, and while a
+        // computer player moves, the person who looked last.
+        private int ViewerSeat(Panel panel)
+        {
+            NetRoom room = _multiplayer?.Room;
+            if (room != null)
+            {
+                NetPlayer me = room.LocalPlayer;
+                return me != null && me.Seat > 0 ? me.Seat : 0;
+            }
+            GameSession session = _host.Session;
+            if (session == null || !session.IsStarted)
+            {
+                _viewerSeat = 0;
+                return 0;
+            }
+            int turn = panel.Queue.Display.Turn;
+            if (turn > 0 && _host.GetSeatMode(turn) == SeatMode.Human)
+            {
+                _viewerSeat = turn;
+            }
+            else if (_viewerSeat <= 0 || _host.GetSeatMode(_viewerSeat) != SeatMode.Human)
+            {
+                _viewerSeat = 0;
+                for (int seat = 1; seat <= session.Mod.Manifest.MaxPlayers; seat++)
+                {
+                    if (_host.GetSeatMode(seat) == SeatMode.Human)
+                    {
+                        _viewerSeat = seat;
+                        break;
+                    }
+                }
+            }
+            return _viewerSeat;
+        }
+
+        private int _viewerSeat;
 
         private int ActingSeat
         {

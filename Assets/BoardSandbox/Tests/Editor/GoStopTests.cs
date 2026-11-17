@@ -115,33 +115,86 @@ namespace BoardSandbox.Tests
             }
         }
 
+        // The back is the first cell of the last row of the atlas.
+        private static bool IsBack(JsonValue props)
+        {
+            JsonValue rect = props["image_rect"];
+            Assert.AreEqual(4, rect.Count);
+            return rect[1].AsDouble() > 0.85 && rect[0].AsDouble() < 0.01;
+        }
+
+        private static int CountFaceDown(ViewModel view, int seat)
+        {
+            int count = 0;
+            foreach (ViewObject piece in view.Objects)
+            {
+                if (piece.Kind == "card" && IsBack(piece.PropsFor(seat)))
+                    count++;
+            }
+            return count;
+        }
+
         [Test]
-        public void OnlyTheHandOfTheViewerIsShownAndCardsUseTheAtlas()
+        public void EveryPlayerSeesTheOwnHandAtTheBottomAndTheOthersFaceDown()
         {
             using (GameSession session = Start("{\"players\":2}"))
             {
-                JsonValue back = null;
-                int faceDown = 0;
-                int total = 0;
+                JsonValue state = session.Query("state");
+                if (state["phase"].AsString() != "play")
+                    return;
+                int stock = state["stock"].AsInt();
+                int hand1 = state["seats"][0]["hand"].AsInt();
+                int hand2 = state["seats"][1]["hand"].AsInt();
+                Assert.AreEqual(stock + hand1 + hand2, CountFaceDown(session.View, 0), "someone without a seat sees no hand");
+                Assert.AreEqual(stock + hand2, CountFaceDown(session.View, 1));
+                Assert.AreEqual(stock + hand1, CountFaceDown(session.View, 2));
+                Assert.AreEqual(stock + hand1 + hand2, CountFaceDown(session.View, 3), "a seat that does not play sees what a spectator sees");
+
+                // The cards a player sees face up are the own hand, in the row nearest to that player.
+                foreach (int seat in new[] { 1, 2 })
+                {
+                    int near = 0;
+                    foreach (ViewObject piece in session.View.Objects)
+                    {
+                        if (piece.Kind != "card")
+                            continue;
+                        JsonValue seen = piece.PropsFor(seat);
+                        if (seen["pos"][2].AsDouble() > 6 && !IsBack(seen))
+                            near++;
+                    }
+                    Assert.AreEqual(seat == 1 ? hand1 : hand2, near, "seat " + seat);
+                }
+
+                // The lines of the players read "나" for the player who looks.
+                int mine = 0;
                 foreach (ViewObject piece in session.View.Objects)
                 {
-                    if (piece.Kind != "card")
-                        continue;
-                    total++;
-                    JsonValue rect = piece.Props["image_rect"];
-                    Assert.AreEqual(4, rect.Count);
-                    // The back is the first cell of the last row of the atlas.
-                    if (rect[1].AsDouble() > 0.85 && rect[0].AsDouble() < 0.01)
+                    if (piece.Kind == "text" && piece.PropsFor(2)["label"].AsString().Contains("나"))
                     {
-                        faceDown++;
-                        back = rect;
+                        mine++;
+                        Assert.AreEqual(2, piece.Owner);
+                        Assert.Greater(piece.PropsFor(2)["pos"][2].AsDouble(), 0, "the own line is at the bottom");
+                        StringAssert.Contains("Player 2", piece.Props["label"].AsString());
                     }
                 }
-                Assert.AreEqual(50, total);
-                Assert.IsNotNull(back);
+                Assert.AreEqual(1, mine);
+            }
+        }
+
+        [Test]
+        public void WhatASeatSeesFollowsLaterChanges()
+        {
+            using (GameSession session = Start("{\"players\":2,\"open_hands\":true}"))
+            {
                 JsonValue state = session.Query("state");
-                if (state["phase"].AsString() == "play")
-                    Assert.AreEqual(state["stock"].AsInt() + state["seats"][1]["hand"].AsInt(), faceDown, "the stock and the other hand are face down");
+                if (state["phase"].AsString() != "play")
+                    return;
+                Assert.AreEqual(state["stock"].AsInt(), CountFaceDown(session.View, 0), "open hands show every hand to everyone");
+                int before = CountFaceDown(session.View, 2);
+                Assert.IsTrue(session.Submit(new InputPacket(1, session.RandomCommand(1, 5), "test")).IsAccepted);
+                JsonValue after = session.Query("state");
+                if (after["phase"].AsString() == "play" && after["stock"].AsInt() != state["stock"].AsInt())
+                    Assert.AreEqual(after["stock"].AsInt(), CountFaceDown(session.View, 2), "was " + before);
             }
         }
 

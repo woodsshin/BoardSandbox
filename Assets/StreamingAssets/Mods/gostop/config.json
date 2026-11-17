@@ -1,7 +1,7 @@
 {
   "id": "gostop",
   "name": "Go-Stop",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Korean hwatu. Choose two players (Matgo, go or stop from 7 points) or three (from 3 points). Click a card in your hand to play it; bombs, shaking, ppeok, kisses, sweeps and bonus cards are in. Set the other seats to Computer to play against the rule-based player (level 1) or the Monte Carlo player (levels 2 and 3). Hwatu artwork: Marcus Richert, based on Louie Mantia, Jr. - CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/), https://commons.wikimedia.org/wiki/File:Hwatu_overview.svg",
   "api": 1,
   "entry": "logic.luau",
@@ -11,7 +11,7 @@
     { "name": "Player 2", "color": "#4d8fe6" },
     { "name": "Player 3", "color": "#e0574f" }
   ],
-  "options": { "players": 0, "bonus": 2, "view_seat": 1, "open_hands": false },
+  "options": { "players": 0, "bonus": 2, "open_hands": false },
   "ai": { "levels": [1, 300, 1200] },
   "client": {
     "stage": {

@@ -50,7 +50,9 @@ type Place = { x: number, z: number, hand_scale: number, hand_step: number, cap_
 -- options
 local option_players = 0
 local option_bonus = 2
-local view_seat = 1
+-- Whose eyes the table is being laid out for: a seat, or 0 for someone who plays no seat (seen from seat 1, with
+-- every hand face down). Every player gets the own hand at the bottom, face up; see sync.
+local viewpoint = 0
 local open_hands = false
 
 local S: State? = nil
@@ -84,7 +86,7 @@ end
 
 local function place_of(state: State, seat: number): Place
 	local n: number = state.n
-	local viewer = if view_seat >= 1 and view_seat <= n then view_seat else 1
+	local viewer = if viewpoint >= 1 and viewpoint <= n then viewpoint else 1
 	local offset = (seat - viewer) % n
 	if offset == 0 then
 		return { x = 0, z = 6.9, hand_scale = 1, hand_step = 1.08, cap_z = 4.3, cap_scale = 0.72, cap_step = 0.4,
@@ -99,19 +101,53 @@ local function place_of(state: State, seat: number): Place
 		groups = { cx - 4.0, cx - 2.75, cx - 0.9, cx + 0.95 }, wrap = 12, row = -0.38, panel_x = cx, panel_z = -6.15, towards = -1, text = 0.32, detail = 0.23, gap = 0.38 }
 end
 
+type Spot = { x: number, y: number, z: number, scale: number, up: boolean }
+
+-- Where the cards go, for every viewpoint, until flush sends what changed.
+local frame: { [number]: { [number]: Spot } } = {}
+local frame_pick: { [number]: boolean } = {}
+
 local function set_card(id: number, x: number, y: number, z: number, scale: number, up: boolean, pick: boolean)
-	local key = string.format("%.2f %.3f %.2f %.2f %s %s", x, y, z, scale, tostring(up), tostring(pick))
-	if shown[id] == key then
-		return
+	local spots = frame[id]
+	if spots == nil then
+		spots = {}
+		frame[id] = spots
 	end
-	shown[id] = key
-	bse.view.set(card_obj[id], {
-		pos = { x, y, z },
-		scale = scale,
-		image_rect = rect(if up then face_index(id) else BACK),
-		pick = pick,
-		visible = true,
-	})
+	spots[viewpoint] = { x = x, y = y, z = z, scale = scale, up = up }
+	frame_pick[id] = pick
+end
+
+local function spot_props(id: number, spot: Spot): { [string]: any }
+	return { pos = { spot.x, spot.y, spot.z }, scale = spot.scale, image_rect = rect(if spot.up then face_index(id) else BACK) }
+end
+
+-- Sends the cards that changed. The properties of an object are what someone without a seat sees; "for_seat" holds
+-- what the player of each seat sees instead, which the screen of that player puts on top.
+local function flush(views: number)
+	for id, spots in frame do
+		local base = spots[0]
+		local parts: { string } = {}
+		for v = 0, views do
+			local spot = spots[v] or base
+			table.insert(parts, string.format("%.2f %.3f %.2f %.2f %s", spot.x, spot.y, spot.z, spot.scale, tostring(spot.up)))
+		end
+		table.insert(parts, tostring(frame_pick[id]))
+		local key = table.concat(parts, "|")
+		if shown[id] ~= key then
+			shown[id] = key
+			local props = spot_props(id, base)
+			props.pick = frame_pick[id]
+			props.visible = true
+			local for_seat: { [string]: any } = {}
+			for v = 1, views do
+				for_seat[tostring(v)] = spot_props(id, spots[v] or base)
+			end
+			props.for_seat = for_seat
+			bse.view.set(card_obj[id], props)
+		end
+	end
+	table.clear(frame)
+	table.clear(frame_pick)
 end
 
 local function floor_slot(month: number): number
@@ -135,7 +171,7 @@ local function floor_slot(month: number): number
 end
 
 local function seat_name(state: State, seat: number): string
-	local viewer = if view_seat >= 1 and view_seat <= state.n then view_seat else 0
+	local viewer = viewpoint
 	if viewer == 0 then
 		return SEAT_NAMES[seat]
 	elseif seat == viewer then
@@ -248,64 +284,29 @@ local function result_lines(state: State): (string, string, string)
 	return `{name} 승리! +{result.total}점`, how, table.concat(pays, "   ")
 end
 
-local function show_button(index: number, text: string?, cmd: any, x: number)
+local function show_button(index: number, text: string?, cmd: any, x: number, width: number?)
 	if text == nil then
 		button_cmd[index] = false
 		bse.view.set(buttons[index], { visible = false, pick = false })
 	else
 		button_cmd[index] = cmd
-		bse.view.set(buttons[index], { visible = true, pick = true, label = text, pos = { x, 0.02, 2.85 } })
+		bse.view.set(buttons[index], { visible = true, pick = true, label = text, pos = { x, 0.02, 2.85 }, size = { width or 3.6, 0.06, 0.9 } })
 	end
 end
 
-local function sync_controls()
-	local state = S
-	if state == nil then
-		show_button(1, "2인 맞고 (7점)", { action = "players", count = 2 }, -2.6)
-		show_button(2, "3인 고스톱 (3점)", { action = "players", count = 3 }, 2.6)
-		show_button(3, nil, nil, 0)
-		bse.view.set(banner, { label = "몇 명이 칠까요?", labels = { { text = "2인 맞고는 7점, 3인 고스톱은 3점부터 고·스톱", dx = 0, dy = 0.5, size = 0.3, color = "#f2efe2" } } })
-		return
-	end
-
+-- The lines in the middle of the table, as the current viewpoint reads them.
+local function banner_text(state: State): (string, { any })
 	local head, line1, line2 = "", "", ""
 	if state.phase == "over" then
 		head, line1, line2 = result_lines(state)
-		show_button(1, nil, nil, 0)
-		show_button(2, nil, nil, 0)
-		show_button(3, nil, nil, 0)
 	else
 		head = table.concat(events, " ")
-		local seat: number = state.turn
 		if prompt ~= nil then
-			if prompt.kind == "bomb" then
-				line1 = "폭탄을 터뜨릴까요?"
-				show_button(1, "폭탄", { action = "play", card = prompt.card, bomb = true }, -2)
-				show_button(2, "한 장만", { action = "play", card = prompt.card }, 2)
-			else
-				line1 = "흔들까요?"
-				show_button(1, "흔들기", { action = "play", card = prompt.card, shake = true }, -2)
-				show_button(2, "그냥 내기", { action = "play", card = prompt.card }, 2)
-			end
-			show_button(3, nil, nil, 0)
+			line1 = if prompt.kind == "bomb" then "폭탄을 터뜨릴까요?" else "흔들까요?"
 		elseif state.phase == "gostop" then
-			line1 = `{seat_name(state, seat)} {G.score_of(state, seat)}점 - 고 또는 스톱`
-			show_button(1, "고", { action = "go" }, -2)
-			show_button(2, "스톱", { action = "stop" }, 2)
-			show_button(3, nil, nil, 0)
+			line1 = `{seat_name(state, state.turn)} {G.score_of(state, state.turn)}점 - 고 또는 스톱`
 		elseif state.phase == "pick" then
 			line1 = "가져갈 패를 고르세요"
-			show_button(1, nil, nil, 0)
-			show_button(2, nil, nil, 0)
-			show_button(3, nil, nil, 0)
-		else
-			show_button(1, nil, nil, 0)
-			show_button(2, nil, nil, 0)
-			if G.can_flip(state, seat) then
-				show_button(3, "뒤집기만", { action = "flip" }, 0)
-			else
-				show_button(3, nil, nil, 0)
-			end
 		end
 	end
 	if head == "" then
@@ -318,26 +319,92 @@ local function sync_controls()
 	if line2 ~= "" then
 		table.insert(small, { text = line2, dx = 0, dy = 0.92, size = 0.3, color = "#f2efe2", bold = true })
 	end
-	bse.view.set(banner, { label = head, labels = small })
-	for seat = 1, state.n do
-		local p = place_of(state, seat)
-		bse.view.set(panels[seat], {
-			label = seat_text(state, seat),
-			labels = { { text = detail_text(state, seat), dx = 0, dy = p.gap, size = p.detail, color = "#f2efe2" } },
+	return head, small
+end
+
+local function sync_controls()
+	local state = S
+	if state == nil then
+		show_button(1, "2인 맞고 (7점)", { action = "players", count = 2 }, -3.6, 6.2)
+		show_button(2, "3인 고스톱 (3점)", { action = "players", count = 3 }, 3.6, 6.2)
+		show_button(3, nil, nil, 0)
+		bse.view.set(banner, {
+			label = "몇 명이 칠까요?",
+			labels = { { text = "2인 맞고는 7점, 3인 고스톱은 3점부터 고·스톱", dx = 0, dy = 0.5, size = 0.3, color = "#f2efe2" } },
+			for_seat = {},
 		})
+		return
 	end
+
+	local seat: number = state.turn
+	if state.phase == "over" or state.phase == "pick" then
+		show_button(1, nil, nil, 0)
+		show_button(2, nil, nil, 0)
+		show_button(3, nil, nil, 0)
+	elseif prompt ~= nil then
+		if prompt.kind == "bomb" then
+			show_button(1, "폭탄", { action = "play", card = prompt.card, bomb = true }, -2.2)
+			show_button(2, "한 장만", { action = "play", card = prompt.card }, 2.2)
+		else
+			show_button(1, "흔들기", { action = "play", card = prompt.card, shake = true }, -2.2)
+			show_button(2, "그냥 내기", { action = "play", card = prompt.card }, 2.2)
+		end
+		show_button(3, nil, nil, 0)
+	elseif state.phase == "gostop" then
+		show_button(1, "고", { action = "go" }, -2.2)
+		show_button(2, "스톱", { action = "stop" }, 2.2)
+		show_button(3, nil, nil, 0)
+	else
+		show_button(1, nil, nil, 0)
+		show_button(2, nil, nil, 0)
+		if G.can_flip(state, seat) then
+			show_button(3, "뒤집기만", { action = "flip" }, 0)
+		else
+			show_button(3, nil, nil, 0)
+		end
+	end
+
+	-- The texts name the players as each of them sees it ("나", "상대"), and every player has the own line at the bottom.
+	local banner_props: { [string]: any } = {}
+	local banner_for: { [string]: any } = {}
+	for v = 0, state.n do
+		viewpoint = v
+		local head, small = banner_text(state)
+		if v == 0 then
+			banner_props.label = head
+			banner_props.labels = small
+		else
+			banner_for[tostring(v)] = { label = head, labels = small }
+		end
+	end
+	banner_props.for_seat = banner_for
+	bse.view.set(banner, banner_props)
+	for line = 1, state.n do
+		local props: { [string]: any } = {}
+		local for_seat: { [string]: any } = {}
+		for v = 0, state.n do
+			viewpoint = v
+			local p = place_of(state, line)
+			local seen = {
+				pos = { p.panel_x, 0.02, p.panel_z },
+				label = seat_text(state, line),
+				label_size = p.text,
+				labels = { { text = detail_text(state, line), dx = 0, dy = p.gap, size = p.detail, color = "#f2efe2" } },
+			}
+			if v == 0 then
+				props = seen
+			else
+				for_seat[tostring(v)] = seen
+			end
+		end
+		props.for_seat = for_seat
+		bse.view.set(panels[line], props)
+	end
+	viewpoint = 0
 end
 
 -- Puts every card where the state says it is. Only what changed is sent.
-local function sync()
-	if headless then
-		return
-	end
-	local state = S
-	if state == nil then
-		sync_controls()
-		return
-	end
+local function lay_out(state: State)
 	local over = state.phase == "over"
 	local turn: number = state.turn
 	local playing = state.phase == "play" and prompt == nil
@@ -381,8 +448,7 @@ local function sync()
 		local p = place_of(state, seat)
 		local hand: { number } = table.clone(state.hands[seat])
 		table.sort(hand)
-		local viewer = if view_seat > state.n then 1 else view_seat
-		local up = over or open_hands or seat == viewer
+		local up = over or open_hands or seat == viewpoint
 		local count = #hand
 		for i, id in hand do
 			local x = p.x + (i - (count + 1) / 2) * p.hand_step
@@ -399,6 +465,22 @@ local function sync()
 			local x = p.groups[kind] + (index % p.wrap) * p.cap_step
 			set_card(id, x, 0.02 + index * 0.008, p.cap_z + row * p.row, p.cap_scale, true, false)
 		end
+	end
+end
+
+-- Puts every card where the state says it is, once for every viewpoint. Only what changed is sent.
+local function sync()
+	if headless then
+		return
+	end
+	local state = S
+	if state ~= nil then
+		for v = 0, state.n do
+			viewpoint = v
+			lay_out(state)
+		end
+		viewpoint = 0
+		flush(state.n)
 	end
 	sync_controls()
 end
@@ -418,7 +500,7 @@ local function pause(seconds: number)
 	bse.emit({ t = "fx", kind = "wait", seconds = math.min(10, seconds * (1 + 0.5 * behind)) })
 end
 
-local function step(_state: State, what: string, data: any)
+local function step(state: State, what: string, data: any)
 	if what == "event" or what == "steal" then
 		if not counting then
 			table.insert(events, if what == "steal" then `피 {data}장 뺏음` else EVENT_TEXT[data] or tostring(data))
@@ -432,7 +514,12 @@ local function step(_state: State, what: string, data: any)
 		-- The card is turned over on the stock, large, before it goes where it belongs. By now the card played from
 		-- the hand has landed.
 		if not counting then
-			set_card(data, STOCK_X + 0.3, 1.0, STOCK_Z, 1.35, true, false)
+			for v = 0, state.n do
+				viewpoint = v
+				set_card(data, STOCK_X + 0.3, 1.0, STOCK_Z, 1.35, true, false)
+			end
+			viewpoint = 0
+			flush(state.n)
 		end
 		pause(FLIP_SECONDS)
 	end
@@ -517,7 +604,6 @@ function rules.new_game(options: { [string]: any })
 		option_players = 2
 	end
 	option_bonus = integer(options.bonus, 2, 0, 3)
-	view_seat = integer(options.view_seat, 1, 0, 3)
 	open_hands = options.open_hands == true
 	S = nil
 	prompt = nil
@@ -726,7 +812,7 @@ end
 function rules.snapshot(): any
 	return {
 		state = S or false,
-		players = option_players, bonus = option_bonus, view_seat = view_seat, open_hands = open_hands,
+		players = option_players, bonus = option_bonus, open_hands = open_hands,
 		card_obj = card_obj, shown = shown, slot_of = slot_of, buttons = buttons, button_cmd = button_cmd, panels = panels,
 		banner = banner, prompt = prompt or false, events = events, announced = announced,
 	}
@@ -737,7 +823,6 @@ function rules.restore(data: any)
 	S = if type(data.state) == "table" then data.state else nil
 	option_players = data.players
 	option_bonus = data.bonus
-	view_seat = data.view_seat
 	open_hands = data.open_hands
 	card_obj = data.card_obj or {}
 	shown = data.shown or {}

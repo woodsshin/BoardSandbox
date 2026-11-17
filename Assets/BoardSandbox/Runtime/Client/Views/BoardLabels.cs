@@ -41,7 +41,7 @@ namespace BoardSandbox.Client.Views
             float viewHeight = camera.pixelHeight;
             foreach (ViewObject piece in view.Objects)
             {
-                JsonValue props = piece.Props;
+                JsonValue props = piece.PropsFor(scene.ViewerSeat);
                 string label = props["label"].AsString();
                 JsonValue list = props["labels"];
                 bool many = list.IsArray && list.Count > 0;

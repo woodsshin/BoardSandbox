@@ -91,9 +91,10 @@ namespace BoardSandbox.Client.Views
                 && Color.r == other.Color.r && Color.g == other.Color.g && Color.b == other.Color.b && Color.a == other.Color.a;
         }
 
-        public static ObjectLook For(ViewObject piece, ViewHints hints, ModManifest manifest)
+        // viewer: the seat whose player looks at the object, 0 for nobody in particular (ViewObject.PropsFor).
+        public static ObjectLook For(ViewObject piece, ViewHints hints, ModManifest manifest, int viewer = 0)
         {
-            JsonValue props = piece.Props;
+            JsonValue props = piece.PropsFor(viewer);
             JsonValue defaults = hints.PieceDefaults(piece.Kind);
             ObjectLook look = new ObjectLook();
 

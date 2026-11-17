@@ -142,6 +142,10 @@ namespace BoardSandbox.Client.Views
         }
 
         // Starts over for another game; every piece disappears at once.
+        // The seat of the player who looks at this view, 0 for none: objects are shown as that seat sees them
+        // (ViewObject.PropsFor), which is how a player sees the own cards and the backs of the others.
+        public int ViewerSeat { get; set; }
+
         // assets: the image files of the mod by path (ModPackage.Assets), for objects that show an "image".
         public void Bind(ViewHints hints, ModManifest manifest, IReadOnlyDictionary<string, byte[]> assets = null)
         {
@@ -191,7 +195,7 @@ namespace BoardSandbox.Client.Views
                 }
                 drawn++;
                 present.Add(piece.Id);
-                ObjectLook look = ObjectLook.For(piece, _hints, _manifest);
+                ObjectLook look = ObjectLook.For(piece, _hints, _manifest, ViewerSeat);
                 if (_byId.TryGetValue(piece.Id, out Visual visual) && !visual.Removing)
                     Update(visual, piece, look);
                 else
