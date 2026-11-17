@@ -160,6 +160,12 @@ namespace BoardSandbox.Tests
         [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"options\":[1]}")]
         [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"client\":5}")]
         [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"client\":[]}")]
+        [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"players\":{\"min\":2,\"max\":3,\"option\":5},\"options\":{\"players\":0}}")]
+        [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"players\":{\"min\":2,\"max\":3,\"option\":\"\"},\"options\":{\"players\":0}}")]
+        [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"players\":{\"min\":2,\"max\":3,\"option\":\"players\"}}")]
+        [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"players\":{\"min\":2,\"max\":3,\"option\":\"count\"},\"options\":{\"players\":0}}")]
+        [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"players\":{\"computer\":\"no\"}}")]
+        [TestCase("{\"id\":\"x\",\"name\":\"x\",\"api\":1,\"entry\":\"x.luau\",\"players\":{\"computer\":0}}")]
         public void RejectsInvalidManifests(string json)
         {
             Assert.Throws<ModException>(() => ModManifest.Parse(json));
@@ -183,6 +189,92 @@ namespace BoardSandbox.Tests
             ModManifest manifest = ModManifest.Parse(Manifest("empty", ",\"options\":[]"));
             Assert.IsTrue(manifest.DefaultOptions.IsObject);
             Assert.AreEqual(0, manifest.DefaultOptions.Count);
+        }
+
+        [Test]
+        public void AGameCanNameTheOptionThatSetsHowManyPlayAndTurnTheComputerOff()
+        {
+            ModManifest plain = ModManifest.Parse(MinimalManifest);
+            Assert.AreEqual(string.Empty, plain.PlayersOption);
+            Assert.IsTrue(plain.AllowComputer);
+            Assert.IsFalse(plain.ChoosesPlayerCount);
+            Assert.AreEqual(2, plain.SeatCount(plain.DefaultOptions));
+            Assert.AreEqual(2, plain.SeatCount(null));
+
+            ModManifest manifest = ModManifest.Parse(Manifest("three",
+                ",\"players\":{\"min\":2,\"max\":3,\"option\":\"players\",\"computer\":false},\"options\":{\"players\":0}"));
+            Assert.AreEqual("players", manifest.PlayersOption);
+            Assert.IsFalse(manifest.AllowComputer);
+            Assert.IsTrue(manifest.ChoosesPlayerCount);
+            Assert.AreEqual(3, manifest.SeatCount(manifest.DefaultOptions), "0 is no choice: the game plays with every seat");
+            Assert.AreEqual(2, manifest.SeatCount(JsonValue.Parse("{\"players\":2}")));
+            Assert.AreEqual(3, manifest.SeatCount(JsonValue.Parse("{\"players\":3}")));
+
+            // The option only counts when it is a whole number of players that the game takes.
+            foreach (string odd in new[] { "{\"players\":1}", "{\"players\":4}", "{\"players\":2.5}", "{\"players\":\"2\"}", "{\"players\":null}", "{}", "[]", "5" })
+                Assert.AreEqual(3, manifest.SeatCount(JsonValue.Parse(odd)), odd);
+            Assert.AreEqual(3, manifest.SeatCount(null));
+        }
+
+        [Test]
+        public void TheNumberOfPlayersIsOnlyAChoiceWhereItCanBeOne()
+        {
+            const string options = ",\"options\":{\"players\":0}";
+            Assert.IsTrue(ModManifest.Parse(Manifest("a", ",\"players\":{\"min\":2,\"max\":4,\"option\":\"players\"}" + options)).ChoosesPlayerCount);
+
+            // One number of players, players who sit at the same grid or at tables of their own, or an option that is not
+            // named have nothing to choose.
+            Assert.IsFalse(ModManifest.Parse(Manifest("b", ",\"players\":{\"min\":2,\"max\":2,\"option\":\"players\"}" + options)).ChoosesPlayerCount);
+            Assert.IsFalse(ModManifest.Parse(Manifest("c",
+                ",\"players\":{\"min\":1,\"max\":2,\"option\":\"players\"},\"multiplayer\":{\"cooperative\":true}" + options)).ChoosesPlayerCount);
+            Assert.IsFalse(ModManifest.Parse(Manifest("d",
+                ",\"players\":{\"min\":1,\"max\":4,\"option\":\"players\"},\"multiplayer\":{\"mode\":\"split\",\"players\":4}" + options)).ChoosesPlayerCount);
+            Assert.IsFalse(ModManifest.Parse(Manifest("e", ",\"players\":{\"min\":2,\"max\":4}" + options)).ChoosesPlayerCount);
+        }
+
+        [Test]
+        public void AGameHasAComputerPlayerWhenItBringsOneAndAllowsIt()
+        {
+            const string ai = ",\"ai\":{\"levels\":[10,100]}";
+            Assert.IsFalse(ModManifest.Parse(MinimalManifest).HasComputerPlayer, "no player to play with");
+            Assert.IsTrue(ModManifest.Parse(Manifest("ai", ai)).HasComputerPlayer);
+            Assert.IsTrue(ModManifest.Parse(Manifest("yes", ai + ",\"players\":{\"computer\":true}")).HasComputerPlayer);
+            ModManifest off = ModManifest.Parse(Manifest("off", ai + ",\"players\":{\"computer\":false}"));
+            Assert.IsFalse(off.AllowComputer);
+            Assert.IsFalse(off.HasComputerPlayer, "the game does not want one");
+        }
+
+        [Test]
+        public void TheGamesThatShipSayWhoPlaysThem()
+        {
+            // Go-Stop is played by two or three, which the host chooses; until it does every seat plays.
+            ModManifest gostop = TestSupport.LoadMod("gostop").Manifest;
+            Assert.AreEqual("players", gostop.PlayersOption);
+            Assert.IsTrue(gostop.ChoosesPlayerCount);
+            Assert.IsTrue(gostop.HasComputerPlayer);
+            Assert.AreEqual(3, gostop.SeatCount(gostop.DefaultOptions));
+            Assert.AreEqual(2, gostop.SeatCount(JsonValue.Parse("{\"players\":2}")));
+
+            foreach (string id in new[] { "chess", "gomoku" })
+            {
+                ModManifest manifest = TestSupport.LoadMod(id).Manifest;
+                Assert.AreEqual(string.Empty, manifest.PlayersOption, id);
+                Assert.IsFalse(manifest.ChoosesPlayerCount, id);
+                Assert.IsTrue(manifest.AllowComputer, id);
+                Assert.IsTrue(manifest.HasComputerPlayer, id);
+                Assert.AreEqual(2, manifest.SeatCount(manifest.DefaultOptions), id);
+            }
+
+            // Sudoku has three hints in place of a computer to play with.
+            ModManifest sudoku = TestSupport.LoadMod("sudoku").Manifest;
+            Assert.IsFalse(sudoku.AllowComputer);
+            Assert.IsFalse(sudoku.HasComputerPlayer);
+            Assert.IsFalse(sudoku.ChoosesPlayerCount);
+            Assert.AreEqual(2, sudoku.SeatCount(sudoku.DefaultOptions));
+
+            ModManifest cubic3 = TestSupport.LoadMod("cubic3").Manifest;
+            Assert.IsFalse(cubic3.HasComputerPlayer);
+            Assert.IsFalse(cubic3.ChoosesPlayerCount);
         }
 
         [Test]

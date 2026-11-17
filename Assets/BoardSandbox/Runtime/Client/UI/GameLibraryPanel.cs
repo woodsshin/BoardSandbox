@@ -28,6 +28,8 @@ namespace BoardSandbox.Client.UI
         private const int MaxProblems = 40;
         private const int MaxRooms = 30;
 
+        private static readonly string[] SetupModes = { "Play the computer", "Play with people" };
+
         private readonly GameHost _host;
         private readonly Multiplayer _multiplayer;
         private readonly GuiTheme _theme;
@@ -63,6 +65,12 @@ namespace BoardSandbox.Client.UI
         private bool _confirmDelete;
         private Vector2 _roomScroll;
 
+        // The choices of a host who is about to create a room for the selected game; null while none is being made.
+        private RoomSetup _setup;
+        private ModEntry _setupFor;
+        private string[] _setupPlayers = new string[0];
+        private string _setupNote = string.Empty;
+
         // openStudio opens the AI console for a new game (null) or for the game of an entry; without it the buttons
         // for that are left out. canDelete says whether a game may be removed and delete removes it; without them
         // nothing can be deleted here.
@@ -94,6 +102,7 @@ namespace BoardSandbox.Client.UI
             _listScroll = Vector2.zero;
             _showProblems = false;
             _detailFor = null;
+            _setup = null;
             _roomsFor = string.Empty;
             _focusSearch = true;
             _revealSelected = true;
@@ -104,8 +113,12 @@ namespace BoardSandbox.Client.UI
         public void Close()
         {
             IsOpen = false;
+            _setup = null;
             _releaseFocus();
         }
+
+        // True while the card of the selected game asks how the room is to be opened.
+        private bool SettingUp => _setup != null && ReferenceEquals(_setupFor, _library.Selected);
 
         public void Draw()
         {
@@ -132,7 +145,7 @@ namespace BoardSandbox.Client.UI
             DrawList(Mathf.Min(_theme.Sf(380f), width * 0.45f));
             DrawDetails();
             GUILayout.EndHorizontal();
-            GUILayout.Label("Up / Down  choose      Enter  play      Esc  close", _theme.Muted);
+            GUILayout.Label(SettingUp ? "Enter  create the room      Esc  back" : "Up / Down  choose      Enter  play      Esc  close", _theme.Muted);
             GUILayout.EndVertical();
             GUILayout.EndArea();
 
@@ -152,7 +165,7 @@ namespace BoardSandbox.Client.UI
             {
                 case KeyCode.Escape:
                     e.Use();
-                    _defer(Close);
+                    _defer(SettingUp ? (Action)CancelSetup : Close);
                     break;
                 case KeyCode.UpArrow:
                     e.Use();
@@ -165,25 +178,28 @@ namespace BoardSandbox.Client.UI
                 case KeyCode.Return:
                 case KeyCode.KeypadEnter:
                     e.Use();
-                    _defer(Confirm);
+                    _defer(SettingUp ? (Action)CreateRoom : Confirm);
                     break;
             }
         }
 
         private void Move(int steps)
         {
+            _setup = null;
             _library.Move(steps);
             _revealSelected = true;
         }
 
         private void SetQuery(string text)
         {
+            _setup = null;
             _library.SetQuery(text);
             _revealSelected = true;
         }
 
         private void SetOrigin(ModOrigin? origin)
         {
+            _setup = null;
             _library.SetOrigin(origin);
             _revealSelected = true;
         }
@@ -215,6 +231,7 @@ namespace BoardSandbox.Client.UI
 
         private void Rescan()
         {
+            _setup = null;
             _library.Rescan();
             RefreshFilter();
             _revealSelected = true;
@@ -361,6 +378,7 @@ namespace BoardSandbox.Client.UI
                 bool open = _pressClicks >= 2;
                 _defer(() =>
                 {
+                    _setup = null;
                     _library.Select(id);
                     if (open)
                         Confirm();
@@ -423,17 +441,150 @@ namespace BoardSandbox.Client.UI
         {
             ModEntry entry = _library.Selected;
             GUILayout.BeginVertical(_theme.Card, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(true));
-            if (entry != null)
+            if (entry != null && SettingUp)
             {
-                DrawEntry(entry);
-                DrawRooms(entry);
+                DrawSetup(entry);
             }
             else
             {
-                DrawNothingSelected();
+                if (entry != null)
+                {
+                    DrawEntry(entry);
+                    DrawRooms(entry);
+                }
+                else
+                {
+                    DrawNothingSelected();
+                }
+                DrawActions(entry);
             }
-            DrawActions(entry);
             GUILayout.EndVertical();
+        }
+
+        // Creates the room of the game: right away when there is nothing to ask, else after the host has chosen how.
+        private void OpenSetup(ModEntry entry)
+        {
+            RoomSetup setup = new RoomSetup(entry.Mod.Manifest);
+            if (!setup.HasChoices)
+            {
+                _multiplayer.HostGame(entry.Mod, setup.ToOptions());
+                return;
+            }
+            _setup = setup;
+            _setupFor = entry;
+            _setupPlayers = new string[setup.ChoosesPlayers ? setup.MostPlayers - setup.FewestPlayers + 1 : 0];
+            for (int i = 0; i < _setupPlayers.Length; i++)
+                _setupPlayers[i] = setup.FewestPlayers + i + " players";
+            RefreshSetupNote();
+        }
+
+        private void CancelSetup()
+        {
+            _setup = null;
+        }
+
+        private void SetComputer(bool computer)
+        {
+            if (_setup == null)
+                return;
+            _setup.PlayComputer = computer;
+            RefreshSetupNote();
+        }
+
+        private void SetPlayers(int players)
+        {
+            if (_setup == null)
+                return;
+            _setup.Players = players;
+            RefreshSetupNote();
+        }
+
+        private void CreateRoom()
+        {
+            RoomSetup setup = _setup;
+            ModEntry entry = _library.Selected;
+            if (setup == null || entry == null || !ReferenceEquals(_setupFor, entry) || _multiplayer.Busy)
+                return;
+            _setup = null;
+            _multiplayer.HostGame(entry.Mod, setup.ToOptions());
+        }
+
+        // Says in a few words what the room will be like with the choices that were made.
+        private void RefreshSetupNote()
+        {
+            RoomSetup setup = _setup;
+            if (setup == null)
+                return;
+            int seats = setup.ChoosesPlayers ? setup.Players : setup.Manifest.MaxPlayers;
+            if (setup.CanPlayComputer && setup.PlayComputer)
+            {
+                int computers = Math.Max(1, seats - 1);
+                _setupNote = "You start at once against " + (computers == 1 ? "the computer" : computers + " computer players")
+                    + ". People who join watch until you press New game; then they take the seat of a computer player. "
+                    + "If one of them leaves, the computer plays that seat on from the same position.";
+            }
+            else
+            {
+                _setupNote = "The room opens with " + seats + (seats == 1 ? " seat" : " seats") + " for people and waits. "
+                    + "Whoever joins takes the next empty seat, and nobody plays an empty seat in the meantime.";
+            }
+        }
+
+        // The choices for a new room: who the host plays against and, where the game allows it, how many play.
+        private void DrawSetup(ModEntry entry)
+        {
+            EnsureDetails(entry);
+            RoomSetup setup = _setup;
+            float size = _theme.Sf(TileSize);
+
+            GUILayout.BeginHorizontal();
+            Rect tile = GUILayoutUtility.GetRect(size, size, GUILayout.Width(size), GUILayout.Height(size));
+            if (Event.current.type == EventType.Repaint)
+                DrawTile(tile, entry);
+            GUILayout.Space(_theme.Sf(8f));
+            GUILayout.BeginVertical();
+            GUILayout.Label(_detailName, _theme.Heading);
+            GUILayout.Label("New online room", _theme.Muted);
+            GUILayout.EndVertical();
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(_theme.Sf(12f));
+            if (setup.CanPlayComputer)
+            {
+                GUILayout.Label("Who do you play against?", _theme.Label);
+                int mode = setup.PlayComputer ? 0 : 1;
+                int pickedMode = GUILayout.Toolbar(mode, SetupModes, _theme.Button, GUILayout.Height(_theme.Sf(32f)));
+                if (pickedMode != mode)
+                {
+                    bool computer = pickedMode == 0;
+                    _defer(() => SetComputer(computer));
+                }
+                GUILayout.Space(_theme.Sf(8f));
+            }
+            if (setup.ChoosesPlayers)
+            {
+                GUILayout.Label("How many players?", _theme.Label);
+                int current = Mathf.Clamp(setup.Players - setup.FewestPlayers, 0, _setupPlayers.Length - 1);
+                int pickedPlayers = GUILayout.Toolbar(current, _setupPlayers, _theme.Button, GUILayout.Height(_theme.Sf(32f)));
+                if (pickedPlayers != current)
+                {
+                    int players = setup.FewestPlayers + pickedPlayers;
+                    _defer(() => SetPlayers(players));
+                }
+                GUILayout.Space(_theme.Sf(8f));
+            }
+            GUILayout.Label(_setupNote, _theme.Wrapped);
+            GUILayout.FlexibleSpace();
+
+            GUILayout.BeginHorizontal();
+            GUI.enabled = !_multiplayer.Busy;
+            if (GUILayout.Button("Create room", _theme.Button, GUILayout.Width(_theme.Sf(130f)), GUILayout.Height(_theme.Sf(34f))))
+                _defer(CreateRoom);
+            GUI.enabled = true;
+            if (GUILayout.Button("Back", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(34f))))
+                _defer(CancelSetup);
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
         }
 
         private void DrawEntry(ModEntry entry)
@@ -480,10 +631,10 @@ namespace BoardSandbox.Client.UI
                 GUI.enabled = !_multiplayer.Busy;
                 if (GUILayout.Button("Refresh", _theme.Button, GUILayout.Width(_theme.Sf(80f))))
                     _defer(() => _multiplayer.Refresh(id));
-                if (GUILayout.Button("Host", _theme.Button, GUILayout.Width(_theme.Sf(80f))))
+                if (GUILayout.Button("Create room", _theme.Button, GUILayout.Width(_theme.Sf(110f))))
                 {
-                    ModPackage mod = entry.Mod;
-                    _defer(() => _multiplayer.HostGame(mod));
+                    ModEntry chosen = entry;
+                    _defer(() => OpenSetup(chosen));
                 }
                 GUI.enabled = true;
             }
@@ -498,7 +649,7 @@ namespace BoardSandbox.Client.UI
             IReadOnlyList<LobbyInfo> rooms = _multiplayer.Lobbies(entry.Id);
             _roomScroll = GUILayout.BeginScrollView(_roomScroll, GUILayout.Height(_theme.Sf(132f)));
             if (rooms.Count == 0)
-                GUILayout.Label(_multiplayer.Busy ? "Looking for rooms…" : "Nobody hosts this game right now. Press Host to open a room.", _theme.Muted);
+                GUILayout.Label(_multiplayer.Busy ? "Looking for rooms…" : "Nobody hosts this game right now. Press Create room to open one.", _theme.Muted);
             for (int i = 0; i < rooms.Count && i < MaxRooms; i++)
             {
                 LobbyInfo room = rooms[i];
@@ -592,6 +743,7 @@ namespace BoardSandbox.Client.UI
 
         private void Delete(ModEntry entry)
         {
+            _setup = null;
             _confirmDelete = false;
             if (_delete == null || !_delete(entry))
                 return;

@@ -107,6 +107,31 @@ namespace BoardSandbox.Core.App
         // Whether the mod has a computer player that thinks (SeatMode.Ai).
         public bool HasAi => _player != null;
 
+        // The mode that gives a seat to the computer: the thinking player when the mod has one, random moves otherwise.
+        public SeatMode ComputerMode => HasAi ? SeatMode.Ai : SeatMode.Random;
+
+        // Whether a seat of the game on the table may be given to the computer.
+        public bool CanPlayComputer
+        {
+            get
+            {
+                GameSession s = Session;
+                return s != null && s.Mod.Manifest.AllowComputer && (HasAi || s.Capabilities.Random);
+            }
+        }
+
+        // How many seats the game on the table plays with: what its options say, else all of them.
+        public int SeatCount
+        {
+            get
+            {
+                GameSession s = Session;
+                if (s == null)
+                    return 0;
+                return s.Mod.Manifest.SeatCount(s.IsStarted ? s.GameOptions : NewGameOptions);
+            }
+        }
+
         // The levels of that player and the one it plays at now, counted from 1; 0 without such a player.
         public int AiLevelCount => _player != null ? Session.Mod.Manifest.AiLevels.Count : 0;
         public int AiLevel => _player != null ? AiProgress.LevelIndex(Session.Mod.Manifest.Id, AiLevelCount) + 1 : 0;
@@ -274,6 +299,11 @@ namespace BoardSandbox.Core.App
             ThrowIfDisposed();
             if (Session == null || seat < 1 || seat > Session.Mod.Manifest.MaxPlayers)
                 return false;
+            if (mode != SeatMode.Human && !Session.Mod.Manifest.AllowComputer)
+            {
+                Toasts.Add("'" + Session.Mod.Manifest.Name + "' is not played against the computer.", ToastLevel.Warning, Now);
+                return false;
+            }
             if (mode == SeatMode.Random && !Session.Capabilities.Random)
             {
                 Toasts.Add("'" + Session.Mod.Manifest.Name + "' has no computer player.", ToastLevel.Warning, Now);

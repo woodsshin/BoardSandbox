@@ -658,9 +658,12 @@ namespace BoardSandbox.Tests
             Assert.AreEqual(36, manifest.DefaultOptions["clues"].AsInt());
             Assert.AreEqual(0, manifest.DefaultOptions["seed"].AsInt(-1));
             Assert.IsFalse(manifest.DefaultOptions["strict"].AsBool(true));
+            Assert.AreEqual(3, manifest.DefaultOptions["hints"].AsInt(), "every game starts with three hints");
             // A puzzle of your own is typed in the console; the text field of the options panel is too short for 81 digits.
-            Assert.AreEqual(4, manifest.DefaultOptions.Count);
+            Assert.AreEqual(5, manifest.DefaultOptions.Count);
             Assert.IsFalse(manifest.DefaultOptions.Has("puzzle"));
+            Assert.IsFalse(manifest.AllowComputer, "hints stand in for the computer, which does not play here");
+            Assert.IsFalse(manifest.HasComputerPlayer);
             Assert.AreEqual("tap", manifest.Client["click"]["action"].AsString());
             Assert.AreEqual("object", manifest.Client["click"]["target"].AsString());
             Assert.IsTrue(manifest.Client["click"]["hold"].AsBool());
@@ -682,7 +685,7 @@ namespace BoardSandbox.Tests
                 Assert.AreEqual(9, board.Raw["columns"].AsInt());
                 Assert.AreEqual(9, board.Raw["rows"].AsInt());
                 Assert.AreEqual(3, board.Raw["block"].AsInt());
-                Assert.AreEqual(30 + 91, Count(events, "spawn"), "the clues, the tiles and the pad");
+                Assert.AreEqual(30 + 92, Count(events, "spawn"), "the clues, the tiles, the pad and the hint button");
                 Assert.AreEqual(ViewEventKind.Turn, events[events.Count - 1].Kind);
                 Assert.AreEqual(1, events[events.Count - 1].Seat);
 
@@ -1672,7 +1675,7 @@ namespace BoardSandbox.Tests
                 string started = console.Execute("new puzzle=" + Puzzle);
                 StringAssert.StartsWith("new game started", started);
                 StringAssert.Contains("turn: none (cooperative: every seat plays at once)", started);
-                StringAssert.Contains("objects: 121", started);
+                StringAssert.Contains("objects: 122", started);
 
                 string[] lines = console.Execute("board").Split('\n');
                 string[] expected =
@@ -1749,7 +1752,7 @@ namespace BoardSandbox.Tests
                 }
                 Assert.AreEqual(81, tiles);
                 Assert.AreEqual(10, keys);
-                Assert.AreEqual(30 + 91, session.View.ObjectCount);
+                Assert.AreEqual(30 + 92, session.View.ObjectCount, "the clues, the tiles, the pad and the hint button");
                 Assert.AreEqual(0, State(session)["selected"].AsInt());
                 for (int key = 1; key <= 10; key++)
                     Assert.AreEqual("#e8ecf2", Key(session, key).Props["color"].AsString());
@@ -3122,6 +3125,535 @@ namespace BoardSandbox.Tests
                 string[] lines = AsciiBoard.Render(view).Split('\n');
                 Assert.AreEqual(4, lines.Length, "block " + block);
                 Assert.AreEqual("     1  2  3 ", lines[0], "block " + block);
+            }
+        }
+
+        // ---- Hints: three of them stand in for a computer to play with ----
+
+        // The hint key at the end of the pad; null in a game without hints.
+        private static ViewObject HintKey(GameSession session)
+        {
+            foreach (ViewObject o in session.View.Objects)
+            {
+                if (o.Kind == "hint")
+                    return o;
+            }
+            return null;
+        }
+
+        // The small number under the hint key: how many hints are left.
+        private static string HintsShown(GameSession session)
+        {
+            JsonValue labels = HintKey(session).Props["labels"];
+            return labels.IsArray && labels.Count > 0 ? labels[0]["text"].AsString() : string.Empty;
+        }
+
+        private static int HintsLeft(GameSession session)
+        {
+            return State(session)["hints"].AsInt(-1);
+        }
+
+        private static SubmitResult Hint(GameSession session, int seat = 1)
+        {
+            return session.Submit(InputPacket.Action(seat, "hint"));
+        }
+
+        private static SubmitResult HintAt(GameSession session, int x, int y, int seat = 1)
+        {
+            return session.Submit(InputPacket.Action(seat, "hint").With("x", x).With("y", y));
+        }
+
+        // Whether a digit may go in a cell of a board (81 digits) as far as the row, the column and the box are concerned.
+        private static bool Fits(string board, int cell, int digit)
+        {
+            for (int k = 0; k < 81; k++)
+            {
+                if (k == cell || board[k] - '0' != digit)
+                    continue;
+                if (k / 9 == cell / 9 || k % 9 == cell % 9 || (k / 27 == cell / 27 && k % 9 / 3 == cell % 9 / 3))
+                    return false;
+            }
+            return true;
+        }
+
+        // Where the next hint of the classic puzzle should go, worked out here without the game's help: the first digit
+        // of the players that is wrong, else the empty cell that has the fewest digits left to choose from (the first
+        // of them in reading order). A digit that is on the board nine times does not count as a choice, and a cell
+        // that needs such a digit is passed over. -1 when there is no such cell.
+        private static int HintCell(string board)
+        {
+            int[] on = new int[10];
+            foreach (char c in board)
+                on[c - '0']++;
+            int best = -1;
+            int fewest = 10;
+            for (int i = 0; i < 81; i++)
+            {
+                if (board[i] == Solved[i] || on[Solved[i] - '0'] >= 9)
+                    continue;
+                if (board[i] != '0')
+                    return i;
+                int count = 0;
+                for (int digit = 1; digit <= 9; digit++)
+                {
+                    if (on[digit] < 9 && Fits(board, i, digit))
+                        count++;
+                }
+                if (count < fewest)
+                {
+                    best = i;
+                    fewest = count;
+                }
+            }
+            return best;
+        }
+
+        [Test]
+        public void ANewGameHasThreeHintsWithAKeyAtTheEndOfThePad()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.AreEqual(3, HintsLeft(session));
+                Assert.AreEqual(3, State(session)["hints_total"].AsInt());
+                ViewObject hint = HintKey(session);
+                Assert.IsNotNull(hint);
+                Assert.AreEqual("?", hint.Props["label"].AsString());
+                Assert.AreEqual("3", HintsShown(session));
+                Assert.AreEqual("#f5c84b", hint.Props["color"].AsString(), "a key that can be used is lit");
+
+                // The pad keeps to its one row and stays centered under the grid with the hint key as its eleventh place.
+                JsonValue eraser = Key(session, 10).Props["pos"];
+                JsonValue first = Key(session, 1).Props["pos"];
+                Assert.AreEqual(eraser[2].AsDouble(), hint.Props["pos"][2].AsDouble(), 1e-9);
+                Assert.AreEqual(0.96, hint.Props["pos"][0].AsDouble() - eraser[0].AsDouble(), 1e-9, "next to the eraser");
+                Assert.AreEqual(-first[0].AsDouble(), hint.Props["pos"][0].AsDouble(), 1e-9, "centered");
+                Assert.Less(Math.Abs(hint.Props["pos"][0].AsDouble()), 5.0);
+            }
+        }
+
+        [Test]
+        public void TheHintsOptionSetsTheNumberOfHintsAndZeroLeavesTheKeyOff()
+        {
+            using (GameSession none = StartClassic(",\"hints\":0"))
+            {
+                Assert.IsNull(HintKey(none));
+                Assert.AreEqual(0, HintsLeft(none));
+                Assert.AreEqual(0, State(none)["hints_total"].AsInt());
+                Assert.AreEqual(30 + 91, none.View.ObjectCount, "the grid and the pad, as before there were hints");
+                Assert.AreEqual(-4.32, Key(none, 1).Props["pos"][0].AsDouble(), 1e-9, "ten keys are centered by themselves");
+                Assert.AreEqual("NO_HINTS", Hint(none).Code);
+                Assert.AreEqual("NO_HINTS", HintAt(none, 7, 9).Code);
+                Assert.IsTrue(none.Query("hint").IsNull);
+                Assert.AreEqual(30, Digits(none));
+            }
+            using (GameSession nine = StartClassic(",\"hints\":9"))
+            {
+                Assert.AreEqual(9, HintsLeft(nine));
+                Assert.AreEqual("9", HintsShown(nine));
+            }
+            // A number is rounded down and kept between 0 and 9; anything else is the usual three.
+            Dictionary<string, int> odd = new Dictionary<string, int> { { "12", 9 }, { "-4", 0 }, { "2.7", 2 }, { "\"many\"", 3 } };
+            foreach (KeyValuePair<string, int> pair in odd)
+            {
+                using (GameSession session = StartClassic(",\"hints\":" + pair.Key))
+                    Assert.AreEqual(pair.Value, HintsLeft(session), "hints: " + pair.Key);
+            }
+        }
+
+        [Test]
+        public void AHintFillsInTheRightDigitOfTheCellTheGamePicksAndSaysWhere()
+        {
+            using (GameSession session = StartClassic())
+            {
+                // With nothing wrong on the grid it is the empty cell with the fewest digits left to choose from.
+                int cell = HintCell(Puzzle);
+                int x = cell % 9 + 1;
+                int y = cell / 9 + 1;
+                char digit = Solved[cell];
+                JsonValue next = session.Query("hint");
+                Assert.AreEqual(x, next["x"].AsInt());
+                Assert.AreEqual(y, next["y"].AsInt());
+                Assert.AreEqual(digit - '0', next["digit"].AsInt());
+
+                SubmitResult result = Hint(session);
+                Assert.IsTrue(result.IsAccepted, result.ToString());
+                Assert.AreEqual(digit, State(session)["board"].AsString()[cell]);
+                Assert.AreEqual(31, Digits(session));
+                Assert.AreEqual("1", State(session)["owners"].AsString().Substring(cell, 1), "it is a move of the seat that asked");
+                Assert.AreEqual("Hint: " + digit + " goes in column " + x + ", row " + y + " (2 hints left)", Find(result.Events, "status").Text);
+                Assert.AreEqual(2, HintsLeft(session));
+                Assert.AreEqual("2", HintsShown(session));
+                Assert.Greater(Count(result.Events, "fx"), 0, "the cell flashes on the table");
+                Assert.AreEqual(2, session.HistoryCount, "one move of the game");
+
+                // The next hints are worked out from the grid as it is then, and the status counts what is left.
+                int second = HintCell(State(session)["board"].AsString());
+                result = Hint(session);
+                Assert.AreEqual(Solved[second], State(session)["board"].AsString()[second]);
+                StringAssert.Contains("(1 hint left)", Find(result.Events, "status").Text);
+                int third = HintCell(State(session)["board"].AsString());
+                result = Hint(session);
+                Assert.AreEqual(Solved[third], State(session)["board"].AsString()[third]);
+                StringAssert.Contains("(no hints left)", Find(result.Events, "status").Text);
+                Assert.AreEqual(33, Digits(session));
+            }
+        }
+
+        [Test]
+        public void AHintPutsAWrongDigitRightBeforeItFillsInAnythingNew()
+        {
+            using (GameSession session = StartClassic())
+            {
+                // Two digits that are wrong, put in the opposite order to reading order.
+                PlaceOk(session, 7, 9, 5); // the right digit is 1
+                PlaceOk(session, 3, 1, 9); // the right digit is 4
+                Assert.AreEqual(32, Digits(session));
+                Assert.Greater(State(session)["conflicts"].AsInt(), 0, "the 9 clashes with the one of the box");
+
+                Assert.IsTrue(Hint(session).IsAccepted);
+                string board = State(session)["board"].AsString();
+                Assert.AreEqual('4', board[2], "the first wrong digit in reading order is put right");
+                Assert.AreEqual('5', board[78], "the other one stays for now");
+                Assert.AreEqual(32, Digits(session), "a hint over a digit does not add one");
+                Assert.AreEqual(1, State(session)["conflicts"].AsInt(), "the 5 clashes with the one of its box");
+
+                Assert.IsTrue(Hint(session).IsAccepted);
+                board = State(session)["board"].AsString();
+                Assert.AreEqual('1', board[78]);
+                Assert.AreEqual(32, Digits(session));
+                Assert.AreEqual(0, State(session)["conflicts"].AsInt());
+
+                // With nothing wrong left the last one goes where the count says.
+                int cell = HintCell(board);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.AreEqual(Solved[cell], State(session)["board"].AsString()[cell]);
+                Assert.AreEqual(33, Digits(session));
+            }
+        }
+
+        [Test]
+        public void AHintCanNameTheCellAndRefusesWhatCanNotTakeOne()
+        {
+            using (GameSession session = StartClassic())
+            {
+                // The cell that is asked for is filled in, wherever the game would have gone.
+                int picked = HintCell(Puzzle);
+                int asked = 78; // (7,9), where the right digit is 1
+                Assert.AreNotEqual(asked, picked);
+                SubmitResult result = HintAt(session, 7, 9);
+                Assert.IsTrue(result.IsAccepted, result.ToString());
+                Assert.AreEqual('1', State(session)["board"].AsString()[asked]);
+                Assert.AreEqual("Hint: 1 goes in column 7, row 9 (2 hints left)", Find(result.Events, "status").Text);
+                Assert.AreEqual(2, HintsLeft(session));
+
+                // None of these costs a hint.
+                Assert.AreEqual("ALREADY_RIGHT", HintAt(session, 7, 9).Code);
+                Assert.AreEqual("GIVEN_CELL", HintAt(session, 1, 1).Code);
+                Assert.AreEqual("OUT_OF_BOUNDS", HintAt(session, 10, 1).Code);
+                Assert.AreEqual("OUT_OF_BOUNDS", HintAt(session, 4, 0).Code);
+                Assert.AreEqual("INVALID_ARGUMENT", session.Submit(InputPacket.Action(1, "hint").With("x", 3)).Code);
+                Assert.AreEqual("INVALID_ARGUMENT", session.Submit(InputPacket.Action(1, "hint").With("y", 3)).Code);
+                Assert.AreEqual("INVALID_ARGUMENT", Submit(session, "{\"action\":\"hint\",\"x\":\"a\",\"y\":3}").Code);
+                Assert.AreEqual("INVALID_ARGUMENT", Submit(session, "{\"action\":\"hint\",\"x\":2.5,\"y\":3}").Code);
+                Assert.AreEqual(2, HintsLeft(session));
+                Assert.AreEqual(31, Digits(session));
+
+                // A wrong digit in the cell is replaced.
+                PlaceOk(session, 3, 1, 9);
+                Assert.Greater(State(session)["conflicts"].AsInt(), 0);
+                Assert.IsTrue(HintAt(session, 3, 1).IsAccepted);
+                Assert.AreEqual('4', State(session)["board"].AsString()[2]);
+                Assert.AreEqual(0, State(session)["conflicts"].AsInt());
+                Assert.AreEqual(1, HintsLeft(session));
+            }
+        }
+
+        [Test]
+        public void AHintIgnoresTheStrictOptionAndShowsTheDigitInItsWayAsConflicting()
+        {
+            using (GameSession session = StartClassic(",\"strict\":true"))
+            {
+                // A wrong 4 that the strict game lets in at (6,1) stands in the row of (3,1), where the 4 belongs.
+                PlaceOk(session, 6, 1, 4);
+                Assert.AreEqual("CONFLICT", Place(session, 3, 1, 4).Code, "the strict game does not take the right digit now");
+                Assert.AreEqual(0, State(session)["conflicts"].AsInt());
+
+                SubmitResult result = HintAt(session, 3, 1);
+                Assert.IsTrue(result.IsAccepted, result.ToString());
+                Assert.AreEqual('4', State(session)["board"].AsString()[2]);
+                Assert.AreEqual(2, State(session)["conflicts"].AsInt(), "both 4s are shown as conflicting");
+                Assert.IsTrue(DigitAt(session, 3, 1).Props["conflict"].AsBool());
+                Assert.IsTrue(DigitAt(session, 6, 1).Props["conflict"].AsBool());
+
+                // The wrong one is what the next hint takes care of.
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.AreEqual('8', State(session)["board"].AsString()[5]);
+                Assert.AreEqual(0, State(session)["conflicts"].AsInt());
+            }
+        }
+
+        [Test]
+        public void TheHintKeyAndTheHKeySpendAHint()
+        {
+            JsonValue keys = LoadSudoku().Manifest.Client["keys"];
+            Assert.AreEqual("hint", keys["h"]["action"].AsString());
+            Assert.IsFalse(keys["h"].Has("x"), "the game picks the cell");
+
+            using (GameSession session = StartClassic())
+            {
+                Assert.IsTrue(TapKey(session, 5).IsAccepted);
+                SubmitResult tapped = Tap(session, HintKey(session).Id);
+                Assert.IsTrue(tapped.IsAccepted, tapped.ToString());
+                Assert.AreEqual(2, HintsLeft(session));
+                Assert.AreEqual(31, Digits(session));
+                Assert.AreEqual(5, State(session)["selected"].AsInt(), "the digit that was chosen stays chosen");
+
+                // A hold on the key is a tap too: there is no note to write on a key.
+                Assert.IsTrue(Tap(session, HintKey(session).Id, true).IsAccepted);
+                Assert.AreEqual(1, HintsLeft(session));
+
+                // What the H key sends.
+                Assert.IsTrue(Submit(session, "{\"action\":\"hint\"}").IsAccepted);
+                Assert.AreEqual(0, HintsLeft(session));
+                Assert.AreEqual(33, Digits(session));
+            }
+        }
+
+        [Test]
+        public void WhenTheHintsAreSpentTheKeyGoesGrayAndNoMoreAreGiven()
+        {
+            using (GameSession session = StartClassic())
+            {
+                for (int k = 1; k <= 3; k++)
+                    Assert.IsTrue(Hint(session).IsAccepted, "hint " + k);
+                Assert.AreEqual(0, HintsLeft(session));
+                ViewObject hint = HintKey(session);
+                Assert.AreEqual("0", HintsShown(session));
+                Assert.AreEqual("#e8ecf2", hint.Props["color"].AsString());
+                Assert.AreEqual("#a3abb8", hint.Props["label_color"].AsString());
+                Assert.AreEqual(33, Digits(session));
+                Assert.IsTrue(session.Query("hint").IsNull);
+
+                SubmitResult refused = Hint(session);
+                Assert.AreEqual("NO_HINTS", refused.Code);
+                StringAssert.Contains("no hints are left", refused.Message);
+                Assert.AreEqual("NO_HINTS", HintAt(session, 7, 9).Code);
+                Assert.AreEqual("NO_HINTS", Tap(session, hint.Id).Code);
+                Assert.AreEqual(33, Digits(session));
+
+                // The rest of the pad still works.
+                Assert.IsTrue(TapKey(session, 4).IsAccepted);
+                Assert.AreEqual(0, HintsLeft(session));
+            }
+        }
+
+        [Test]
+        public void BothSeatsSpendTheSameHints()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.IsTrue(Hint(session, 1).IsAccepted);
+                Assert.IsTrue(Hint(session, 2).IsAccepted);
+                Assert.AreEqual(1, HintsLeft(session));
+                Assert.AreEqual("1", HintsShown(session));
+                string owners = State(session)["owners"].AsString();
+                Assert.IsTrue(owners.Contains("1") && owners.Contains("2"), "each digit is the move of the seat that asked: " + owners);
+
+                Assert.IsTrue(TapAs(session, 2, HintKey(session).Id).IsAccepted);
+                Assert.AreEqual(0, HintsLeft(session));
+                Assert.AreEqual("NO_HINTS", Hint(session, 1).Code);
+                Assert.AreEqual("NO_HINTS", TapAs(session, 1, HintKey(session).Id).Code);
+                Assert.AreEqual("NO_HINTS", Hint(session, 2).Code);
+                Assert.AreEqual("BAD_SEAT", Hint(session, 3).Code);
+            }
+        }
+
+        [Test]
+        public void AHintThatFinishesABoxLocksItAndALockedCellTakesNoHint()
+        {
+            using (GameSession session = StartClassic())
+            {
+                // The empty cells of the top left box are (3,1), (2,2), (3,2) and (1,3): the hint is for the last one.
+                CompleteBox(session, 1, 1);
+                Assert.AreEqual(0, State(session)["locked"].AsInt());
+                SubmitResult result = HintAt(session, 1, 3);
+                Assert.IsTrue(result.IsAccepted, result.ToString());
+                Assert.AreEqual(4, State(session)["locked"].AsInt(), "the digits of the box are locked");
+                Assert.Greater(Count(result.Events, "fx"), 0, "the wave plays");
+                Assert.AreEqual("Hint: 1 goes in column 1, row 3 (2 hints left)", Find(result.Events, "status").Text);
+
+                Assert.AreEqual("CELL_LOCKED", HintAt(session, 1, 3).Code);
+                Assert.AreEqual("CELL_LOCKED", HintAt(session, 3, 1).Code);
+                Assert.AreEqual(2, HintsLeft(session), "no hint was spent on a locked cell");
+            }
+        }
+
+        [Test]
+        public void AHintCanSolveThePuzzle()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Complete(session, 1);
+                Assert.IsFalse(session.View.IsOver);
+                JsonValue next = session.Query("hint");
+                int cell = (next["y"].AsInt() - 1) * 9 + next["x"].AsInt() - 1;
+                Assert.AreEqual(HintCell(State(session)["board"].AsString()), cell);
+
+                SubmitResult result = Hint(session);
+                Assert.IsTrue(result.IsAccepted, result.ToString());
+                Assert.IsTrue(session.View.IsOver);
+                Assert.AreEqual("solved", session.View.Over.Reason);
+                Assert.AreEqual(1, session.View.Over.Winner);
+                Assert.AreEqual(Solved, State(session)["board"].AsString());
+                Assert.AreEqual("Solved in 51 moves", Find(result.Events, "status").Text, "the hint is one of the moves");
+                Assert.AreEqual("GAME_OVER", Hint(session).Code);
+                Assert.IsTrue(session.Query("hint").IsNull);
+            }
+        }
+
+        [Test]
+        public void ADigitThatIsUsedUpCanNotBeHintedUntilTheWrongOnesAreTakenOut()
+        {
+            using (GameSession session = StartClassic())
+            {
+                // All is right but the last two cells, which hold each other's digit: all nine of both digits are on
+                // the grid, so that neither cell can be given its right digit.
+                Complete(session, 2);
+                PlaceOk(session, 6, 9, 1); // the right digit is 6
+                PlaceOk(session, 7, 9, 6); // the right digit is 1
+                Assert.IsTrue(Gone(session, 1) && Gone(session, 6), "all nine of both digits are on the grid");
+                Assert.AreEqual(-1, HintCell(State(session)["board"].AsString()));
+                Assert.IsTrue(session.Query("hint").IsNull);
+
+                Assert.AreEqual("NOTHING_TO_HINT", Hint(session).Code);
+                SubmitResult named = HintAt(session, 6, 9);
+                Assert.AreEqual("DIGIT_USED", named.Code);
+                Assert.AreEqual(6, named.Details["digit"].AsInt());
+                Assert.AreEqual(3, HintsLeft(session), "no hint was spent");
+
+                // Taking out one of the wrong digits frees the other digit, and the hints go on from there.
+                Assert.IsTrue(session.Submit(InputPacket.Action(1, "clear").With("x", 6).With("y", 9)).IsAccepted);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.AreEqual('1', State(session)["board"].AsString()[78]);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.IsTrue(session.View.IsOver);
+                Assert.AreEqual(Solved, State(session)["board"].AsString());
+                Assert.AreEqual(1, HintsLeft(session));
+            }
+        }
+
+        [Test]
+        public void UndoAndRedoGiveTheHintsBackAndTakeThemAgain()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.AreEqual("#e8ecf2", HintKey(session).Props["color"].AsString());
+
+                Assert.IsTrue(session.Undo());
+                Assert.AreEqual(1, HintsLeft(session));
+                Assert.AreEqual("1", HintsShown(session));
+                Assert.AreEqual("#f5c84b", HintKey(session).Props["color"].AsString(), "the key is lit again");
+                Assert.AreEqual(32, Digits(session));
+
+                Assert.IsTrue(session.Undo(2));
+                Assert.AreEqual(3, HintsLeft(session));
+                Assert.AreEqual("3", HintsShown(session));
+                Assert.AreEqual(Puzzle, State(session)["board"].AsString());
+
+                Assert.IsTrue(session.Redo(2));
+                Assert.AreEqual(1, HintsLeft(session));
+                Assert.AreEqual("1", HintsShown(session));
+                Assert.AreEqual(32, Digits(session));
+            }
+        }
+
+        [Test]
+        public void SnapshotsKeepTheHintsAndOldOnesWithoutThemStillLoad()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.IsTrue(Hint(session).IsAccepted);
+                string snapshot = session.CaptureSnapshot();
+                string table = Describe(session.View);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.AreEqual(0, HintsLeft(session));
+
+                session.LoadSnapshot(snapshot);
+                Assert.AreEqual(table, Describe(session.View));
+                Assert.AreEqual(2, HintsLeft(session));
+                Assert.AreEqual("2", HintsShown(session));
+                Assert.AreEqual(3, State(session)["hints_total"].AsInt());
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.AreEqual(1, HintsLeft(session));
+
+                // A hint key that is not the one of the table is refused, and the game stays as it was.
+                string good = session.CaptureSnapshot();
+                string before = Describe(session.View);
+                foreach (string bad in new[] { Key(session, 3).Id.ToString(), "999999", "\"x\"", "1.5" })
+                {
+                    JsonValue broken = JsonValue.Parse(good);
+                    broken["mod"].Set("hint", JsonValue.Parse(bad));
+                    Assert.Throws<GameSessionException>(() => session.LoadSnapshot(broken.ToJson()), bad);
+                }
+                Assert.AreEqual(before, Describe(session.View), "a refused snapshot changes nothing");
+                Assert.AreEqual(1, HintsLeft(session));
+            }
+
+            // What a game without hints, or a version before there were hints, wrote: no word of them.
+            using (GameSession session = StartClassic(",\"hints\":0"))
+            {
+                JsonValue root = JsonValue.Parse(session.CaptureSnapshot());
+                JsonValue mod = root["mod"];
+                Assert.IsTrue(mod.Has("hint"));
+                mod.Remove("hint");
+                mod.Remove("hints");
+                mod.Remove("hints_total");
+                string table = Describe(session.View);
+                session.LoadSnapshot(root.ToJson());
+                Assert.AreEqual(table, Describe(session.View));
+                Assert.AreEqual(0, HintsLeft(session));
+                Assert.AreEqual("NO_HINTS", Hint(session).Code);
+                Assert.IsTrue(TapKey(session, 4).IsAccepted);
+            }
+        }
+
+        [Test]
+        public void ANewGameStartsOverWithAllItsHints()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.IsTrue(Hint(session).IsAccepted);
+                Assert.AreEqual(1, HintsLeft(session));
+
+                session.NewGame(TestSupport.Options("{\"puzzle\":\"" + Puzzle + "\"}"));
+                Assert.AreEqual(3, HintsLeft(session));
+                Assert.AreEqual("3", HintsShown(session));
+                Assert.AreEqual("#f5c84b", HintKey(session).Props["color"].AsString());
+                Assert.AreEqual(30, Digits(session));
+                int keys = 0;
+                foreach (ViewObject o in session.View.Objects)
+                    keys += o.Kind == "hint" ? 1 : 0;
+                Assert.AreEqual(1, keys, "one hint key on the table");
+                Assert.AreEqual(30 + 92, session.View.ObjectCount);
+            }
+        }
+
+        [Test]
+        public void TheComputerThatTheModKeepsForSimulationsDoesNotSpendHints()
+        {
+            using (GameSession session = StartClassic())
+            {
+                List<JsonValue> played = LetTheComputerPlay(session);
+                Assert.Greater(played.Count, 0);
+                foreach (JsonValue command in played)
+                    Assert.AreNotEqual("hint", command["action"].AsString());
+                Assert.AreEqual(3, HintsLeft(session));
+                Assert.IsTrue(session.View.IsOver);
             }
         }
     }

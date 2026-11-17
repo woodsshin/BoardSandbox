@@ -404,7 +404,7 @@ namespace BoardSandbox.Tests
         {
             using (GameHost host = NewHost())
             {
-                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.SelectMod(TestSupport.LoadSudokuWithComputer()));
                 Assert.IsTrue(host.StartNewGame());
                 Assert.IsTrue(host.Mod.Manifest.Cooperative);
                 Assert.AreEqual(1, host.LocalSeat);
@@ -446,7 +446,7 @@ namespace BoardSandbox.Tests
         {
             using (GameHost host = NewHost())
             {
-                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.SelectMod(TestSupport.LoadSudokuWithComputer()));
                 Assert.IsTrue(host.StartNewGame());
                 Assert.IsTrue(host.SetSeatMode(1, SeatMode.Random));
                 Assert.IsTrue(host.SetSeatMode(2, SeatMode.Random));
@@ -484,7 +484,7 @@ namespace BoardSandbox.Tests
         {
             using (GameHost host = NewHost())
             {
-                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.SelectMod(TestSupport.LoadSudokuWithComputer()));
                 Assert.IsTrue(host.StartNewGame());
                 JsonValue move;
                 while ((move = RightDigit(host)) != null)
@@ -494,6 +494,67 @@ namespace BoardSandbox.Tests
                 Assert.IsTrue(host.SetSeatMode(2, SeatMode.Random));
                 _time = 5;
                 Assert.IsFalse(host.Update());
+            }
+        }
+
+        [Test]
+        public void AGameThatIsNotPlayedAgainstTheComputerRefusesComputerSeats()
+        {
+            using (GameHost host = NewHost())
+            {
+                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.StartNewGame());
+                Assert.IsFalse(host.Mod.Manifest.AllowComputer);
+                Assert.IsFalse(host.CanPlayComputer);
+                Assert.AreEqual(2, host.SeatCount);
+
+                // The computer has no seat in it, whichever kind of player is asked for.
+                foreach (SeatMode mode in new[] { SeatMode.Random, SeatMode.Ai })
+                {
+                    Assert.IsFalse(host.SetSeatMode(2, mode), mode.ToString());
+                    Assert.AreEqual(SeatMode.Human, host.GetSeatMode(2), mode.ToString());
+                }
+                bool told = false;
+                foreach (Toast toast in host.Toasts.Active(host.Now))
+                {
+                    if (toast.Level == ToastLevel.Warning && toast.Text.Contains("is not played against the computer"))
+                        told = true;
+                }
+                Assert.IsTrue(told, "the player is told why");
+
+                // A seat can always go back to people, and nobody plays for them.
+                Assert.IsTrue(host.SetSeatMode(2, SeatMode.Human));
+                Assert.IsTrue(host.AcceptsHumanInput);
+                _time = 10;
+                Assert.IsFalse(host.Update());
+            }
+        }
+
+        [Test]
+        public void TheComputerPlaysForTheGamesThatHaveAPlayerForItAndTheSeatCountFollowsTheOptions()
+        {
+            using (GameHost host = NewHost())
+            {
+                Assert.IsTrue(host.CanPlayComputer);
+                Assert.AreEqual(SeatMode.Ai, host.ComputerMode, "gomoku brings a player that thinks");
+                Assert.AreEqual(2, host.SeatCount);
+
+                // A game that plays by chance only still has a computer to play with.
+                Assert.IsTrue(host.SelectMod(TestSupport.LoadSudokuWithComputer()));
+                Assert.IsTrue(host.CanPlayComputer);
+                Assert.AreEqual(SeatMode.Random, host.ComputerMode);
+
+                // Go-Stop plays with every seat until its players are told how many they are; a game that is on keeps
+                // the seats it started with.
+                Assert.IsTrue(host.SelectMod("gostop"));
+                Assert.AreEqual(3, host.SeatCount);
+                host.SetOption("players", JsonValue.Of(2));
+                Assert.AreEqual(2, host.SeatCount);
+                Assert.IsTrue(host.StartNewGame());
+                host.SetOption("players", JsonValue.Of(3));
+                Assert.AreEqual(2, host.SeatCount, "the game that is on keeps its players");
+                Assert.IsTrue(host.StartNewGame());
+                Assert.AreEqual(3, host.SeatCount);
             }
         }
 

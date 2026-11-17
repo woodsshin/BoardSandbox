@@ -397,7 +397,7 @@ return rules";
         {
             using (GameHost host = Host())
             {
-                Assert.IsTrue(host.SelectMod("sudoku"));
+                Assert.IsTrue(host.SelectMod(TestSupport.LoadSudokuWithComputer()));
                 host.SetOption("puzzle", JsonValue.Of(SudokuPuzzle));
                 LoopbackNetwork network = new LoopbackNetwork();
                 NetHostRoom room = new NetHostRoom(host, network.Host("Ann"));
@@ -879,6 +879,554 @@ return rules";
                 Assert.IsFalse(none.HostGame(bob.Catalog.Find("gomoku")));
                 none.Update();
                 none.Dispose();
+            }
+        }
+
+        // ---- Rooms the computer fills -------------------------------------------------------------------------------------
+
+        private double _time;
+
+        // A host whose computer player thinks inside Update, on a clock the test moves.
+        private GameHost ComputerHost()
+        {
+            GameHostOptions options = new GameHostOptions { Clock = () => _time, AiDelaySeconds = 0.5, AiSeed = 17, AiThreaded = false };
+            return new GameHost(new ModCatalog(new[] { TestSupport.ModsRoot }), options);
+        }
+
+        // Lets the computer make the move that is due.
+        private bool ComputerMoves(GameHost host)
+        {
+            host.Update();
+            _time += 1;
+            return host.Update();
+        }
+
+        private static string Seats(IReadOnlyList<int> seats)
+        {
+            return string.Join(",", seats);
+        }
+
+        private static readonly RoomOptions AgainstTheComputer = new RoomOptions { ComputerFills = true };
+
+        [Test]
+        public void ARoomAgainstTheComputerStartsWithTheHostPlayingIt()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gomoku"));
+                NetHostRoom room = new NetHostRoom(host, new LoopbackNetwork().Host("Ann"), AgainstTheComputer);
+                Assert.IsTrue(host.StartNewGame());
+                Assert.IsTrue(room.ComputerFills);
+                Assert.IsFalse(room.WaitsForPlayers);
+                Assert.AreEqual(2, room.SeatCount);
+                Assert.AreEqual("2", Seats(room.ComputerSeats));
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(1));
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+
+                Assert.IsTrue(room.CanAct);
+                room.Submit(Place(1, 1));
+                Assert.IsFalse(room.CanAct, "the computer is on turn");
+                room.Submit(Place(15, 15));
+                Assert.AreEqual(1, host.Session.View.ObjectCount, "nobody moves for the computer");
+                Assert.IsTrue(ComputerMoves(host), "the computer did not answer");
+                Assert.AreEqual(2, host.Session.View.ObjectCount);
+                Assert.IsTrue(room.CanAct);
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void SomeoneWhoJoinsWatchesTheComputerGameUntilTheHostStartsTheNextOne()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gomoku"));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"), AgainstTheComputer);
+                Assert.IsTrue(host.StartNewGame());
+                room.Submit(Place(1, 1));
+                Assert.IsTrue(ComputerMoves(host));
+
+                List<string> told = new List<string>();
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                bob.Notice += (text, level) => told.Add(text);
+                Pump(room, bob);
+                Assert.IsTrue(bob.Ready);
+                Assert.IsTrue(bob.ComputerFills);
+                Assert.AreEqual(2, bob.SeatCount);
+                Assert.AreEqual("2", Seats(bob.ComputerSeats));
+                Assert.AreEqual(0, bob.LocalPlayer.Seat, "the game that is on is not Bob's");
+                Assert.AreEqual(2, bob.LocalBoard.Queue.Display.ObjectCount);
+                Assert.IsFalse(bob.CanAct);
+                Assert.AreEqual(1, room.LocalPlayer.Seat);
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+
+                // The game against the computer goes on while Bob watches, and he can not move.
+                bob.Submit(Place(8, 8));
+                room.Submit(Place(15, 1));
+                Assert.IsTrue(ComputerMoves(host));
+                Pump(room, bob);
+                Assert.AreEqual(4, host.Session.View.ObjectCount);
+                Assert.AreEqual(4, bob.LocalBoard.Queue.Display.ObjectCount);
+
+                // The host starts the next game, and Bob takes the seat of the computer.
+                told.Clear();
+                Assert.IsTrue(host.StartNewGame());
+                Pump(room, bob);
+                Assert.AreEqual(2, bob.LocalPlayer.Seat);
+                Assert.AreEqual(0, bob.ComputerSeats.Count);
+                Assert.AreEqual(0, room.ComputerSeats.Count);
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(2));
+                Assert.AreEqual(1, told.Count);
+                StringAssert.Contains("You play", told[0]);
+                Assert.AreEqual(0, host.Session.View.ObjectCount);
+                Assert.IsTrue(room.CanAct);
+                room.Submit(Place(1, 1));
+                Assert.IsFalse(ComputerMoves(host), "a person plays that seat now");
+                Pump(room, bob);
+                Assert.IsTrue(bob.CanAct);
+                Assert.IsFalse(room.CanAct);
+                bob.Submit(Place(2, 2));
+                Pump(room, bob);
+                Assert.AreEqual(2, host.Session.View.ObjectCount);
+                Assert.IsTrue(room.CanAct);
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void TheComputerPlaysOnFromThePositionWhenTheOpponentLeaves()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gomoku"));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"), AgainstTheComputer);
+                List<string> told = new List<string>();
+                room.Notice += (text, level) => told.Add(text);
+                Assert.IsTrue(host.StartNewGame());
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                Pump(room, bob);
+                Assert.IsTrue(host.StartNewGame());
+                Pump(room, bob);
+                Assert.AreEqual(2, bob.LocalPlayer.Seat);
+
+                room.Submit(Place(1, 1));
+                Pump(room, bob);
+                bob.Submit(Place(8, 8));
+                Pump(room, bob);
+                room.Submit(Place(15, 1));
+                Pump(room, bob);
+                Assert.AreEqual(3, host.Session.View.ObjectCount);
+                Assert.AreEqual(2, host.Session.View.Turn);
+
+                // Bob leaves while it is his turn: the game stays as it is and the computer takes the seat.
+                told.Clear();
+                bob.Dispose();
+                Pump(room);
+                Assert.AreEqual(1, room.Players.Count);
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+                Assert.AreEqual("2", Seats(room.ComputerSeats));
+                Assert.AreEqual(3, host.Session.View.ObjectCount, "the game goes on from where it was");
+                Assert.AreEqual(1, told.FindAll(text => text.Contains("computer plays")).Count);
+                Assert.IsFalse(room.CanAct);
+                Assert.IsTrue(ComputerMoves(host), "the computer plays Bob's turn");
+                Assert.AreEqual(4, host.Session.View.ObjectCount);
+                Assert.IsTrue(room.CanAct);
+
+                // Somebody else comes in; they wait for the next game.
+                NetClientRoom cy = new NetClientRoom(host.Mod, network.Join("Cy"));
+                Pump(room, cy);
+                Assert.AreEqual(0, cy.LocalPlayer.Seat);
+                Assert.AreEqual(1, room.WaitingCount);
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+                Assert.IsTrue(host.StartNewGame());
+                Pump(room, cy);
+                Assert.AreEqual(2, cy.LocalPlayer.Seat);
+                Assert.AreEqual(0, room.WaitingCount);
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(2));
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void AGuestWhoLeavesWithoutASeatLeavesTheComputerWhereItWas()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gomoku"));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"), AgainstTheComputer);
+                Assert.IsTrue(host.StartNewGame());
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                Pump(room, bob);
+                Assert.AreEqual(0, bob.LocalPlayer.Seat);
+                bob.Dispose();
+                Pump(room);
+                Assert.AreEqual(1, room.Players.Count);
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+                Assert.AreEqual("2", Seats(room.ComputerSeats));
+                Assert.IsTrue(room.CanAct);
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void ARoomOnlyTheHostIsInKeepsWaitingForAPersonWhenItHasNoComputer()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gomoku"));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"), new RoomOptions());
+                Assert.IsTrue(host.StartNewGame());
+                Assert.IsFalse(room.ComputerFills);
+                Assert.IsTrue(room.WaitsForPlayers);
+                Assert.AreEqual(0, room.ComputerSeats.Count);
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(2));
+
+                // The host plays its own seat, and nobody plays the empty one in its place.
+                room.Submit(Place(1, 1));
+                Assert.IsFalse(room.CanAct);
+                room.Submit(Place(15, 15));
+                Assert.AreEqual(1, host.Session.View.ObjectCount);
+                Assert.IsFalse(ComputerMoves(host));
+
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                Pump(room, bob);
+                Assert.IsTrue(bob.WaitsForPlayers);
+                Assert.AreEqual(2, bob.LocalPlayer.Seat);
+                Assert.IsTrue(bob.CanAct);
+                bob.Submit(Place(8, 8));
+                Pump(room, bob);
+                Assert.AreEqual(2, host.Session.View.ObjectCount);
+                Assert.IsTrue(room.CanAct);
+
+                // And when Bob leaves, the seat is empty again and the game waits.
+                bob.Dispose();
+                Pump(room);
+                room.Submit(Place(15, 1));
+                Assert.AreEqual(3, host.Session.View.ObjectCount);
+                Assert.IsFalse(room.CanAct);
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void ARoomOpenedLikeBeforeLetsTheHostPlayTheEmptySeats()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gomoku"));
+                NetHostRoom room = new NetHostRoom(host, new LoopbackNetwork().Host("Ann"));
+                Assert.IsTrue(host.StartNewGame());
+                Assert.IsFalse(room.ComputerFills);
+                Assert.IsFalse(room.WaitsForPlayers);
+                room.Submit(Place(1, 1));
+                Assert.IsTrue(room.CanAct);
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void TheComputerDoesNotFillTheRoomOfAGameItCannotPlay()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                // A split game has no seats to fill, and a game without a computer player has nobody to fill them.
+                Assert.IsTrue(host.SelectMod(Race()));
+                NetHostRoom race = new NetHostRoom(host, new LoopbackNetwork().Host("Ann"), AgainstTheComputer);
+                Assert.IsFalse(race.ComputerFills);
+                Assert.IsFalse(race.WaitsForPlayers);
+                Assert.IsFalse(NetHostRoom.CanFill(host));
+                race.Dispose();
+
+                Assert.IsTrue(host.SelectMod("gomoku"));
+                Assert.IsTrue(NetHostRoom.CanFill(host));
+                Assert.IsTrue(host.SelectMod("cubic3"));
+                Assert.IsFalse(NetHostRoom.CanFill(host));
+            }
+        }
+
+        [Test]
+        public void AChessRoomAgainstTheComputerSeatsTheNewcomerAsBlackAtTheNextGame()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("chess"));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"), AgainstTheComputer);
+                Assert.IsTrue(host.StartNewGame());
+                Assert.IsTrue(room.ComputerFills);
+                Assert.AreEqual(2, room.SeatCount);
+                Assert.AreEqual("2", Seats(room.ComputerSeats));
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(1));
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+                Assert.IsTrue(room.CanAct, "white moves first, and that is the host");
+
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                Pump(room, bob);
+                Assert.AreEqual(0, bob.LocalPlayer.Seat, "the game that is on is not Bob's");
+                Assert.IsTrue(host.StartNewGame());
+                Pump(room, bob);
+                Assert.AreEqual(2, bob.LocalPlayer.Seat, "Bob plays black against the host");
+                Assert.AreEqual(0, room.ComputerSeats.Count);
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(2));
+
+                // When Bob leaves, the computer plays black again, and the next game is against it.
+                bob.Dispose();
+                Pump(room);
+                Assert.AreEqual("2", Seats(room.ComputerSeats));
+                Assert.IsTrue(host.StartNewGame());
+                Assert.AreEqual("2", Seats(room.ComputerSeats));
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(1));
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void ARoomSetupOffersWhatTheGameCanDo()
+        {
+            // Go-Stop: against the computer or not, and two players or three.
+            RoomSetup gostop = new RoomSetup(TestSupport.LoadMod("gostop").Manifest);
+            Assert.IsTrue(gostop.CanPlayComputer);
+            Assert.IsTrue(gostop.ChoosesPlayers);
+            Assert.IsTrue(gostop.HasChoices);
+            Assert.IsTrue(gostop.PlayComputer, "against the computer is where it starts");
+            Assert.AreEqual(2, gostop.FewestPlayers);
+            Assert.AreEqual(3, gostop.MostPlayers);
+            Assert.AreEqual(2, gostop.Players);
+            RoomOptions options = gostop.ToOptions();
+            Assert.IsTrue(options.ComputerFills);
+            Assert.AreEqual(2, options.Players);
+
+            gostop.Players = 3;
+            gostop.PlayComputer = false;
+            options = gostop.ToOptions();
+            Assert.IsFalse(options.ComputerFills);
+            Assert.AreEqual(3, options.Players);
+
+            // Whatever is asked for stays one of the numbers the game takes.
+            gostop.Players = 9;
+            Assert.AreEqual(3, gostop.Players);
+            gostop.Players = 0;
+            Assert.AreEqual(2, gostop.Players);
+
+            // Chess and Gomoku: against the computer or not; there is no number of players to choose.
+            foreach (string id in new[] { "chess", "gomoku" })
+            {
+                RoomSetup setup = new RoomSetup(TestSupport.LoadMod(id).Manifest);
+                Assert.IsTrue(setup.CanPlayComputer, id);
+                Assert.IsFalse(setup.ChoosesPlayers, id);
+                Assert.IsTrue(setup.HasChoices, id);
+                RoomOptions chosen = setup.ToOptions();
+                Assert.IsTrue(chosen.ComputerFills, id);
+                Assert.AreEqual(0, chosen.Players, "the game says how many play: " + id);
+                setup.PlayComputer = false;
+                Assert.IsFalse(setup.ToOptions().ComputerFills, id);
+            }
+
+            // Sudoku (people solve it together, with hints for help) and the cube (a table each) have nothing to choose,
+            // and a room of theirs opens at once.
+            foreach (string id in new[] { "sudoku", "cubic3" })
+            {
+                RoomSetup setup = new RoomSetup(TestSupport.LoadMod(id).Manifest);
+                Assert.IsFalse(setup.CanPlayComputer, id);
+                Assert.IsFalse(setup.ChoosesPlayers, id);
+                Assert.IsFalse(setup.HasChoices, id);
+                Assert.IsFalse(setup.PlayComputer, id);
+                Assert.IsFalse(setup.ToOptions().ComputerFills, id);
+                Assert.AreEqual(0, setup.ToOptions().Players, id);
+            }
+            Assert.Throws<ArgumentNullException>(() => new RoomSetup(null));
+        }
+
+        [Test]
+        public void ARoomSetupLeavesOutTheComputerWhereTheSeatsPlayTogether()
+        {
+            // A game with a computer player whose seats all play at once has no seat that the computer could fill.
+            ModManifest together = ModManifest.Parse(
+                "{\"id\":\"together\",\"name\":\"Together\",\"api\":1,\"entry\":\"main.luau\",\"players\":{\"min\":1,\"max\":2}," +
+                "\"multiplayer\":{\"cooperative\":true},\"ai\":{\"levels\":[5]}}");
+            Assert.IsTrue(together.HasComputerPlayer);
+            RoomSetup setup = new RoomSetup(together);
+            Assert.IsFalse(setup.CanPlayComputer);
+            Assert.IsFalse(setup.HasChoices);
+
+            // A game for one has no opponent to be.
+            ModManifest alone = ModManifest.Parse(
+                "{\"id\":\"alone\",\"name\":\"Alone\",\"api\":1,\"entry\":\"main.luau\",\"players\":{\"min\":1,\"max\":1},\"ai\":{\"levels\":[5]}}");
+            Assert.IsFalse(new RoomSetup(alone).CanPlayComputer);
+        }
+
+        [Test]
+        public void ARoomSetupOffersNoMoreNumbersThanThereAreButtonsFor()
+        {
+            ModManifest crowd = ModManifest.Parse(
+                "{\"id\":\"crowd\",\"name\":\"Crowd\",\"api\":1,\"entry\":\"main.luau\",\"players\":{\"min\":1,\"max\":16,\"option\":\"players\"}," +
+                "\"options\":{\"players\":0}}");
+            RoomSetup setup = new RoomSetup(crowd);
+            Assert.IsTrue(setup.ChoosesPlayers);
+            Assert.IsFalse(setup.CanPlayComputer, "no computer player in this game");
+            Assert.IsTrue(setup.HasChoices);
+            Assert.AreEqual(1, setup.FewestPlayers);
+            Assert.AreEqual(RoomSetup.MaxPlayerChoices, setup.MostPlayers);
+            setup.Players = 12;
+            Assert.AreEqual(RoomSetup.MaxPlayerChoices, setup.Players);
+            Assert.AreEqual(RoomSetup.MaxPlayerChoices, setup.ToOptions().Players);
+        }
+
+        [Test]
+        public void AGoStopRoomAgainstTheComputerSeatsTheNewcomerAtTheNextGame()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gostop"));
+                host.SetOption("players", JsonValue.Of(3));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"), AgainstTheComputer);
+                Assert.IsTrue(host.StartNewGame());
+                Assert.AreEqual(3, room.SeatCount);
+                Assert.AreEqual("2,3", Seats(room.ComputerSeats));
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(1));
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(2));
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(3));
+
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                Pump(room, bob);
+                Assert.AreEqual(0, bob.LocalPlayer.Seat);
+                Assert.AreEqual(3, bob.SeatCount);
+                Assert.AreEqual("2,3", Seats(bob.ComputerSeats));
+
+                // Two people play against the one computer seat that is left, and a third person has to wait.
+                NetClientRoom cy = new NetClientRoom(host.Mod, network.Join("Cy"));
+                NetClientRoom di = new NetClientRoom(host.Mod, network.Join("Di"));
+                Pump(room, bob, cy, di);
+                Assert.IsTrue(host.StartNewGame());
+                Pump(room, bob, cy, di);
+                Assert.AreEqual(2, bob.LocalPlayer.Seat);
+                Assert.AreEqual(3, cy.LocalPlayer.Seat);
+                Assert.AreEqual(0, di.LocalPlayer.Seat);
+                Assert.AreEqual(0, room.ComputerSeats.Count);
+                Assert.AreEqual(1, room.WaitingCount);
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(3));
+
+                // The one who plays seat 3 leaves: the computer takes it, the waiting one is not seated before the next game.
+                cy.Dispose();
+                Pump(room, bob, di);
+                Assert.AreEqual("3", Seats(room.ComputerSeats));
+                Assert.AreEqual(SeatMode.Ai, host.GetSeatMode(3));
+                Assert.AreEqual(0, di.LocalPlayer.Seat);
+                room.Dispose();
+            }
+        }
+
+        [Test]
+        public void AGoStopRoomOfTwoHasOneSeatForTheComputer()
+        {
+            using (GameHost host = ComputerHost())
+            {
+                Assert.IsTrue(host.SelectMod("gostop"));
+                host.SetOption("players", JsonValue.Of(2));
+                LoopbackNetwork network = new LoopbackNetwork();
+                NetHostRoom room = new NetHostRoom(host, network.Host("Ann"), AgainstTheComputer);
+                Assert.IsTrue(host.StartNewGame());
+                Assert.AreEqual(2, room.SeatCount);
+                Assert.AreEqual("2", Seats(room.ComputerSeats));
+                Assert.AreEqual(SeatMode.Human, host.GetSeatMode(3));
+
+                NetClientRoom bob = new NetClientRoom(host.Mod, network.Join("Bob"));
+                NetClientRoom cy = new NetClientRoom(host.Mod, network.Join("Cy"));
+                Pump(room, bob, cy);
+                Assert.IsTrue(host.StartNewGame());
+                Pump(room, bob, cy);
+                Assert.AreEqual(2, bob.LocalPlayer.Seat);
+                Assert.AreEqual(0, cy.LocalPlayer.Seat, "a game of two has no seat for a third person");
+                Assert.AreEqual(2, cy.SeatCount);
+                room.Dispose();
+            }
+        }
+
+        // Opens a room of the game on a network of its own and returns what runs it.
+        private static Multiplayer OpenRoom(GameHost host, List<LobbyInfo> open, string mod, RoomOptions options)
+        {
+            Multiplayer hosting = new Multiplayer(host, new FakeBackend("Ann", new LoopbackNetwork(), open));
+            ModPackage package = host.Catalog.Find(mod);
+            Assert.IsTrue(options == null ? hosting.HostGame(package) : hosting.HostGame(package, options));
+            hosting.Update();
+            Assert.IsNotNull(hosting.Room);
+            return hosting;
+        }
+
+        [Test]
+        public void TheRoomOptionsOfTheHostReachTheRoomAndItsListing()
+        {
+            List<LobbyInfo> open = new List<LobbyInfo>();
+            using (GameHost ann = ComputerHost())
+            {
+                // Three at the table, one of them a person.
+                using (Multiplayer hosting = OpenRoom(ann, open, "gostop", new RoomOptions { ComputerFills = true, Players = 3 }))
+                {
+                    Assert.IsTrue(hosting.Room.ComputerFills);
+                    Assert.AreEqual(3, hosting.Room.SeatCount);
+                    Assert.AreEqual("2,3", Seats(hosting.Room.ComputerSeats));
+                    Assert.AreEqual(3, ann.NewGameOptions["players"].AsInt());
+                    Assert.AreEqual(3, ann.SeatCount);
+                    Assert.AreEqual(1, open.Count);
+                    StringAssert.Contains("(3P)", open[0].Name);
+                    Assert.AreEqual(3 + Multiplayer.MaxSpectators, open[0].Capacity);
+                }
+
+                // Two at the table, people only.
+                using (Multiplayer hosting = OpenRoom(ann, open, "gostop", new RoomOptions { Players = 2 }))
+                {
+                    Assert.IsFalse(hosting.Room.ComputerFills);
+                    Assert.IsTrue(hosting.Room.WaitsForPlayers);
+                    Assert.AreEqual(2, hosting.Room.SeatCount);
+                    Assert.AreEqual(0, hosting.Room.ComputerSeats.Count);
+                    Assert.AreEqual(2, ann.NewGameOptions["players"].AsInt());
+                    Assert.AreEqual(2, open.Count);
+                    StringAssert.Contains("(2P)", open[1].Name);
+                    Assert.AreEqual(2 + Multiplayer.MaxSpectators, open[1].Capacity);
+                }
+
+                // A game that has no say in how many play is listed as it always was.
+                ModPackage gomoku = ann.Catalog.Find("gomoku");
+                using (Multiplayer hosting = OpenRoom(ann, open, "gomoku", new RoomOptions { ComputerFills = true, Players = 3 }))
+                {
+                    Assert.AreEqual("Ann - " + gomoku.Manifest.Name, open[2].Name);
+                    Assert.AreEqual(2 + Multiplayer.MaxSpectators, open[2].Capacity);
+                    Assert.AreEqual(2, hosting.Room.SeatCount);
+                    Assert.AreEqual("2", Seats(hosting.Room.ComputerSeats));
+                }
+
+                // And so is a room that is opened without any options.
+                using (Multiplayer hosting = OpenRoom(ann, open, "gomoku", null))
+                {
+                    Assert.AreEqual("Ann - " + gomoku.Manifest.Name, open[3].Name);
+                    Assert.IsFalse(hosting.Room.ComputerFills);
+                    Assert.IsFalse(hosting.Room.WaitsForPlayers);
+                }
+            }
+        }
+
+        [Test]
+        public void ARoomWithAnOutOfRangeNumberOfPlayersHostsTheClosestOne()
+        {
+            List<LobbyInfo> open = new List<LobbyInfo>();
+            using (GameHost ann = ComputerHost())
+            {
+                using (Multiplayer hosting = OpenRoom(ann, open, "gostop", new RoomOptions { ComputerFills = true, Players = 9 }))
+                {
+                    Assert.AreEqual(3, hosting.Room.SeatCount);
+                    Assert.AreEqual(3, ann.NewGameOptions["players"].AsInt());
+                }
+                using (Multiplayer hosting = OpenRoom(ann, open, "gostop", new RoomOptions { ComputerFills = true, Players = 1 }))
+                {
+                    Assert.AreEqual(2, hosting.Room.SeatCount);
+                    Assert.AreEqual(2, ann.NewGameOptions["players"].AsInt());
+                }
             }
         }
     }

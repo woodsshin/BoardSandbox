@@ -10,7 +10,6 @@ using BoardSandbox.Core.Game;
 using BoardSandbox.Core.Json;
 using BoardSandbox.Core.Mods;
 using BoardSandbox.Core.Net;
-using BoardSandbox.Core.Sim;
 using UnityEngine;
 
 namespace BoardSandbox.Client.UI
@@ -49,19 +48,12 @@ namespace BoardSandbox.Client.UI
         private bool _consoleFocused;
         private bool _releaseFocus;
         private bool _showConsole;
-        private bool _showSimulation;
         private bool _showOptions = true;
-        private string _simGames = "1000";
-        private string _simSeed = "1";
 
         private double _now;
         private string _status = string.Empty;
         private bool _hasSwatch;
         private Color _swatch = Color.white;
-        private bool _simRunning;
-        private bool _simWasRunning;
-        private SimulationProgress _simProgress;
-        private SimulationResult _simResult;
 
         public Hud(GameHost host, Multiplayer multiplayer, ModStudio studio, GuiTheme theme, Action fitView)
         {
@@ -224,13 +216,6 @@ namespace BoardSandbox.Client.UI
             _toasts.Clear();
             _toasts.AddRange(_host.Toasts.Active(now));
             _agents.Snapshot();
-
-            _simRunning = _host.Simulation.IsRunning;
-            _simProgress = _host.Simulation.Progress;
-            _simResult = _host.Simulation.LastResult;
-            if (_simWasRunning && !_simRunning && _simResult != null)
-                _host.Toasts.Add("Simulation finished: " + _simResult, _simResult.Succeeded ? ToastLevel.Info : ToastLevel.Warning, now);
-            _simWasRunning = _simRunning;
 
             SampleStatus();
         }
@@ -411,15 +396,38 @@ namespace BoardSandbox.Client.UI
             }
             if (view.Turn > 0)
             {
-                string who = room == null ? (_host.AcceptsHumanInput ? string.Empty : " (computer)")
-                    : room.SplitScreen ? string.Empty
-                    : room.CanAct ? " (you)" : guest == null && !_host.AcceptsHumanInput ? " (computer)" : string.Empty;
-                _status = SeatName(manifest, view.Turn) + " to move" + who;
+                _status = SeatName(manifest, view.Turn) + " to move" + TurnNote(room, guest, view.Turn);
                 _hasSwatch = true;
                 _swatch = SeatColor(manifest, view.Turn);
                 return;
             }
             _status = string.Empty;
+        }
+
+        // Who is on turn, where that is not plain: the local player, the computer, or nobody yet.
+        private string TurnNote(NetRoom room, NetRoom guest, int seat)
+        {
+            if (room == null)
+                return _host.AcceptsHumanInput ? string.Empty : " (computer)";
+            if (room.SplitScreen)
+                return string.Empty;
+            if (room.CanAct)
+                return " (you)";
+            if (room.IsComputerSeat(seat) || (guest == null && !_host.AcceptsHumanInput))
+                return " (computer)";
+            return room.WaitsForPlayers && SeatedPlayer(room, seat) == null ? " (waiting for a player)" : string.Empty;
+        }
+
+        // The person who sits at the seat of a shared game; null when nobody does.
+        private static NetPlayer SeatedPlayer(NetRoom room, int seat)
+        {
+            IReadOnlyList<NetPlayer> players = room.Players;
+            for (int i = 0; i < players.Count; i++)
+            {
+                if (players[i].Seat == seat)
+                    return players[i];
+            }
+            return null;
         }
 
         private static string SeatName(ModManifest manifest, int seat)
@@ -583,23 +591,35 @@ namespace BoardSandbox.Client.UI
             ModManifest manifest = room.Mod.Manifest;
             GUILayout.Space(_theme.Sf(8));
             GUILayout.Label(room.IsHost ? "Online room (you host)" : "Online room", _theme.Muted);
-            IReadOnlyList<NetPlayer> players = room.Players;
-            for (int i = 0; i < players.Count && i < 16; i++)
+            if (SeatsAreManaged(room))
             {
-                NetPlayer player = players[i];
-                string role = room.SplitScreen ? (player.Board > 0 ? "plays" : "watches") : player.Seat > 0 ? SeatName(manifest, player.Seat) : "watches";
-                GUILayout.BeginHorizontal();
-                if (!room.SplitScreen && player.Seat > 0)
-                {
-                    Color previous = GUI.color;
-                    GUI.color = SeatColor(manifest, player.Seat);
-                    GUILayout.Box(GUIContent.none, _theme.Swatch);
-                    GUI.color = previous;
-                }
-                GUILayout.Label(DisplayText.Clip(player.Name, 24) + (player.Id == room.LocalId ? " (you)" : string.Empty), _theme.Label, GUILayout.ExpandWidth(true));
-                GUILayout.Label(role, _theme.Muted, GUILayout.ExpandWidth(false));
-                GUILayout.EndHorizontal();
+                // The host sees the table where the seats are drawn; somebody who joined has no seats of their own.
+                if (!room.IsHost)
+                    DrawTable(room);
             }
+            else
+            {
+                IReadOnlyList<NetPlayer> players = room.Players;
+                for (int i = 0; i < players.Count && i < 16; i++)
+                {
+                    NetPlayer player = players[i];
+                    string role = room.SplitScreen ? (player.Board > 0 ? "plays" : "watches") : player.Seat > 0 ? SeatName(manifest, player.Seat) : "watches";
+                    GUILayout.BeginHorizontal();
+                    if (!room.SplitScreen && player.Seat > 0)
+                    {
+                        Color previous = GUI.color;
+                        GUI.color = SeatColor(manifest, player.Seat);
+                        GUILayout.Box(GUIContent.none, _theme.Swatch);
+                        GUI.color = previous;
+                    }
+                    GUILayout.Label(DisplayText.Clip(player.Name, 24) + (player.Id == room.LocalId ? " (you)" : string.Empty), _theme.Label, GUILayout.ExpandWidth(true));
+                    GUILayout.Label(role, _theme.Muted, GUILayout.ExpandWidth(false));
+                    GUILayout.EndHorizontal();
+                }
+            }
+            string hint = RoomHint(room);
+            if (hint.Length > 0)
+                GUILayout.Label(hint, _theme.Muted);
             if (GUILayout.Button(room.IsHost ? "Close room" : "Leave room", _theme.Button))
                 Defer(LeaveRoom);
         }
@@ -620,11 +640,29 @@ namespace BoardSandbox.Client.UI
             GUILayout.EndHorizontal();
         }
 
+        // Whether the seats of the room are looked after by the room: the computer fills the empty ones, or they wait for
+        // people. Nobody switches them by hand then.
+        private static bool SeatsAreManaged(NetRoom room)
+        {
+            return room != null && !room.SplitScreen && (room.ComputerFills || room.WaitsForPlayers);
+        }
+
         private void DrawSeats(ModManifest manifest)
         {
+            NetRoom room = _multiplayer.Room;
+            if (SeatsAreManaged(room))
+            {
+                DrawTable(room);
+                return;
+            }
+            // A game that is not played against the computer, a puzzle that hands out hints instead, has no seat to switch.
+            if (!manifest.AllowComputer)
+                return;
+
             GUILayout.Space(_theme.Sf(6));
             GUILayout.Label("Players", _theme.Muted);
-            for (int seat = 1; seat <= manifest.MaxPlayers; seat++)
+            int seats = Math.Max(1, Math.Min(manifest.MaxPlayers, _host.SeatCount));
+            for (int seat = 1; seat <= seats; seat++)
             {
                 GUILayout.BeginHorizontal();
                 Color previous = GUI.color;
@@ -648,6 +686,64 @@ namespace BoardSandbox.Client.UI
             {
                 GUILayout.Label("Computer level " + _host.AiLevel + "/" + _host.AiLevelCount + " (effort " + _host.AiEffort + ")", _theme.Muted);
             }
+        }
+
+        // Who plays each seat of a room that the computer fills or that waits for people: a person, the computer or nobody
+        // yet; and below them the people who have no seat.
+        private void DrawTable(NetRoom room)
+        {
+            ModManifest manifest = room.Mod.Manifest;
+            IReadOnlyList<NetPlayer> players = room.Players;
+            GUILayout.Space(_theme.Sf(6));
+            GUILayout.Label("Players", _theme.Muted);
+            int seats = Math.Max(1, Math.Min(manifest.MaxPlayers, room.SeatCount));
+            for (int seat = 1; seat <= seats; seat++)
+            {
+                NetPlayer sitter = SeatedPlayer(room, seat);
+                bool computer = sitter == null && room.IsComputerSeat(seat);
+                string who = sitter != null ? DisplayText.Clip(sitter.Name, 24) + (sitter.Id == room.LocalId ? " (you)" : string.Empty)
+                    : computer ? "Computer" : "Waiting for a player…";
+                GUILayout.BeginHorizontal();
+                Color previous = GUI.color;
+                GUI.color = SeatColor(manifest, seat);
+                GUILayout.Box(GUIContent.none, _theme.Swatch);
+                GUI.color = previous;
+                GUILayout.Label(who, sitter != null || computer ? _theme.Label : _theme.Muted, GUILayout.ExpandWidth(true));
+                GUILayout.Label(SeatName(manifest, seat), _theme.Muted, GUILayout.ExpandWidth(false));
+                GUILayout.EndHorizontal();
+            }
+            for (int i = 0; i < players.Count && i < 16; i++)
+            {
+                NetPlayer player = players[i];
+                if (player.Seat > 0)
+                    continue;
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(DisplayText.Clip(player.Name, 24) + (player.Id == room.LocalId ? " (you)" : string.Empty), _theme.Label, GUILayout.ExpandWidth(true));
+                GUILayout.Label(room.ComputerFills ? "next game" : "watches", _theme.Muted, GUILayout.ExpandWidth(false));
+                GUILayout.EndHorizontal();
+            }
+            if (room.IsHost && room.ComputerSeats.Count > 0 && _host.HasAi && _host.Session != null && manifest == _host.Session.Mod.Manifest)
+                GUILayout.Label("Computer level " + _host.AiLevel + "/" + _host.AiLevelCount + " (effort " + _host.AiEffort + ")", _theme.Muted);
+        }
+
+        // What the local player should know about the room beyond who sits where.
+        private static string RoomHint(NetRoom room)
+        {
+            if (room.SplitScreen)
+                return string.Empty;
+            NetPlayer me = room.LocalPlayer;
+            if (room.ComputerFills)
+            {
+                int waiting = room.WaitingCount;
+                if (!room.IsHost)
+                    return me != null && me.Seat <= 0 ? "You watch this game. When the host starts a new game you play it." : string.Empty;
+                if (waiting > 0)
+                    return waiting == 1 ? "Someone is waiting to play. Press New game to start a game with them." : waiting + " people are waiting to play. Press New game to start a game with them.";
+                return "You play the computer. When someone joins, press New game to play with them.";
+            }
+            if (room.WaitsForPlayers && room.IsHost && room.Players.Count < Math.Max(1, room.SeatCount))
+                return "The room waits for people to join.";
+            return string.Empty;
         }
 
         private void DrawActions(GameSession session)
@@ -751,6 +847,8 @@ namespace BoardSandbox.Client.UI
             }
         }
 
+        // What is left of the tools next to the board: the ones a player needs. The console of commands is a tool for those
+        // who make games; it stays behind the ` and F1 keys.
         private void DrawToolColumn()
         {
             float width = _theme.Sf(230);
@@ -759,90 +857,8 @@ namespace BoardSandbox.Client.UI
             BeginBox(width);
             if (GUILayout.Button("Fit view", _theme.Button))
                 Defer(() => _fitView?.Invoke());
-            bool console = GUILayout.Toggle(_showConsole, "Console", _theme.Button);
-            if (console != _showConsole)
-                Defer(ToggleConsole);
-            bool simulation = GUILayout.Toggle(_showSimulation, "Simulation", _theme.Button);
-            if (simulation != _showSimulation)
-            {
-                Defer(() =>
-                {
-                    _showSimulation = simulation;
-                    _releaseFocus = true;
-                });
-            }
             EndBox();
-
-            if (_showSimulation)
-                DrawSimulation(width);
             EndArea();
-        }
-
-        private void DrawSimulation(float width)
-        {
-            BeginBox(width);
-            GUILayout.Label("Simulation", _theme.Heading);
-            GUILayout.Label("Random players, no display.", _theme.Muted);
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Games", _theme.Label, GUILayout.Width(_theme.Sf(60)));
-            _simGames = TouchText.NumberField("simulation:games", _simGames, 9, _theme.Field);
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Seed", _theme.Label, GUILayout.Width(_theme.Sf(60)));
-            _simSeed = TouchText.NumberField("simulation:seed", _simSeed, 9, _theme.Field);
-            GUILayout.EndHorizontal();
-
-            if (_simRunning)
-            {
-                if (GUILayout.Button("Cancel", _theme.Button))
-                    Defer(() => _host.Simulation.Cancel());
-                SimulationProgress progress = _simProgress;
-                float fraction = progress != null && progress.GamesTotal > 0 ? Mathf.Clamp01((float)progress.GamesDone / progress.GamesTotal) : 0f;
-                Rect bar = GUILayoutUtility.GetRect(1f, _theme.Sf(10), GUILayout.ExpandWidth(true));
-                if (Event.current.type == EventType.Repaint)
-                {
-                    GUI.DrawTexture(bar, _theme.TrackTexture);
-                    GUI.DrawTexture(new Rect(bar.x, bar.y, bar.width * fraction, bar.height), _theme.FillTexture);
-                }
-                if (progress != null)
-                {
-                    GUILayout.Label(progress.GamesDone + " / " + progress.GamesTotal + " games, "
-                        + progress.GamesPerSecond.ToString("0", CultureInfo.InvariantCulture) + " per second", _theme.Muted);
-                }
-            }
-            else
-            {
-                GUI.enabled = _host.Mod != null;
-                if (GUILayout.Button("Run", _theme.Button))
-                    Defer(StartSimulation);
-                GUI.enabled = true;
-                if (_simResult != null)
-                    GUILayout.Label(_simResult.ToString(), _theme.Muted);
-            }
-            EndBox();
-        }
-
-        private void StartSimulation()
-        {
-            ModPackage mod = _host.Mod;
-            if (mod == null)
-                return;
-            SimulationOptions options = new SimulationOptions
-            {
-                Games = ParseNumber(_simGames, 1000, 1, 1000000),
-                Seed = ParseNumber(_simSeed, 1, 1, int.MaxValue),
-                GameOptions = _host.NewGameOptions.DeepClone()
-            };
-            if (!_host.Simulation.Start(mod, options))
-                _host.Toasts.Add("A simulation is already running.", ToastLevel.Warning, _host.Now);
-        }
-
-        private static int ParseNumber(string text, int fallback, int min, int max)
-        {
-            if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
-                return fallback;
-            return Math.Max(min, Math.Min(max, value));
         }
 
         private void DrawConsole()

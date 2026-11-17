@@ -52,6 +52,7 @@ namespace BoardSandbox.Core.Net
         private readonly GameHost _host;
         private readonly ILobbyBackend _backend;
         private ModPackage _pending;
+        private RoomOptions _pendingOptions;
         private bool _pendingHost;
         private string _listedMod = string.Empty;
 
@@ -104,20 +105,36 @@ namespace BoardSandbox.Core.Net
 
         public bool HostGame(ModPackage mod)
         {
+            return HostGame(mod, null);
+        }
+
+        // Opens a room for the game. The options are what the host chose for it (RoomSetup); null opens a room like any
+        // other, whose seats go to the people in the order they come.
+        public bool HostGame(ModPackage mod, RoomOptions options)
+        {
             if (!Ready(mod))
                 return false;
             ModManifest manifest = mod.Manifest;
+            int seats = options != null && manifest.ChoosesPlayerCount && options.Players > 0
+                ? ClampPlayers(manifest, options.Players)
+                : 0;
             _pending = mod;
+            _pendingOptions = options;
             _pendingHost = true;
             _backend.Create(new LobbyInfo
             {
-                Name = NetRoom.CleanName(_backend.LocalName) + " - " + manifest.Name,
+                Name = NetRoom.CleanName(_backend.LocalName) + " - " + manifest.Name + (seats > 0 ? " (" + seats + "P)" : string.Empty),
                 ModId = manifest.Id,
                 ModHash = mod.ContentHash,
                 ModVersion = manifest.Version,
-                Capacity = manifest.RoomPlayers + MaxSpectators
+                Capacity = (seats > 0 ? seats : manifest.RoomPlayers) + MaxSpectators
             });
             return true;
+        }
+
+        private static int ClampPlayers(ModManifest manifest, int players)
+        {
+            return Math.Max(manifest.MinPlayers, Math.Min(manifest.MaxPlayers, players));
         }
 
         public bool Join(LobbyInfo lobby)
@@ -138,6 +155,7 @@ namespace BoardSandbox.Core.Net
             if (!Ready(mod))
                 return false;
             _pending = mod;
+            _pendingOptions = null;
             _pendingHost = false;
             _backend.Join(lobby);
             return true;
@@ -165,6 +183,7 @@ namespace BoardSandbox.Core.Net
             if (error != null)
             {
                 _pending = null;
+                _pendingOptions = null;
                 Say(error, ToastLevel.Error);
             }
             INetTransport transport = _backend.TakeTransport();
@@ -208,7 +227,9 @@ namespace BoardSandbox.Core.Net
         private void Enter(INetTransport transport)
         {
             ModPackage mod = _pending;
+            RoomOptions options = _pendingOptions;
             _pending = null;
+            _pendingOptions = null;
             if (mod == null || transport.IsHost != _pendingHost)
             {
                 transport.Dispose();
@@ -222,7 +243,7 @@ namespace BoardSandbox.Core.Net
                     transport.Dispose();
                     return;
                 }
-                Room = new NetHostRoom(_host, transport);
+                Room = new NetHostRoom(_host, transport, options);
                 Room.Notice += Say;
                 RoomChanged?.Invoke();
                 _host.StartNewGame();
