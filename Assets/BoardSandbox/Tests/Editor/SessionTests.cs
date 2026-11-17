@@ -702,5 +702,53 @@ return rules";
                 Assert.AreEqual(7, Count(b));
             }
         }
+        private const string SlowStartRules = @"
+local rules = {}
+function rules.new_game(options)
+    local sum = 0
+    if options.forever == true then
+        while true do sum += 1 end
+    end
+    for i = 1, options.work do sum += i % 7 end
+    bse.turn(1)
+end
+function rules.command(seat, cmd)
+    while true do end
+end
+return rules
+";
+
+        [Test]
+        public void ANewGameHasTheTimeOfABootAndACommandTheTimeOfACall()
+        {
+            // The work of this new game takes far longer than the 25 ms of a call, and far less than the boot limit.
+            SessionOptions options = new SessionOptions { Vm = new VmOptions { CallTimeoutMs = 25, BootTimeoutMs = 20000 } };
+            using (GameSession session = new GameSession(TestSupport.InlineMod(SlowStartRules, "{\"work\":15000000}"), options))
+            {
+                session.NewGame();
+                Assert.IsTrue(session.IsStarted);
+                Assert.AreEqual(1, session.View.Turn);
+                SubmitResult result = session.Submit(new InputPacket(1, TestSupport.Options("{\"action\":\"spin\"}")));
+                Assert.AreEqual(SubmitStatus.Faulted, result.Status);
+                Assert.AreEqual("TIMEOUT", result.Code);
+            }
+
+            // A new game that never ends is stopped at the boot limit.
+            options = new SessionOptions { Vm = new VmOptions { CallTimeoutMs = 25, BootTimeoutMs = 60 } };
+            using (GameSession session = new GameSession(TestSupport.InlineMod(SlowStartRules, "{\"work\":0}"), options))
+            {
+                GameSessionException stopped = Assert.Throws<GameSessionException>(() => session.NewGame(TestSupport.Options("{\"forever\":true}")));
+                Assert.AreEqual("TIMEOUT", stopped.Code);
+                Assert.IsFalse(session.IsStarted);
+            }
+
+            // A call that may take longer than a boot keeps its own limit.
+            options = new SessionOptions { Vm = new VmOptions { CallTimeoutMs = 20000, BootTimeoutMs = 2000 } };
+            using (GameSession session = new GameSession(TestSupport.InlineMod(SlowStartRules, "{\"work\":15000000}"), options))
+            {
+                session.NewGame();
+                Assert.IsTrue(session.IsStarted);
+            }
+        }
     }
 }

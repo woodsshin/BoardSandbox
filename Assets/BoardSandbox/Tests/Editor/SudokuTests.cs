@@ -388,6 +388,257 @@ namespace BoardSandbox.Tests
             Assert.AreEqual(puzzle, state["board"].AsString());
         }
 
+        // Fills in every single (a cell with one digit left, a digit with one cell left in a row, a column or a box)
+        // until there is none, the way a beginner solves. True when that solves the puzzle.
+        private static bool SinglesSolve(string puzzle)
+        {
+            int[] cells = Cells(puzzle);
+            bool progress = true;
+            while (progress)
+            {
+                progress = false;
+                int[] open = new int[81];
+                for (int i = 0; i < 81; i++)
+                {
+                    if (cells[i] != 0)
+                        continue;
+                    int mask = 0x1FF;
+                    for (int j = 0; j < 81; j++)
+                    {
+                        if (cells[j] != 0 && (j / 9 == i / 9 || j % 9 == i % 9 || (j / 27 == i / 27 && j % 9 / 3 == i % 9 / 3)))
+                            mask &= ~(1 << (cells[j] - 1));
+                    }
+                    open[i] = mask;
+                }
+                for (int i = 0; i < 81 && !progress; i++)
+                {
+                    if (cells[i] != 0)
+                        continue;
+                    for (int digit = 1; digit <= 9 && !progress; digit++)
+                    {
+                        int bit = 1 << (digit - 1);
+                        if ((open[i] & bit) == 0)
+                            continue;
+                        bool onlyDigit = open[i] == bit;
+                        bool aloneInRow = true, aloneInColumn = true, aloneInBox = true;
+                        for (int j = 0; j < 81; j++)
+                        {
+                            if (j == i || (open[j] & bit) == 0)
+                                continue;
+                            if (j / 9 == i / 9)
+                                aloneInRow = false;
+                            if (j % 9 == i % 9)
+                                aloneInColumn = false;
+                            if (j / 27 == i / 27 && j % 9 / 3 == i % 9 / 3)
+                                aloneInBox = false;
+                        }
+                        if (onlyDigit || aloneInRow || aloneInColumn || aloneInBox)
+                        {
+                            cells[i] = digit;
+                            progress = true;
+                        }
+                    }
+                }
+            }
+            foreach (int cell in cells)
+            {
+                if (cell == 0)
+                    return false;
+            }
+            return true;
+        }
+
+        private static string StatusOf(IEnumerable<ViewEvent> events)
+        {
+            foreach (ViewEvent e in events)
+            {
+                if (e.Kind == ViewEventKind.Status && e.Level != "warning")
+                    return e.Text;
+            }
+            return null;
+        }
+
+        [Test]
+        public void TheLevelIsNormalUnlessAnotherIsAskedFor()
+        {
+            string plain;
+            using (GameSession session = new GameSession(LoadSudoku()))
+            {
+                IReadOnlyList<ViewEvent> events = session.NewGame(TestSupport.Options("{\"seed\":77}"));
+                JsonValue state = State(session);
+                Assert.AreEqual(1, state["level"].AsInt());
+                Assert.AreEqual(36, state["clues"].AsInt());
+                Assert.AreEqual("Puzzle 77, 36 clues", StatusOf(events));
+                plain = state["puzzle"].AsString();
+            }
+            // What is not a level is the normal one, and so is what is below it; what is above it is the highest.
+            foreach (string level in new[] { "1", "0", "-3", "\"hard\"", "1.9" })
+            {
+                using (GameSession session = Start("{\"seed\":77,\"level\":" + level + "}"))
+                {
+                    Assert.AreEqual(1, State(session)["level"].AsInt(), level);
+                    Assert.AreEqual(plain, State(session)["puzzle"].AsString(), level);
+                }
+            }
+            using (GameSession session = Start("{\"seed\":77,\"level\":9}"))
+                Assert.AreEqual(3, State(session)["level"].AsInt());
+        }
+
+        [Test]
+        public void AHardPuzzleNeedsMoreThanSinglesAndNoMoreThanPairs()
+        {
+            for (int seed = 1; seed <= 12; seed++)
+            {
+                using (GameSession session = new GameSession(LoadSudoku()))
+                {
+                    IReadOnlyList<ViewEvent> events = session.NewGame(TestSupport.Options("{\"level\":2,\"seed\":" + seed + "}"));
+                    AssertSoundPuzzle(session);
+                    JsonValue state = State(session);
+                    Assert.AreEqual(2, state["level"].AsInt());
+                    Assert.AreEqual(2, state["grade"].AsInt(), "seed " + seed);
+                    Assert.IsFalse(SinglesSolve(state["puzzle"].AsString()), "seed " + seed + " is solved by singles");
+                    Assert.LessOrEqual(state["clues"].AsInt(), 30, "seed " + seed);
+                    Assert.AreEqual("Puzzle " + seed + ", hard, " + state["clues"].AsInt() + " clues", StatusOf(events));
+                }
+            }
+        }
+
+        [Test]
+        public void AnExpertPuzzleNeedsMoreThanPairsAndCanNotLoseAClue()
+        {
+            for (int seed = 1; seed <= 12; seed++)
+            {
+                using (GameSession session = new GameSession(LoadSudoku()))
+                {
+                    IReadOnlyList<ViewEvent> events = session.NewGame(TestSupport.Options("{\"level\":3,\"seed\":" + seed + "}"));
+                    AssertSoundPuzzle(session);
+                    JsonValue state = State(session);
+                    Assert.AreEqual(3, state["level"].AsInt());
+                    Assert.AreEqual(3, state["grade"].AsInt(), "seed " + seed);
+                    string puzzle = state["puzzle"].AsString();
+                    Assert.IsFalse(SinglesSolve(puzzle), "seed " + seed + " is solved by singles");
+                    Assert.LessOrEqual(state["clues"].AsInt(), 30, "seed " + seed);
+                    Assert.AreEqual("Puzzle " + seed + ", expert, " + state["clues"].AsInt() + " clues", StatusOf(events));
+                    if (seed > 3)
+                        continue;
+                    for (int i = 0; i < 81; i++)
+                    {
+                        if (puzzle[i] == '0')
+                            continue;
+                        string thinner = puzzle.Substring(0, i) + "0" + puzzle.Substring(i + 1);
+                        Assert.AreEqual(2, CountSolutions(thinner, 2), "seed " + seed + " can do without clue " + i);
+                    }
+                }
+            }
+        }
+
+        [Test]
+        public void TheLevelsOfASeedAreDifferentPuzzlesAndAlwaysTheSame()
+        {
+            string[] puzzles = new string[3];
+            for (int level = 1; level <= 3; level++)
+            {
+                using (GameSession session = Start("{\"seed\":2024,\"level\":" + level + "}"))
+                    puzzles[level - 1] = State(session)["puzzle"].AsString();
+                using (GameSession session = Start("{\"seed\":2024,\"clues\":60,\"level\":" + level + "}"))
+                {
+                    // The clues option is for the normal level; the others take away what they can.
+                    if (level > 1)
+                        Assert.AreEqual(puzzles[level - 1], State(session)["puzzle"].AsString(), "level " + level);
+                    else
+                        Assert.AreEqual(60, State(session)["clues"].AsInt());
+                }
+            }
+            Assert.AreNotEqual(puzzles[0], puzzles[1]);
+            Assert.AreNotEqual(puzzles[1], puzzles[2]);
+            Assert.IsTrue(SinglesSolve(Puzzle), "the classic puzzle is one for singles");
+        }
+
+        [Test]
+        public void APuzzleOfYourOwnIsGradedToo()
+        {
+            using (GameSession session = StartClassic())
+            {
+                Assert.AreEqual(0, State(session)["level"].AsInt());
+                Assert.AreEqual(1, State(session)["grade"].AsInt());
+            }
+            using (GameSession session = Start("{\"puzzle\":\"" + Empty + "\"}"))
+            {
+                Assert.AreEqual(0, State(session)["level"].AsInt());
+                Assert.AreEqual(0, State(session)["grade"].AsInt(), "a puzzle with several solutions has no grade");
+            }
+            // A dealt expert puzzle, typed in again, is measured the same.
+            string expert;
+            using (GameSession session = Start("{\"seed\":5,\"level\":3}"))
+                expert = State(session)["puzzle"].AsString();
+            using (GameSession session = Start("{\"puzzle\":\"" + expert + "\"}"))
+                Assert.AreEqual(3, State(session)["grade"].AsInt());
+        }
+
+        [Test]
+        public void TheLevelComesBackWithUndoAndSnapshots()
+        {
+            using (GameSession session = Start("{\"seed\":8,\"level\":3}"))
+            {
+                string solution = session.Query("solution").AsString();
+                string puzzle = State(session)["puzzle"].AsString();
+                int empty = puzzle.IndexOf('0');
+                PlaceOk(session, empty % 9 + 1, empty / 9 + 1, solution[empty] - '0');
+                string snapshot = session.CaptureSnapshot();
+                Assert.IsTrue(session.Undo());
+                Assert.AreEqual(3, State(session)["level"].AsInt());
+                Assert.AreEqual(3, State(session)["grade"].AsInt());
+
+                using (GameSession other = StartClassic())
+                {
+                    other.LoadSnapshot(snapshot);
+                    Assert.AreEqual(3, State(other)["level"].AsInt());
+                    Assert.AreEqual(3, State(other)["grade"].AsInt());
+                    Assert.AreEqual(puzzle, State(other)["puzzle"].AsString());
+                }
+
+                // A snapshot from before there were levels is of a normal puzzle; its grade is measured.
+                JsonValue root = JsonValue.Parse(snapshot);
+                Assert.AreEqual(3, root["mod"]["level"].AsInt());
+                root["mod"].Remove("level");
+                session.LoadSnapshot(root.ToJson());
+                Assert.AreEqual(1, State(session)["level"].AsInt());
+                Assert.AreEqual(3, State(session)["grade"].AsInt());
+            }
+        }
+
+        [Test]
+        public void TheComputerSolvesAnExpertPuzzle()
+        {
+            using (GameSession session = Start("{\"seed\":3,\"level\":3}"))
+            {
+                int empty = State(session)["empty"].AsInt();
+                List<JsonValue> played = LetTheComputerPlay(session);
+                Assert.AreEqual(empty, played.Count);
+                Assert.IsTrue(session.View.IsOver);
+                Assert.AreEqual(session.Query("solution").AsString(), State(session)["board"].AsString());
+            }
+        }
+
+        [Test]
+        public void MakingAHardOrAnExpertPuzzleStaysFarInsideTheTimeANewGameHas()
+        {
+            System.Diagnostics.Stopwatch watch = new System.Diagnostics.Stopwatch();
+            using (GameSession session = new GameSession(LoadSudoku()))
+            {
+                double worst = 0;
+                for (int seed = 100; seed < 160; seed++)
+                {
+                    watch.Restart();
+                    session.NewGame(TestSupport.Options("{\"seed\":" + seed + ",\"level\":" + (2 + seed % 2) + "}"));
+                    worst = Math.Max(worst, watch.Elapsed.TotalMilliseconds);
+                    Assert.AreEqual(2 + seed % 2, State(session)["grade"].AsInt(), "seed " + seed);
+                }
+                // A new game has two seconds (the boot limit); the slowest of these takes a small part of it.
+                Assert.Less(worst, 1000, "the slowest puzzle took " + worst + " ms");
+            }
+        }
+
         [Test]
         public void TheManifestDeclaresAGridForOneOrTwoPlayersWhoPlayTogether()
         {
@@ -403,11 +654,12 @@ namespace BoardSandbox.Tests
             Assert.IsTrue(manifest.Cooperative);
             Assert.IsFalse(manifest.SplitScreen);
             Assert.AreEqual(2, manifest.RoomPlayers);
+            Assert.AreEqual(1, manifest.DefaultOptions["level"].AsInt());
             Assert.AreEqual(36, manifest.DefaultOptions["clues"].AsInt());
             Assert.AreEqual(0, manifest.DefaultOptions["seed"].AsInt(-1));
             Assert.IsFalse(manifest.DefaultOptions["strict"].AsBool(true));
             // A puzzle of your own is typed in the console; the text field of the options panel is too short for 81 digits.
-            Assert.AreEqual(3, manifest.DefaultOptions.Count);
+            Assert.AreEqual(4, manifest.DefaultOptions.Count);
             Assert.IsFalse(manifest.DefaultOptions.Has("puzzle"));
             Assert.AreEqual("tap", manifest.Client["click"]["action"].AsString());
             Assert.AreEqual("object", manifest.Client["click"]["target"].AsString());

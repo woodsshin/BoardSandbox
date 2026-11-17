@@ -37,12 +37,20 @@
 --                                  (again to take it out), or with hold, shift or the right button note it.
 --                                  A tap on a filled cell with nothing chosen chooses its digit.
 --
--- Options:   clues   how many clues the puzzle is left with (it keeps more when it cannot be made any thinner)
+-- Options:   level   how hard the puzzle is: 1 normal, 2 hard, 3 expert. A normal puzzle is thinned down to `clues`
+--                    clues. A hard one can not be solved with singles alone (a cell with one digit left, a digit
+--                    with one cell left): it asks for locked candidates, pairs or triples, and has as few clues as
+--                    that allows. An expert one can not be solved with those either (it asks for an X-wing, a chain
+--                    or the like) and can not lose another clue. Hard and expert puzzles have 21 to 28 clues.
+--            clues   how many clues a normal puzzle is left with (it keeps more when it cannot be made any thinner)
 --            seed    the same seed always gives the same puzzle; 0 deals a new one
 --            strict  refuse digits that are already in the row, the column or the box of the cell
 --            puzzle  81 digits, 0 or . for an empty cell, to play a puzzle of your own instead of a dealt one
 --
--- Queries:   state                the clues, how far the puzzle is, the grid and the puzzle as 81 digits (0 is empty),
+-- Queries:   state                the level that was asked for (0 for a puzzle of your own) and the grade of the
+--                                 puzzle as the game measured it (1 to 3 like the levels, 0 when the puzzle has
+--                                 more than one solution), the clues, how far the puzzle is, the grid and the
+--                                 puzzle as 81 digits (0 is empty),
 --                                 what seat 1 chose on the pad (selected) and what each seat chose (chosen), who put
 --                                 the digit in each cell (owners: 81 digits, 0 for a clue or an empty cell, else the
 --                                 seat), how many of each digit are still to be put on the grid (9 digits) and how
@@ -57,6 +65,7 @@
 
 local Grid = require("./lib/grid")
 local Generator = require("./lib/generator")
+local Grader = require("./lib/grader")
 local Solver = require("./lib/solver")
 
 local rules = {}
@@ -79,6 +88,15 @@ local MAX_SEED = 2147483646
 -- A script gets about a quarter of a second per call, and these searches stop long before that.
 local GENERATION_NODES = 40000
 local SOLVE_NODES = 50000
+
+-- The levels of a dealt puzzle, which are also the grades of the grader. Making a hard or an expert puzzle takes
+-- three tries on average and some hundredths of a second; the game gives new_game two seconds, and after this many
+-- tries the puzzle is the hardest one found, under the name of what it is.
+local NORMAL = Grader.SINGLES
+local EXPERT = Grader.BEYOND
+local LEVEL_NAMES: { string } = { "normal", "hard", "expert" }
+local GRADED_TRIES = 24
+local GRADED_NODES = 60000
 
 -- The seats, in the colors of config.json. A game of one only ever has the first.
 local SEATS = 2
@@ -152,6 +170,8 @@ local bad = 0 -- how many cells conflict
 local clues = 0
 local moves = 0
 local seed_used = 0
+local level_used = NORMAL -- the level that was asked for, 0 for a puzzle that was not dealt
+local grade = 0 -- what the grader says of the puzzle, 0 when it has more than one solution
 local unique = true
 local strict = false
 local finished = false
@@ -667,13 +687,24 @@ function rules.new_game(options: { [string]: any })
 	if type(text) == "string" and text ~= "" then
 		loaded = true
 		seed_used = 0
+		level_used = 0
 		cells, answer, unique = load_puzzle(text)
+		grade = if unique then Grader.grade(cells) else 0
 	else
 		seed_used = pick_seed(options.seed)
+		level_used = clamp_integer(options.level, NORMAL, NORMAL, EXPERT)
 		unique = true
-		local puzzle = Generator.generate(seed_used, clamp_integer(options.clues, DEFAULT_CLUES, MIN_CLUES, MAX_CLUES), GENERATION_NODES)
-		cells = puzzle.cells
-		answer = puzzle.solution
+		if level_used == NORMAL then
+			local puzzle = Generator.generate(seed_used, clamp_integer(options.clues, DEFAULT_CLUES, MIN_CLUES, MAX_CLUES), GENERATION_NODES)
+			cells = puzzle.cells
+			answer = puzzle.solution
+			grade = Grader.grade(cells)
+		else
+			local puzzle = Generator.generate_graded(seed_used, level_used, GRADED_TRIES, GRADED_NODES)
+			cells = puzzle.cells
+			answer = puzzle.solution
+			grade = puzzle.grade
+		end
 	end
 
 	set_puzzle(cells, answer)
@@ -684,7 +715,13 @@ function rules.new_game(options: { [string]: any })
 			spawn_cell(i, false)
 		end
 	end
-	bse.status(if loaded then `Puzzle with {clues} clues` else `Puzzle {seed_used}, {clues} clues`)
+	if loaded then
+		bse.status(`Puzzle with {clues} clues`)
+	elseif level_used == NORMAL then
+		bse.status(`Puzzle {seed_used}, {clues} clues`)
+	else
+		bse.status(`Puzzle {seed_used}, {LEVEL_NAMES[grade]}, {clues} clues`)
+	end
 	if not unique then
 		bse.status("This puzzle has more than one solution", "warning")
 	end
@@ -1092,6 +1129,8 @@ function rules.query(name: string, args: any): any
 	if name == "state" then
 		return {
 			seed = seed_used,
+			level = level_used,
+			grade = grade,
 			strict = strict,
 			unique = unique,
 			clues = clues,
@@ -1190,6 +1229,7 @@ function rules.snapshot(): any
 		chosen = table.clone(selected),
 		owners = owners_text(),
 		seed = seed_used,
+		level = level_used,
 		unique = unique,
 		strict = strict,
 		finished = finished,
@@ -1343,6 +1383,13 @@ function rules.restore(data: any)
 	moves = clamp_integer(data.moves, 0, 0, 1000000)
 	seed_used = clamp_integer(data.seed, 0, 0, MAX_SEED)
 	unique = data.unique ~= false
+	-- A snapshot from before there were levels is of a normal puzzle, or of one that was not dealt.
+	level_used = clamp_integer(data.level, if seed_used == 0 then 0 else NORMAL, 0, EXPERT)
+	local puzzle: { number } = table.create(CELLS, 0)
+	for i = 1, CELLS do
+		puzzle[i] = if given[i] then grid[i] else 0
+	end
+	grade = if unique then Grader.grade(puzzle) else 0
 	strict = data.strict == true
 	finished = data.finished == true
 	announce_board()
