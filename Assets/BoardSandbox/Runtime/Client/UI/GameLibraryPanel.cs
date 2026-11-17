@@ -265,7 +265,7 @@ namespace BoardSandbox.Client.UI
             GUILayout.BeginHorizontal();
             GUILayout.Label("Search", _theme.Label, GUILayout.Width(_theme.Sf(56f)));
             GUI.SetNextControlName(SearchField);
-            string edited = GUILayout.TextField(_queryText, 64, _theme.Field);
+            string edited = TouchText.Field(SearchField, _queryText, 64, _theme.Field);
             if (!string.Equals(edited, _queryText, StringComparison.Ordinal))
             {
                 _queryText = edited;

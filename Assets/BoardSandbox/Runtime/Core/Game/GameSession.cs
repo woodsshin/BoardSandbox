@@ -103,7 +103,9 @@ namespace BoardSandbox.Core.Game
             JsonValue response;
             try
             {
-                response = CallChecked(fresh, "new_game", JsonValue.NewObject().Set("options", merged));
+                // Setting a game up may take as long as booting the script: it is done once, and a puzzle or a deal
+                // can be more work than a move.
+                response = CallChecked(fresh, "new_game", JsonValue.NewObject().Set("options", merged), Math.Max(fresh.Options.CallTimeoutMs, fresh.Options.BootTimeoutMs));
             }
             catch
             {
@@ -420,9 +422,9 @@ namespace BoardSandbox.Core.Game
             }
         }
 
-        private static JsonValue CallChecked(LuauVm vm, string method, JsonValue request)
+        private static JsonValue CallChecked(LuauVm vm, string method, JsonValue request, uint timeoutMs = 0)
         {
-            VmCallResult call = vm.Call(method, request == null ? null : request.ToJson());
+            VmCallResult call = vm.Call(method, request == null ? null : request.ToJson(), timeoutMs);
             if (!call.IsOk)
                 throw new GameSessionException(NativeCode(call.Status), call.Text);
             JsonValue response;

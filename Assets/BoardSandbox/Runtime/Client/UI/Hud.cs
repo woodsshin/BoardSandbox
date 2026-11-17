@@ -121,7 +121,7 @@ namespace BoardSandbox.Client.UI
         }
 
         // True while a text field has the keyboard, so that shortcuts leave the typed characters alone.
-        public bool TextFocused => GUIUtility.keyboardControl != 0;
+        public bool TextFocused => GUIUtility.keyboardControl != 0 || TouchText.Editing;
 
         public bool ConsoleOpen => _showConsole;
 
@@ -436,7 +436,8 @@ namespace BoardSandbox.Client.UI
 
         private void HandleKeys(Event e)
         {
-            if (e.type != EventType.KeyDown)
+            // While the keyboard of a phone is open its keys are the keyboard's, the back key that closes it too.
+            if (e.type != EventType.KeyDown || TouchText.Editing)
                 return;
             if (e.keyCode == KeyCode.BackQuote || e.keyCode == KeyCode.F1)
             {
@@ -719,10 +720,21 @@ namespace BoardSandbox.Client.UI
 
             if (!_optionText.TryGetValue(key, out string text))
                 text = value.IsNumber ? value.AsDouble().ToString("R", CultureInfo.InvariantCulture) : value.AsString();
+            // On a phone a number also has a button to either side that takes one off or adds one, so that a small
+            // number is set without the keyboard.
+            bool steps = value.IsNumber && TouchText.Active;
             GUILayout.BeginHorizontal();
-            GUILayout.Label(key, _theme.Label, GUILayout.Width(_theme.Sf(130)));
-            string edited = GUILayout.TextField(text, 64, _theme.Field);
+            GUILayout.Label(key, _theme.Label, GUILayout.Width(_theme.Sf(steps ? 96 : 130)));
+            int step = 0;
+            if (steps && GUILayout.Button("-", _theme.Button, GUILayout.Width(_theme.Sf(30))))
+                step = -1;
+            string name = "option:" + key;
+            string edited = value.IsNumber ? TouchText.NumberField(name, text, 64, _theme.Field) : TouchText.Field(name, text, 64, _theme.Field);
+            if (steps && GUILayout.Button("+", _theme.Button, GUILayout.Width(_theme.Sf(30))))
+                step = 1;
             GUILayout.EndHorizontal();
+            if (step != 0 && double.TryParse(edited, NumberStyles.Float, CultureInfo.InvariantCulture, out double now) && !double.IsNaN(now) && !double.IsInfinity(now))
+                edited = (Math.Round(now) + step).ToString("R", CultureInfo.InvariantCulture);
             if (edited == text)
                 return;
 
@@ -774,11 +786,11 @@ namespace BoardSandbox.Client.UI
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Games", _theme.Label, GUILayout.Width(_theme.Sf(60)));
-            _simGames = GUILayout.TextField(_simGames, 9, _theme.Field);
+            _simGames = TouchText.NumberField("simulation:games", _simGames, 9, _theme.Field);
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             GUILayout.Label("Seed", _theme.Label, GUILayout.Width(_theme.Sf(60)));
-            _simSeed = GUILayout.TextField(_simSeed, 9, _theme.Field);
+            _simSeed = TouchText.NumberField("simulation:seed", _simSeed, 9, _theme.Field);
             GUILayout.EndHorizontal();
 
             if (_simRunning)
@@ -854,8 +866,9 @@ namespace BoardSandbox.Client.UI
 
             GUILayout.BeginHorizontal();
             GUI.SetNextControlName(ConsoleField);
-            _input = GUILayout.TextField(_input, 400, _theme.Field);
-            if (GUILayout.Button("Run", _theme.Button, GUILayout.Width(_theme.Sf(70))))
+            _input = TouchText.Field(ConsoleField, _input, 400, _theme.Field);
+            // The done key of a keyboard on the screen is the enter key of this field.
+            if (GUILayout.Button("Run", _theme.Button, GUILayout.Width(_theme.Sf(70))) || TouchText.Submitted(ConsoleField))
                 SubmitInput();
             GUILayout.EndHorizontal();
 
