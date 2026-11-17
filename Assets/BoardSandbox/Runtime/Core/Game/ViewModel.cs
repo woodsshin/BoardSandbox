@@ -24,6 +24,42 @@ namespace BoardSandbox.Core.Game
         public double Y { get; internal set; }
         public int Owner { get; }
         public JsonValue Props { get; internal set; }
+
+        // Counts the changes of the properties.
+        public int Version { get; internal set; }
+
+        private JsonValue _seen;
+        private int _seenSeat;
+        private int _seenVersion = -1;
+
+        // The properties as the player of a seat sees them. A game that hides things from some players (the cards of a
+        // hand) puts what each seat sees instead under "for_seat": { "2": { ... } }; those properties replace the
+        // general ones on the screen of that player. Seat 0, a seat without an entry and an object without
+        // "for_seat" give the general properties. Everyone still receives everything: this decides what is shown, it
+        // keeps nothing secret from someone who reads the data.
+        public JsonValue PropsFor(int seat)
+        {
+            if (seat <= 0)
+                return Props;
+            JsonValue all = Props["for_seat"];
+            if (!all.IsObject)
+                return Props;
+            JsonValue own = all[seat.ToString(System.Globalization.CultureInfo.InvariantCulture)];
+            if (!own.IsObject)
+                return Props;
+            if (_seen == null || _seenSeat != seat || _seenVersion != Version)
+            {
+                JsonValue merged = JsonValue.NewObject();
+                foreach (KeyValuePair<string, JsonValue> pair in Props.Members)
+                    merged.Set(pair.Key, pair.Value);
+                foreach (KeyValuePair<string, JsonValue> pair in own.Members)
+                    merged.Set(pair.Key, pair.Value);
+                _seen = merged;
+                _seenSeat = seat;
+                _seenVersion = Version;
+            }
+            return _seen;
+        }
     }
 
     public sealed class OverInfo
@@ -104,6 +140,7 @@ namespace BoardSandbox.Core.Game
                         return false;
                     foreach (KeyValuePair<string, JsonValue> pair in e.Props.Members)
                         changed.Props.Set(pair.Key, pair.Value);
+                    changed.Version++;
                     return true;
                 }
                 case ViewEventKind.Remove:

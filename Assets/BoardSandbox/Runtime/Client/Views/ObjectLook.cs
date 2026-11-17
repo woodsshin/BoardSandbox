@@ -52,6 +52,19 @@ namespace BoardSandbox.Client.Views
         // Seconds a free object takes to glide to a new position.
         public float Tween { get; private set; }
 
+        // The image shown on top of the object, by its path in the folder of the mod; null without one.
+        public string Image { get; private set; }
+
+        // The part of the image that is shown: left, top, width and height as shares of the image. The whole image
+        // unless "image_rect" says otherwise, which is how one image file holds many pictures (the cards of a deck).
+        public float ImageX { get; private set; }
+        public float ImageY { get; private set; }
+        public float ImageWidth { get; private set; } = 1f;
+        public float ImageHeight { get; private set; } = 1f;
+
+        // Names the part of the image; equal for equal parts.
+        public string ImageKey { get; private set; } = string.Empty;
+
         // Names the mesh; objects with equal keys share one.
         public string MeshKey { get; private set; }
 
@@ -74,12 +87,14 @@ namespace BoardSandbox.Client.Views
         public bool SameAppearance(ObjectLook other)
         {
             return other != null && MeshKey == other.MeshKey && Gloss == other.Gloss && Shadow == other.Shadow && Visible == other.Visible
+                && Image == other.Image && ImageKey == other.ImageKey
                 && Color.r == other.Color.r && Color.g == other.Color.g && Color.b == other.Color.b && Color.a == other.Color.a;
         }
 
-        public static ObjectLook For(ViewObject piece, ViewHints hints, ModManifest manifest)
+        // viewer: the seat whose player looks at the object, 0 for nobody in particular (ViewObject.PropsFor).
+        public static ObjectLook For(ViewObject piece, ViewHints hints, ModManifest manifest, int viewer = 0)
         {
-            JsonValue props = piece.Props;
+            JsonValue props = piece.PropsFor(viewer);
             JsonValue defaults = hints.PieceDefaults(piece.Kind);
             ObjectLook look = new ObjectLook();
 
@@ -112,6 +127,7 @@ namespace BoardSandbox.Client.Views
             JsonValue labelColor = Pick2(props, defaults, "label_color");
             if (labelColor.IsString && ColorParser.TryParse(labelColor.AsString(), out Color32 parsed))
                 look.LabelColor = new Color32(parsed.r, parsed.g, parsed.b, 255);
+            ReadImage(look, Pick2(props, defaults, "image"), Pick2(props, defaults, "image_rect"));
             look.MeshKey = BuildMeshKey(look);
             return look;
         }
@@ -127,6 +143,31 @@ namespace BoardSandbox.Client.Views
             return Stickers == null
                 ? BoardShapes.Piece(Shape, Centered)
                 : BoardShapes.Piece(Shape, Centered, new Color32(Color.r, Color.g, Color.b, 255), Stickers, Inset);
+        }
+
+        private static void ReadImage(ObjectLook look, JsonValue image, JsonValue rect)
+        {
+            string path = image.AsString();
+            if (path.Length == 0 || !ModPackage.IsAssetPath(path))
+                return;
+            look.Image = path;
+            if (rect.IsArray && rect.Count == 4 && rect[0].IsNumber && rect[1].IsNumber && rect[2].IsNumber && rect[3].IsNumber)
+            {
+                float x = Mathf.Clamp01((float)rect[0].AsDouble(0));
+                float y = Mathf.Clamp01((float)rect[1].AsDouble(0));
+                float width = Mathf.Clamp((float)rect[2].AsDouble(1), 0f, 1f - x);
+                float height = Mathf.Clamp((float)rect[3].AsDouble(1), 0f, 1f - y);
+                if (width > 0f && height > 0f)
+                {
+                    look.ImageX = x;
+                    look.ImageY = y;
+                    look.ImageWidth = width;
+                    look.ImageHeight = height;
+                }
+            }
+            System.Globalization.CultureInfo invariant = System.Globalization.CultureInfo.InvariantCulture;
+            look.ImageKey = look.ImageX.ToString("0.#####", invariant) + ":" + look.ImageY.ToString("0.#####", invariant) + ":"
+                + look.ImageWidth.ToString("0.#####", invariant) + ":" + look.ImageHeight.ToString("0.#####", invariant);
         }
 
         private static JsonValue Pick2(JsonValue props, JsonValue defaults, string name)

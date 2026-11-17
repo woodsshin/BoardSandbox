@@ -1,0 +1,14 @@
+Hwatu artwork (cards.png)
+=========================
+
+cards.png is adapted from "Hwatu overview.svg" by Marcus Richert, which is based on Hanafuda graphics by
+Louie Mantia, Jr.
+
+  Source:  https://commons.wikimedia.org/wiki/File:Hwatu_overview.svg
+  License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+           https://creativecommons.org/licenses/by-sa/4.0/
+
+Changes: the 48 cards were cut apart and rendered to one PNG, a white card face was put behind the line art, the
+cards were put in Korean month order (11 paulownia, 12 rain), and a card back and three bonus cards were added
+(Tools/Hwatu/make_atlas.py). cards.png is distributed under the same license, CC BY-SA 4.0. The license applies to
+this image only, not to the scripts of the game or to Board Sandbox.

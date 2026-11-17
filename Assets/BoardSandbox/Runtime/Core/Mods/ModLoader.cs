@@ -44,6 +44,7 @@ namespace BoardSandbox.Core.Mods
 
             string manifestJson;
             Dictionary<string, string> sources = new Dictionary<string, string>(StringComparer.Ordinal);
+            Dictionary<string, byte[]> assets = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             try
             {
                 manifestJson = File.ReadAllText(manifestPath, Utf8);
@@ -56,6 +57,17 @@ namespace BoardSandbox.Core.Mods
                         throw new ModException("the mod has more than " + ModPackage.MaxFiles + " script files.");
                     sources[relative] = File.ReadAllText(file, Utf8);
                 }
+                foreach (string file in System.IO.Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    string relative = RelativePath(root, Path.GetFullPath(file));
+                    if (!ModPackage.IsAssetPath(relative))
+                        continue;
+                    if (assets.Count >= ModPackage.MaxAssets)
+                        throw new ModException("the mod has more than " + ModPackage.MaxAssets + " image files.");
+                    if (new FileInfo(file).Length > ModPackage.MaxAssetBytes)
+                        throw new ModException("'" + relative + "' is larger than " + ModPackage.MaxAssetBytes + " bytes.");
+                    assets[relative] = File.ReadAllBytes(file);
+                }
             }
             catch (IOException e)
             {
@@ -65,7 +77,7 @@ namespace BoardSandbox.Core.Mods
             {
                 throw new ModException("cannot read the mod in '" + root + "': " + e.Message, e);
             }
-            return new ModPackage(manifestJson, sources, root);
+            return new ModPackage(manifestJson, sources, assets, root);
         }
 
         public static ModDiscovery Discover(string modsRoot)
