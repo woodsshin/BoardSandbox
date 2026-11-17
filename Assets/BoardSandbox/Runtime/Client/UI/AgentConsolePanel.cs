@@ -248,7 +248,7 @@ namespace BoardSandbox.Client.UI
             {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("Key", _theme.Label, GUILayout.Width(_theme.Sf(48f)));
-                _keyText = GUILayout.PasswordField(_keyText, '*', 400, _theme.Field);
+                _keyText = TouchText.SecretField("agent:key", _keyText, 400, _theme.Field);
                 GUI.enabled = _keyText.Trim().Length > 0;
                 if (GUILayout.Button("Save", _theme.Button, GUILayout.Width(_theme.Sf(70f))))
                 {
@@ -267,7 +267,7 @@ namespace BoardSandbox.Client.UI
             {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("Model", _theme.Label, GUILayout.Width(_theme.Sf(48f)));
-                _modelText = GUILayout.TextField(_modelText, 120, _theme.Field);
+                _modelText = TouchText.Field("agent:model", _modelText, 120, _theme.Field);
                 GUI.enabled = _modelText.Trim().Length > 0 && _modelText.Trim() != settings.ModelFor(profile);
                 if (GUILayout.Button("Set", _theme.Button, GUILayout.Width(_theme.Sf(70f))))
                 {
@@ -320,7 +320,7 @@ namespace BoardSandbox.Client.UI
 
             GUILayout.BeginHorizontal();
             GUI.SetNextControlName(InputField);
-            _input = GUILayout.TextArea(_input, MaxInput, _theme.Area, GUILayout.MinHeight(_theme.Sf(54f)), GUILayout.MaxHeight(_theme.Sf(140f)));
+            _input = TouchText.Area(InputField, _input, MaxInput, _theme.Area, GUILayout.MinHeight(_theme.Sf(54f)), GUILayout.MaxHeight(_theme.Sf(140f)));
             GUI.enabled = _input.Trim().Length > 0;
             if (GUILayout.Button("Send", _theme.Button, GUILayout.Width(_theme.Sf(70f)), GUILayout.Height(_theme.Sf(54f))))
                 RequestSubmit();
