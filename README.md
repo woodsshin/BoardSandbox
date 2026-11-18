@@ -274,6 +274,8 @@ Steam 로비로 방을 만들고 Steam의 중계 메시지로 통신합니다. S
 | 누구와 하는지 | 생각하는 컴퓨터 플레이어(`ai`)가 있고 `players.computer`가 `false`가 아닌 한 화면 게임(오목, 체스, 고스톱) | `Play the computer`(처음 값), `Play with people` |
 | 몇 명이 하는지 | `players.option`이 있고 `min` < `max`인 한 화면 게임(고스톱) | `2 players`, `3 players`(버튼은 최대 8개; 처음 값은 게임이 기본으로 쓰는 인원이라 고스톱은 `3 players`) |
 
+![고스톱 플레이 화면](Image/Gostop.png)JLFx3aUD4U63
+
 협동 게임(스도쿠), 분할 화면 게임(Cubic 3x3), 컴퓨터 플레이어가 없는 게임은 물을 것이 없어서 카드 없이 방이 바로 열립니다. 카드에서 `Create room`(또는 `Enter`)으로 방을 열고, `Back`(또는 `Esc`)으로 목록에 돌아갑니다. 인원을 고르는 게임의 방은 로비에 `Ann - Go-Stop (3P)`처럼 인원이 붙고, 정원은 인원에 관전자 8명을 더한 수입니다.
 
 카드는 그 게임의 방을 마지막으로 열 때 고른 것으로 시작합니다. 아직 연 적이 없으면 `Play the computer`와 게임의 기본 인원(고스톱은 3인: 호스트 1, 컴퓨터 2)입니다. 고른 값은 방이 실제로 열렸을 때 `persistentDataPath/preferences.json`에 게임 id별로 저장되므로 `Back`으로 돌아오면 남지 않고, 앱을 다시 켜도 이어집니다. 파일을 지우면 처음 값으로 돌아갑니다.
