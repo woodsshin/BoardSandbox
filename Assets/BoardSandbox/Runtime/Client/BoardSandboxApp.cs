@@ -204,6 +204,8 @@ namespace BoardSandbox.Client
         {
 #if BSE_STEAM && UNITY_STANDALONE_WIN
             return new Steam.SteamBackend();
+#elif BSE_EOS && UNITY_ANDROID
+            return new Eos.EosBackend();
 #else
             return null;
 #endif

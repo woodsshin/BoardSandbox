@@ -33,3 +33,8 @@ __pycache__/
 
 !Tools/**/*.csproj
 .vsconfig
+
+# The plugin for Epic Online Services (Android) writes the keys of the product here. They belong to whoever builds the app and
+# are not for a public repository.
+/Assets/StreamingAssets/EOS/
+/Assets/StreamingAssets/EOS.meta
