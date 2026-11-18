@@ -3,7 +3,9 @@ using System.IO;
 namespace BoardSandbox.Client.Editor
 {
     // The file work around EosAndroidLibraryFix: finds the library module of the EOS plugin in a Gradle project that Unity has
-    // generated or exported, and rewrites its two files. It uses no Unity types, so that the tests can run it on a folder.
+    // generated or exported, and rewrites its two files. Where the library is part of such a project, the application module
+    // (launcher) is set up for core library desugaring as well, which the AAR of the EOS SDK asks for, see EosAndroidDesugaringFix.
+    // It uses no Unity types, so that the tests can run it on a folder.
     //
     // It is used by the build step (EosAndroidLibraryBuildStep) and by the menu that repairs a project that was exported before
     // the build step existed (EosAndroidProjectMenu).
@@ -21,6 +23,9 @@ namespace BoardSandbox.Client.Editor
 
             public bool ManifestChanged { get; internal set; }
 
+            // True when launcher/build.gradle got the settings for core library desugaring.
+            public bool DesugaringChanged { get; internal set; }
+
             // True when build.gradle was not in the new form and could not be brought into it (no android block, say).
             public bool GradleStillOld { get; internal set; }
 
@@ -31,22 +36,27 @@ namespace BoardSandbox.Client.Editor
 
             public bool Changed
             {
-                get { return GradleChanged || ManifestChanged; }
+                get { return GradleChanged || ManifestChanged || DesugaringChanged; }
             }
 
             public string Describe()
             {
                 if (!Found)
                     return "There is no " + EosAndroidLibraryFix.LibraryFolder + " in " + Searched + ".";
+                string text;
                 if (GradleStillOld)
-                    return "The build.gradle of the library of the EOS plugin (" + Library + ") is not in a form that can be adapted to the "
+                    text = "The build.gradle of the library of the EOS plugin (" + Library + ") is not in a form that can be adapted to the "
                         + "Gradle version of Unity, so it was left as it is.";
-                if (!Changed)
-                    return "The library of the EOS plugin is already in the form that the Gradle version of Unity takes (" + Library + ").";
-                return "Adapted the library of the EOS plugin to the Gradle version of Unity (" + Library + "): "
-                    + (GradleChanged ? "build.gradle" : string.Empty)
-                    + (GradleChanged && ManifestChanged ? ", " : string.Empty)
-                    + (ManifestChanged ? "AndroidManifest.xml" : string.Empty) + ".";
+                else if (!GradleChanged && !ManifestChanged)
+                    text = "The library of the EOS plugin is already in the form that the Gradle version of Unity takes (" + Library + ").";
+                else
+                    text = "Adapted the library of the EOS plugin to the Gradle version of Unity (" + Library + "): "
+                        + (GradleChanged ? "build.gradle" : string.Empty)
+                        + (GradleChanged && ManifestChanged ? ", " : string.Empty)
+                        + (ManifestChanged ? "AndroidManifest.xml" : string.Empty) + ".";
+                if (DesugaringChanged)
+                    text += " Turned on core library desugaring, which the AAR of the EOS SDK asks for, in launcher/build.gradle.";
+                return text;
             }
         }
 
@@ -89,7 +99,46 @@ namespace BoardSandbox.Client.Editor
                     result.GradleStillOld = EosAndroidLibraryFix.BuildGradleNeedsFix(adapted);
                 }
             }
+
+            result.DesugaringChanged = AdaptApplication(library);
             return result;
+        }
+
+        // The application module needs core library desugaring for the AAR of the EOS SDK. It lies beside the module that holds the
+        // library, in the root of the Gradle project. Where there is none (the copy of the library in Assets/Plugins/Android, which
+        // is not part of a Gradle project yet), nothing is done. The module that holds the library is not changed: Android's
+        // documentation asks for the setting there only for tests and lint of the module itself.
+        private static bool AdaptApplication(string library)
+        {
+            string launcher = FindLauncherBuildGradle(library);
+            if (launcher == null)
+                return false;
+            string gradle = File.ReadAllText(launcher);
+            string adapted = EosAndroidDesugaringFix.Fix(gradle);
+            if (adapted == gradle)
+                return false;
+            WriteText(launcher, adapted);
+            return true;
+        }
+
+        private static string FindLauncherBuildGradle(string library)
+        {
+            // Usually the library is in the unityLibrary module, and launcher is beside that module. Where the library lies in the
+            // root of the project itself, launcher is beside the library.
+            string parent = Path.GetDirectoryName(library.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrEmpty(parent))
+                return null;
+            string grandparent = Path.GetDirectoryName(parent);
+            string[] roots = { grandparent, parent };
+            foreach (string root in roots)
+            {
+                if (string.IsNullOrEmpty(root))
+                    continue;
+                string candidate = Path.Combine(Path.Combine(root, "launcher"), "build.gradle");
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+            return null;
         }
 
         // Looks in the places where Unity puts a library plug-in, nearest first, and then anywhere below path.

@@ -10,9 +10,10 @@ using UnityEngine;
 namespace BoardSandbox.Client.Editor
 {
     // Adapts the library module of the EOS Plugin for Unity to the Gradle version of Unity, see EosAndroidLibraryFix and
-    // EosAndroidProjectFix. It does so at three points of a build. Each of them writes a line to the Console ("[EOS Android] ..."),
-    // which is how to tell which of them ran, and a library that is already in the new form is left alone, so the later points find
-    // the work of the earlier ones done.
+    // EosAndroidProjectFix, and turns on core library desugaring in the application module (launcher/build.gradle), which the AAR
+    // of the EOS SDK asks for, see EosAndroidDesugaringFix. It does so at three points of a build. Each of them writes a line to the
+    // Console ("[EOS Android] ..."), which is how to tell which of them ran, and what is in the new form already is left alone, so
+    // the later points find the work of the earlier ones done.
     //
     // 1. OnPreprocessBuild adapts the copy of the library in Assets/Plugins/Android/EOS, which Unity copies into the Gradle project.
     //    The EOS plugin writes that copy again for every build, in its own OnPreprocessBuild (the orders 0 and 1), so this step has
@@ -23,8 +24,11 @@ namespace BoardSandbox.Client.Editor
     // 3. OnPostprocessBuild looks at an exported project once more when the export is done, and adapts the files if something has
     //    written them again after the second step.
     //
+    // The desugaring is set up at the second and the third point. The first one has no launcher module: there is no Gradle project
+    // yet, only the copy of the library.
+    //
     // The project is only edited where the plugin's library is found, and only if its files are still in the form of the plugin
-    // 6.2.0 and 6.3.0. A project without the library is not changed.
+    // 6.2.0 and 6.3.0 (the library), or launcher/build.gradle does not desugar yet. A project without the library is not changed.
     public sealed class EosAndroidLibraryBuildStep : IPreprocessBuildWithReport, IPostGenerateGradleAndroidProject, IPostprocessBuildWithReport
     {
         // After the build steps of the EOS plugin, which have the orders 0 (PlatformSpecificBuilder) and 1 (BuildRunner). The second
