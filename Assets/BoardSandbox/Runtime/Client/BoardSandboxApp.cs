@@ -69,6 +69,7 @@ namespace BoardSandbox.Client
         private Multiplayer _multiplayer;
         private ModStudio _studio;
         private float _dock;
+        private float _dockBottom;
         private MaterialSet _materials;
         private readonly List<Panel> _panels = new List<Panel>();
         private Panel _active;
@@ -184,7 +185,7 @@ namespace BoardSandbox.Client
             if (agents.Problem.Length > 0)
                 _host.Toasts.Add(agents.Problem, ToastLevel.Warning, _host.Now);
             _studio = new ModStudio(_host, LocalModsFolder, agents);
-            _hud = new Hud(_host, _multiplayer, _studio, _theme, () => (_active ?? _panels[0]).Rig.Reframe());
+            _hud = new Hud(_host, _multiplayer, _studio, _theme);
 
             foreach (ModLoadError error in _host.Catalog.Errors)
                 _host.Toasts.Add("Could not load " + Path.GetFileName(error.Directory) + ": " + error.Message, ToastLevel.Error, _host.Now);
@@ -382,14 +383,15 @@ namespace BoardSandbox.Client
             _pressPanel = null;
         }
 
-        // Gives every table its part of the screen: a grid in what the AI console leaves free at the right edge.
+        // Gives every table its part of the screen: a grid in what the AI console and the chat leave free, at the right edge and along the
+        // bottom. The origin of the rectangle of a camera is the lower left corner.
         private void Place()
         {
-            float free = 1f - _dock;
-            int columns = Mathf.CeilToInt(Mathf.Sqrt(_panels.Count));
-            int rows = Mathf.CeilToInt(_panels.Count / (float)columns);
             for (int i = 0; i < _panels.Count; i++)
-                _panels[i].Rig.Camera.rect = new Rect((i % columns) / (float)columns * free, 1f - (i / columns + 1) / (float)rows, free / columns, 1f / rows);
+            {
+                TableGrid.Cell(i, _panels.Count, _dock, _dockBottom, out float x, out float y, out float width, out float height);
+                _panels[i].Rig.Camera.rect = new Rect(x, y, width, height);
+            }
         }
 
         // The messages of the game the local player plays become toasts.
@@ -453,9 +455,11 @@ namespace BoardSandbox.Client
                 }
 
                 float dock = _hud.DockFraction;
-                if (!Mathf.Approximately(dock, _dock))
+                float dockBottom = _hud.BottomDockFraction;
+                if (!Mathf.Approximately(dock, _dock) || !Mathf.Approximately(dockBottom, _dockBottom))
                 {
                     _dock = dock;
+                    _dockBottom = dockBottom;
                     Place();
                 }
 

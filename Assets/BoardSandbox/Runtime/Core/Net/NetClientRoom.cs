@@ -18,8 +18,10 @@ namespace BoardSandbox.Core.Net
         private readonly Dictionary<int, ViewModel> _incoming = new Dictionary<int, ViewModel>();
         private readonly HashSet<int> _shown = new HashSet<int>();
 
-        // Set by the welcome of a host that passes the views of the players on. An older host does not say so.
+        // Set by the welcome of a host that passes the views of the players on, and of one that passes the chat on. An older host
+        // says neither.
         private bool _hostViews;
+        private bool _hostChat;
 
         public NetClientRoom(ModPackage mod, INetTransport transport)
             : base(transport, mod)
@@ -55,6 +57,13 @@ namespace BoardSandbox.Core.Net
         protected override void PassOnView(ViewPose pose)
         {
             Send(Transport.HostId, ViewMessage(pose, 0));
+        }
+
+        public override bool CanChat => Joined && !IsClosed && _hostChat;
+
+        protected override void PassOnChat(string text)
+        {
+            Send(Transport.HostId, Message("chat").Set("text", text));
         }
 
         public override bool CanAct
@@ -121,12 +130,18 @@ namespace BoardSandbox.Core.Net
                 case "welcome":
                     Joined = true;
                     _hostViews = message["view"].AsBool(false);
+                    _hostChat = message["chat"].AsBool(false);
+                    if (!_hostChat)
+                        Tell("The host runs an older version of Board Sandbox, which has no chat.");
                     break;
                 case "roster":
                     ReadRoster(message);
                     break;
                 case "view":
                     ReadView(message);
+                    break;
+                case "chat":
+                    ReadChat(message);
                     break;
                 case "sync":
                     ReadState(message);
@@ -210,6 +225,16 @@ namespace BoardSandbox.Core.Net
             if (ViewList.Count >= MaxPlayers && !ViewList.ContainsKey(from))
                 return;
             ViewList[from] = pose;
+        }
+
+        // A line that somebody said. The host has cleaned it, but what is drawn on the screen is not left to the host's care.
+        private void ReadChat(JsonValue message)
+        {
+            if (!TryId(message["from"], out ulong from))
+                return;
+            string text = ChatText.Clean(message["text"].AsString());
+            if (text.Length > 0)
+                AddChat(from, CleanName(message["name"].AsString()), text);
         }
 
         // Who plays the seats that no person sits at. An older host says nothing about it: the room is not filled.

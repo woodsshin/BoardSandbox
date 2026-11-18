@@ -31,7 +31,7 @@ namespace BoardSandbox.Client.UI
         private readonly GuiTheme _theme;
         private readonly GameLibraryPanel _library;
         private readonly AgentConsolePanel _agents;
-        private readonly Action _fitView;
+        private readonly ChatPanel _chat;
         private readonly Queue<Action> _deferred = new Queue<Action>();
         private readonly List<Rect> _rects = new List<Rect>();
         private readonly List<string> _lines = new List<string>();
@@ -50,22 +50,24 @@ namespace BoardSandbox.Client.UI
         private bool _showConsole;
         private bool _showOptions = true;
 
+        private readonly ChatWatch _chatWatch = new ChatWatch();
+
         private double _now;
         private string _status = string.Empty;
         private bool _hasSwatch;
         private Color _swatch = Color.white;
 
-        public Hud(GameHost host, Multiplayer multiplayer, ModStudio studio, GuiTheme theme, Action fitView)
+        public Hud(GameHost host, Multiplayer multiplayer, ModStudio studio, GuiTheme theme)
         {
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _multiplayer = multiplayer ?? throw new ArgumentNullException(nameof(multiplayer));
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
-            _fitView = fitView;
             if (studio == null)
                 throw new ArgumentNullException(nameof(studio));
             _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true, OpenStudio,
                 entry => studio.CanDelete(entry.Mod), entry => DeleteGame(studio, entry));
             _agents = new AgentConsolePanel(studio, theme, () => _host.Now, Defer, () => _releaseFocus = true);
+            _chat = new ChatPanel(theme);
             _library.GameChosen += PutAwayConsole;
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer.RoomChanged += OnRoomChanged;
@@ -161,20 +163,55 @@ namespace BoardSandbox.Client.UI
             return deleted;
         }
 
-        // How much of the width of the screen the AI console takes at the right edge, from 0 to 1. The owner keeps
-        // the table out of that part.
+        // How much of the width of the screen the AI console, or the chat when it stands in a column, takes at the right edge, from 0 to 1.
+        // The owner keeps the table out of that part.
         public float DockFraction
         {
             get
             {
-                if (!_agents.IsOpen || ModalOpen || Width <= 0f)
+                if (ModalOpen || Width <= 0f)
                     return 0f;
-                return Mathf.Clamp((Width - _agents.Area.x + Margin * 0.5f) / Width, 0f, 0.7f);
+                float console = _agents.IsOpen ? Mathf.Clamp((Width - _agents.Area.x + Margin * 0.5f) / Width, 0f, 0.7f) : 0f;
+                return Mathf.Max(console, ChatNow().RightFraction);
             }
         }
 
+        // How much of the height of the screen the chat takes at the bottom when it stands in a strip, from 0 to 1. The owner keeps the
+        // table out of that part as well.
+        public float BottomDockFraction => ChatNow().BottomFraction;
+
         // The width that is left for the table and what is centered over it.
-        private float FreeWidth => _agents.IsOpen && _agents.Area.width > 0f ? _agents.Area.x : Width;
+        private float FreeWidth
+        {
+            get
+            {
+                float free = _agents.IsOpen && _agents.Area.width > 0f ? _agents.Area.x : Width;
+                ChatPlacement chat = ChatNow();
+                return chat.Dock == ChatDock.Right ? Mathf.Min(free, chat.X) : free;
+            }
+        }
+
+        // The height of the panels at the left: all there is, or what is above the chat when that stands in a strip along the bottom.
+        private float PanelHeight
+        {
+            get
+            {
+                ChatPlacement chat = ChatNow();
+                float bottom = chat.Dock == ChatDock.Bottom ? chat.Y - Margin * 0.5f : Height - Margin;
+                return Mathf.Max(_theme.Sf(120), bottom - Margin);
+            }
+        }
+
+        // Where the chat of the room stands on the screen. There is one in a room whose host passes it on, unless the panels are folded away
+        // or a list covers the screen. The AI console and the console of commands are in its way where they are.
+        private ChatPlacement ChatNow()
+        {
+            NetRoom room = _multiplayer.Room;
+            bool available = room != null && room.CanChat && !Collapsed && !ModalOpen;
+            float rightEdge = _agents.IsOpen && _agents.Area.width > 0f ? _agents.Area.x : Width;
+            float console = _showConsole ? _theme.Sf(240) + Margin : 0f;
+            return ChatLayout.Place(Width, Height, _theme.Scale, Margin, available, rightEdge, console);
+        }
 
         public void Defer(Action action)
         {
@@ -216,6 +253,9 @@ namespace BoardSandbox.Client.UI
             _toasts.Clear();
             _toasts.AddRange(_host.Toasts.Active(now));
             _agents.Snapshot();
+            _chat.Snapshot(_multiplayer.Room, now);
+            // What is said while the chat is put away would be missed.
+            _chatWatch.Update(_multiplayer.Room, ChatNow().Dock != ChatDock.None, _host.Toasts, now);
 
             SampleStatus();
         }
@@ -251,6 +291,7 @@ namespace BoardSandbox.Client.UI
             }
 
             HandleKeys(e);
+            DrawChatBackground();
             DrawBanner();
             if (Collapsed)
             {
@@ -263,10 +304,9 @@ namespace BoardSandbox.Client.UI
             else
             {
                 DrawGamePanel();
-                if (!_agents.IsOpen)
-                    DrawToolColumn();
                 DrawConsole();
             }
+            DrawChat();
             if (_agents.IsOpen)
             {
                 // No camera draws into the strip that the console takes, so it gets a background of its own.
@@ -280,6 +320,32 @@ namespace BoardSandbox.Client.UI
                     _rects.Add(_agents.Area);
             }
             DrawToasts();
+        }
+
+        // No camera draws into the part of the screen that the chat takes, so it gets a background of its own.
+        private void DrawChatBackground()
+        {
+            if (Event.current.type != EventType.Repaint)
+                return;
+            ChatPlacement chat = ChatNow();
+            if (chat.Dock == ChatDock.None)
+                return;
+            Rect rect = chat.Dock == ChatDock.Right
+                ? new Rect(chat.X - Margin * 0.5f, 0f, Width - chat.X + Margin * 0.5f, Height)
+                : new Rect(0f, chat.Y - Margin * 0.5f, chat.X + chat.Width + Margin, Height - chat.Y + Margin * 0.5f);
+            GUI.DrawTexture(rect, _theme.TrackTexture);
+        }
+
+        private void DrawChat()
+        {
+            NetRoom room = _multiplayer.Room;
+            ChatPlacement chat = ChatNow();
+            if (room == null || chat.Dock == ChatDock.None)
+                return;
+            Rect area = new Rect(chat.X, chat.Y, chat.Width, chat.Height);
+            _chat.Draw(room, area);
+            if (Event.current.type == EventType.Repaint)
+                _rects.Add(area);
         }
 
         // Covers the table while a room is being opened or entered.
@@ -328,6 +394,8 @@ namespace BoardSandbox.Client.UI
             BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
             BeginBox(width);
             DrawPanelHeader(manifest != null ? DisplayText.Clip(manifest.Name, 18) : "Board Sandbox");
+            if (_chatWatch.Unread > 0)
+                GUILayout.Label(_chatWatch.Unread == 1 ? "1 new chat message" : _chatWatch.Unread + " new chat messages", _theme.Muted);
             EndBox();
             EndArea();
         }
@@ -545,7 +613,7 @@ namespace BoardSandbox.Client.UI
             ModManifest manifest = session?.Mod.Manifest;
             float width = _theme.Sf(310);
 
-            BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
+            BeginArea(new Rect(Margin, Margin, width, PanelHeight));
             BeginBox(width);
 
             DrawPanelHeader(manifest != null ? DisplayText.Clip(manifest.Name, 24) : "Board Sandbox");
@@ -573,14 +641,12 @@ namespace BoardSandbox.Client.UI
         private void DrawGuestPanel(NetRoom room)
         {
             float width = _theme.Sf(310);
-            BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
+            BeginArea(new Rect(Margin, Margin, width, PanelHeight));
             BeginBox(width);
             ModManifest manifest = room.Mod.Manifest;
             DrawPanelHeader(DisplayText.Clip(manifest.Name, 24));
             if (manifest.Description.Length > 0)
                 GUILayout.Label(DisplayText.Clip(manifest.Description, 600, false), _theme.Muted);
-            if (GUILayout.Button("Fit view (F)", _theme.Button))
-                Defer(() => _fitView?.Invoke());
             DrawRoom(room);
             EndBox();
             EndArea();
@@ -847,20 +913,6 @@ namespace BoardSandbox.Client.UI
             }
         }
 
-        // What is left of the tools next to the board: the ones a player needs. The console of commands is a tool for those
-        // who make games; it stays behind the ` and F1 keys.
-        private void DrawToolColumn()
-        {
-            float width = _theme.Sf(230);
-            BeginArea(new Rect(Width - width - Margin, Margin, width, Height - 2f * Margin));
-
-            BeginBox(width);
-            if (GUILayout.Button("Fit view", _theme.Button))
-                Defer(() => _fitView?.Invoke());
-            EndBox();
-            EndArea();
-        }
-
         private void DrawConsole()
         {
             if (!_showConsole)
@@ -978,6 +1030,9 @@ namespace BoardSandbox.Client.UI
                 return;
             float width = _theme.Sf(520);
             float reserved = _showConsole ? _theme.Sf(240) + Margin : 0f;
+            ChatPlacement chat = ChatNow();
+            if (chat.Dock == ChatDock.Bottom)
+                reserved = Mathf.Max(reserved, Height - chat.Y);
             float free = _library.IsOpen || _multiplayer.Loading != null ? Width : FreeWidth;
             BeginArea(new Rect((free - width) * 0.5f, 0f, width, Height - reserved - Margin));
             GUILayout.FlexibleSpace();

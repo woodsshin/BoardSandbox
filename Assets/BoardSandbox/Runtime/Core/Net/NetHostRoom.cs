@@ -33,6 +33,7 @@ namespace BoardSandbox.Core.Net
         private readonly HashSet<ulong> _viewsDue = new HashSet<ulong>();
         private readonly Dictionary<ulong, double> _viewRelayedAt = new Dictionary<ulong, double>();
         private readonly List<ulong> _viewsNow = new List<ulong>();
+        private readonly Dictionary<ulong, ChatLimiter> _chatLimiters = new Dictionary<ulong, ChatLimiter>();
         private readonly bool _fill;
         private readonly int _players;
         private JsonValue _options;
@@ -93,6 +94,13 @@ namespace BoardSandbox.Core.Net
         {
             ViewList[LocalId] = pose;
             Relay(LocalId, pose);
+        }
+
+        public override bool CanChat => !IsClosed;
+
+        protected override void PassOnChat(string text)
+        {
+            Post(LocalId, text);
         }
 
         public override bool CanAct
@@ -211,6 +219,12 @@ namespace BoardSandbox.Core.Net
                     ReceiveView(player, message);
                 return;
             }
+            if (type == "chat")
+            {
+                if (player != null)
+                    ReceiveChat(player, message);
+                return;
+            }
             if (type != "cmd" || player == null || !message["command"].IsObject)
                 return;
 
@@ -256,7 +270,7 @@ namespace BoardSandbox.Core.Net
             Flush();
             NetPlayer player = new NetPlayer { Id = peer, Name = CleanName(hello["name"].AsString()) };
             PlayerList.Add(player);
-            Send(peer, Message("welcome").Set("proto", Protocol).Set("you", IdText(peer)).Set("view", SplitScreen));
+            Send(peer, Message("welcome").Set("proto", Protocol).Set("you", IdText(peer)).Set("view", SplitScreen).Set("chat", true));
             Arrange();
             foreach (Table table in _tables)
             {
@@ -288,6 +302,7 @@ namespace BoardSandbox.Core.Net
             ViewList.Remove(peer);
             _viewsDue.Remove(peer);
             _viewRelayedAt.Remove(peer);
+            _chatLimiters.Remove(peer);
             if (_fill && player.Seat > 0 && player.Seat <= SeatsOfGame && _host.SetSeatMode(player.Seat, _host.ComputerMode))
             {
                 // The game goes on from where it stands, with the computer in the seat.
@@ -551,6 +566,37 @@ namespace BoardSandbox.Core.Net
                 if (player.Id != LocalId)
                     Send(player.Id, message);
             }
+        }
+
+        // What a player says goes to everybody, the player included, under the name that the room has of them: the host does not take
+        // a name or a sender from the message. The text is cleaned, and a player who says too much is not passed on and told so.
+        private void ReceiveChat(NetPlayer player, JsonValue message)
+        {
+            string text = ChatText.Clean(message["text"].AsString());
+            if (text.Length == 0)
+                return;
+            if (!_chatLimiters.TryGetValue(player.Id, out ChatLimiter limiter))
+            {
+                limiter = new ChatLimiter();
+                _chatLimiters[player.Id] = limiter;
+            }
+            double now = _host.Now;
+            if (!limiter.Allow(now))
+            {
+                if (limiter.ShouldWarn(now))
+                    Note(player.Id, "You are talking too fast.", ToastLevel.Warning);
+                return;
+            }
+            Post(player.Id, text);
+        }
+
+        // Adds a line to the chat here and tells everybody else, the player who said it among them.
+        private void Post(ulong from, string text)
+        {
+            NetPlayer player = FindPlayer(from);
+            string name = player != null ? player.Name : "Player";
+            AddChat(from, name, text);
+            Broadcast(ChatMessage(from, name, text));
         }
 
         // What a player sends about how they look at their table is kept, and goes out to the others with the next RelayViews.

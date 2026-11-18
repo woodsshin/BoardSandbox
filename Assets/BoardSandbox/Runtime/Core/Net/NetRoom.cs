@@ -42,6 +42,9 @@ namespace BoardSandbox.Core.Net
         // The least time between two views that the local player passes on, in seconds.
         public const double ViewInterval = 0.1;
 
+        // How many lines of the chat a room keeps; the oldest go first.
+        public const int MaxChatLines = 100;
+
         protected readonly INetTransport Transport;
         protected readonly List<NetPlayer> PlayerList = new List<NetPlayer>();
         protected readonly List<NetBoard> BoardList = new List<NetBoard>();
@@ -50,6 +53,10 @@ namespace BoardSandbox.Core.Net
         // How each player looks at their own table, as far as it is known.
         protected readonly Dictionary<ulong, ViewPose> ViewList = new Dictionary<ulong, ViewPose>();
 
+        // What the players have said, the newest last.
+        protected readonly List<ChatLine> ChatList = new List<ChatLine>();
+
+        private readonly ChatLimiter _chatLimiter = new ChatLimiter();
         private ViewPose _sentView;
         private double _sentViewAt;
 
@@ -161,6 +168,52 @@ namespace BoardSandbox.Core.Net
                 message.Set("from", IdText(from));
             pose.WriteTo(message);
             return message;
+        }
+
+        // Whether the players can talk to each other: a host always passes the lines on, a guest can only talk through a host
+        // that does (an older host knows nothing of the chat).
+        public abstract bool CanChat { get; }
+
+        // What has been said in the room, the newest line last, at most MaxChatLines of them.
+        public IReadOnlyList<ChatLine> Chat => ChatList;
+
+        // How many lines have been said in all, counting the ones that were dropped; the Number of the newest line.
+        public int ChatTotal { get; private set; }
+
+        // Says something to everybody in the room. The line comes back through the host like everybody else's and is added then, so
+        // that it reads the same on every screen. False when nothing was said: there is nobody to say it to, nothing is left of the
+        // text once it is cleaned (ChatText.Clean), or the player has said too much lately (ChatLimiter), and then the player is told.
+        public bool Say(string text, double now)
+        {
+            if (IsClosed || !CanChat)
+                return false;
+            string clean = ChatText.Clean(text);
+            if (clean.Length == 0)
+                return false;
+            if (!_chatLimiter.Allow(now))
+            {
+                if (_chatLimiter.ShouldWarn(now))
+                    Tell("You are talking too fast.", ToastLevel.Warning);
+                return false;
+            }
+            PassOnChat(clean);
+            return true;
+        }
+
+        protected abstract void PassOnChat(string text);
+
+        protected void AddChat(ulong from, string name, string text)
+        {
+            if (ChatList.Count >= MaxChatLines)
+                ChatList.RemoveAt(0);
+            ChatTotal++;
+            ChatList.Add(new ChatLine(ChatTotal, from, name, text));
+        }
+
+        // The message that carries a line to the players: who said it, by the name that the host has of them, and what.
+        protected static JsonValue ChatMessage(ulong from, string name, string text)
+        {
+            return Message("chat").Set("from", IdText(from)).Set("name", name).Set("text", text);
         }
 
         // Whether the local player may make a move right now.
