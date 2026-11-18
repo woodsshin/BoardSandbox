@@ -12,6 +12,7 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 - [조작](#조작)
 - [화면 구성](#화면-구성)
 - [멀티플레이](#멀티플레이)
+  - [Android 멀티플레이 설정](#android-멀티플레이-설정)
 - [콘솔 명령](#콘솔-명령)
 - [AI 콘솔](#ai-콘솔)
   - [에이전트](#에이전트)
@@ -38,8 +39,8 @@ Unity 6.3 기반 보드게임 플랫폼(테이블탑 시뮬레이터 방식)입�
 ```
 Assets/
 ├─ BoardSandbox/
-│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜), Agents(AI 콘솔), Ai(모드의 Luau 컴퓨터 플레이어를 부르는 부분과 단계 기록)
-│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동
+│  ├─ Runtime/Core/      Unity 비의존 C# (asmdef noEngineReferences): Luau, 모드, 세션, 호스트, Net(방과 프로토콜, 작은 패킷으로 나눠 보내는 전송), Agents(AI 콘솔), Ai(모드의 Luau 컴퓨터 플레이어를 부르는 부분과 단계 기록)
+│  ├─ Runtime/Client/    Unity 표현 계층: 앱, 카메라, 장면 뷰, IMGUI HUD와 게임 선택 화면, 셰이더, Steam 연동(Windows), Epic Online Services 연동(Android)
 │  ├─ Editor/            메뉴, 네이티브 플러그인 설정, Android 빌드 전 검사
 │  ├─ Plugins/Windows/x86_64/   bse_luau.dll
 │  ├─ Plugins/Android/<ABI>/    libbse_luau.so (arm64-v8a, armeabi-v7a, x86_64)
@@ -94,15 +95,15 @@ flowchart TD
 ```
 
 - **bse_luau** (네이티브): Luau VM을 C ABI(버전 1)로 감쌉니다. 모든 호출은 JSON 문자열 입출력(`bse_vm_call`)이고 메모리·시간 한도와 로그 수집을 제공합니다. 내보내는 함수는 `bse_*` 10개이며 헤더는 `Native/bse_luau/include/bse_luau.h`입니다.
-- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, 모드 출처와 카탈로그(`IModSource`, `ModCatalog`), `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `PlaybackQueue`, `CommandConsole`, `SimulationRunner`, `GameHost`, `GameLibrary`, `Net`(`Multiplayer`, `NetHostRoom`, `NetClientRoom`).
-- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(장면 뷰, 카메라, HUD, 게임 선택 화면, Steam 연동)를 구동하는 구성 루트입니다. 화면에 보이는 판마다 `SceneView`, 카메라, `PlaybackQueue`를 하나씩 두며, 분할 화면에서는 판마다 레이어(31번부터 아래로)와 카메라 뷰포트를 나눕니다.
+- **BoardSandbox.Core**: `LuauVm`(P/Invoke), 모드 로더, 모드 출처와 카탈로그(`IModSource`, `ModCatalog`), `GameSession`(검증, 이벤트 미러, 스냅샷 기록, 오류 복구), `PlaybackQueue`, `CommandConsole`, `SimulationRunner`, `GameHost`, `GameLibrary`, `Net`(`Multiplayer`, `NetHostRoom`, `NetClientRoom`, 작은 패킷만 보낼 수 있는 연결 위에서 방 메시지를 나눠 보내고 다시 합치는 `PacketTransport`).
+- **BoardSandbox.Client**: `BoardSandboxApp` 하나가 일반 C# 클래스(장면 뷰, 카메라, HUD, 게임 선택 화면, Windows의 Steam 연동, Android의 EOS 연동)를 구동하는 구성 루트입니다. 화면에 보이는 판마다 `SceneView`, 카메라, `PlaybackQueue`를 하나씩 두며, 분할 화면에서는 판마다 레이어(31번부터 아래로)와 카메라 뷰포트를 나눕니다.
 
 멀티플레이에서는 호스트의 `NetHostRoom`이 세션의 이벤트를 참가자에게 보내고, 참가자의 `NetClientRoom`이 받은 이벤트를 자기 `PlaybackQueue`에 넣습니다. 참가자의 입력은 호스트에서 좌석과 차례를 확인한 뒤(차례가 없는 협동 게임은 좌석만 확인합니다) `GameSession.Submit`으로 들어갑니다. 메시지는 JSON이며 `hello`, `welcome`, `roster`, `sync`, `ev`, `cmd`, `note`, `finished`, `bye`가 있습니다.
 
 - **모드로 게임 추가**: `config.json`과 `.luau` 파일이 든 폴더 하나가 게임 하나입니다. 규칙, 화면, 입력, 컴퓨터 플레이어까지 게임에 관한 것은 모두 그 폴더의 Luau와 JSON에 있고, C# 쪽에는 특정 게임을 아는 코드가 없습니다.
 - **게임 선택 화면**: 앱에 들어 있는 게임과 로컬 폴더의 게임을 한 목록에서 검색하고 고릅니다. 모드는 출처(`Built-in`, `Local`, `Workshop`)를 갖고, 출처별로 모드를 읽어 오는 부분은 `IModSource`로 분리돼 있습니다.
 - **장면도 모드가 정함**: 보드, 테이블, 배경, 조명, 카메라, 표시(마커), 말의 모양·크기·위치·회전·면 색을 `config.json`과 Luau에서 정합니다. 클릭, 드래그, 키 입력도 모드가 명령으로 받습니다.
-- **Steam 멀티플레이**: 게임을 고르면 그 게임을 하는 방 목록이 나오고, 방을 열거나 들어갑니다. 한 판을 함께 두는 게임은 한 화면을 동기화하고, 각자 푸는 게임은 화면을 나눠 서로의 판을 봅니다.
+- **멀티플레이**: Windows는 Steam, Android는 Epic Online Services(EOS)로 이어지고 두 방식은 서로 연결되지 않습니다. 게임을 고르면 그 게임을 하는 방 목록이 나오고, 방을 열거나 들어갑니다. 한 판을 함께 두는 게임은 한 화면을 동기화하고, 각자 푸는 게임은 화면을 나눠 서로의 판을 봅니다.
 - **호스트 권한**: 마우스, 콘솔, 컴퓨터 플레이어의 모든 입력은 `GameSession.Submit` 하나를 거쳐 규칙 스크립트(`rules.command`)의 검증을 통과해야 반영됩니다. 거부된 입력은 코드와 사유가 붙은 결과로 돌아옵니다.
 - **인터셉터**: `ICommandInterceptor`로 입력이 규칙에 닿기 전에 막거나(`TurnGuard`), 처리 뒤 결과를 기록할 수 있습니다(`RejectionLog`).
 - **시간 되감기**: 수마다 스냅샷을 남겨(최대 4096단계) 되돌리기, 다시 실행, 임의 지점 이동을 지원합니다. 모드가 `snapshot`과 `restore`를 제공해야 합니다.
@@ -117,7 +118,8 @@ flowchart TD
 | 플랫폼 | Windows 10 이상, x64 (에디터와 Standalone 빌드). Android 7.1(API 25) 이상은 IL2CPP로 빌드하며 ARM64, ARMv7, x86_64 라이브러리가 들어 있습니다([상태와 제한](#상태와-제한)) |
 | 렌더 파이프라인 | Built-in, URP (셰이더에 `LightMode` 태그가 없어 둘 다에서 그려지도록 작성) |
 | UI와 입력 | IMGUI(`OnGUI`). `UnityEngine.Input`, uGUI, UI Toolkit은 쓰지 않습니다 |
-| 멀티플레이 | Steam 클라이언트와 [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) 2025.165.0 (`Packages/manifest.json`의 git 패키지, Unity가 받아 옵니다). 없어도 로컬 플레이는 됩니다 |
+| 멀티플레이 (Windows) | Steam 클라이언트와 [Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) 2025.165.0 (`Packages/manifest.json`의 git 패키지, Unity가 받아 옵니다). 없어도 로컬 플레이는 됩니다 |
+| 멀티플레이 (Android) | [Epic Online Services](https://dev.epicgames.com/docs)(EOS) 제품과 [EOS Plugin for Unity](https://github.com/EOS-Contrib/eos_plugin_for_unity_upm) 6.2.0 (`Packages/manifest.json`의 git 패키지, Unity가 받아 옵니다. 받는 컴퓨터에 git과 git-lfs가 있어야 합니다). 제품 정보는 저장소에 없고 직접 넣어야 합니다([Android 멀티플레이 설정](#android-멀티플레이-설정)). 설정이 없어도 로컬 플레이는 됩니다 |
 
 네이티브 라이브러리 `bse_luau.dll`(Luau 0.745를 정적으로 포함, 외부 의존은 KERNEL32와 Windows UCRT뿐)은 `Assets/BoardSandbox/Plugins/Windows/x86_64/`에 들어 있어 따로 설치할 것이 없습니다. 직접 빌드하려면 [네이티브 라이브러리 빌드](#네이티브-라이브러리-빌드)를 보세요.
 
@@ -255,7 +257,9 @@ Cubic 3x3의 조작: 면을 클릭하면 시계 방향, 오른쪽 클릭이나 `
 
 ## 멀티플레이
 
-Steam 로비로 방을 만들고 Steam의 중계 메시지로 통신합니다. Steam이 실행 중이어야 하며, 그렇지 않으면 `Online rooms` 자리에 사유가 표시되고 로컬 플레이만 됩니다.
+Windows에서는 Steam 로비로 방을 만들고 Steam의 중계 메시지로 통신합니다. Steam이 실행 중이어야 하며, 그렇지 않으면 `Online rooms` 자리에 사유가 표시되고 로컬 플레이만 됩니다.
+
+Android에서는 Epic Online Services(EOS)의 로비로 방을 만들고 EOS의 P2P로 통신하며, 플레이어가 로그인하거나 계정을 만들 필요가 없습니다. EOS 제품 설정이 없거나 틀리면 마찬가지로 `Online rooms` 자리에 사유가 표시되고 로컬 플레이만 됩니다([Android 멀티플레이 설정](#android-멀티플레이-설정)). Steam 방은 Windows에서만, EOS 방은 Android에서만 보이고 둘은 서로 연결되지 않습니다.
 
 1. 게임 선택 화면에서 게임을 고르면 그 게임의 방 목록을 가져옵니다(게임 id와 프로토콜 버전으로 거름, 최대 50개).
 2. `Create room`은 방을 열고 그 게임을 새로 시작합니다. 게임이 허락하는 선택(누구와 하는지, 몇 명이 하는지)이 있으면 먼저 방 만들기 카드가 나오고, 없으면 바로 엽니다(아래 **방 만들기**). `Join`은 방에 들어갑니다. 방의 게임 파일이 내 것과 다르면(내용 해시 비교) 버전과 `differs`가 표시되고 들어갈 수 없습니다.
@@ -289,6 +293,24 @@ Steam 로비로 방을 만들고 Steam의 중계 메시지로 통신합니다. S
 새 게임, 되돌리기, 옵션 변경은 호스트만 합니다. 호스트가 나가거나 다른 게임을 고르면 방이 닫히고(호스트 이전 없음), 참가자에게는 게임 선택 화면이 열립니다. 참가자가 `Leave room`을 누르거나 입장 중에 `Cancel`을 눌러 나갈 때, 그리고 호스트가 `Close room`으로 방을 닫을 때는 누른 사람에게 게임 선택 화면이 열립니다. 호스트가 하던 게임은 판에 그대로 있어서 목록을 `Esc`로 닫으면 이어서 할 수 있습니다. 참가자가 자기 게임을 시작하면 방에서 나옵니다.
 
 프로젝트 루트의 `steam_appid.txt`는 Steam 테스트용 앱 ID 480입니다. 자신의 앱 ID가 있으면 바꾸고, 빌드한 실행 파일을 Steam 밖에서 실행할 때는 이 파일을 실행 파일 옆에 둡니다.
+
+### Android 멀티플레이 설정
+
+Android 앱은 켜질 때 EOS의 기기 ID(Device ID)로 이 기기만의 익명 사용자를 만들고(이미 있으면 그대로 씁니다) 그 사용자로 방을 만들고 찾고 들어갑니다. 이름은 사용자 ID에서 정해지는 `Player 1234` 모양이고 바꿀 수 없습니다. 기기 ID는 앱이나 앱 데이터를 지우면 사라져서 그 뒤에는 새 사용자가 됩니다. 방 만들기, 목록, 방 안의 동작은 Windows와 같습니다.
+
+방은 EOS의 공개 로비이고 게임 id, 버전, 내용 해시, 프로토콜 번호가 로비 속성으로 붙습니다. 호스트가 로비를 만들고 참가자는 호스트와 EOS P2P로 직접 통신합니다(연결이 안 되면 EOS가 중계합니다). EOS P2P는 한 번에 1170바이트까지만 보내서, 이보다 큰 방 메시지는 `PacketTransport`가 나눠 보내고 받는 쪽이 다시 합칩니다. 호스트가 방을 닫거나 나가면 참가자의 방도 닫히고 게임 선택 화면이 열립니다(호스트 이전 없음). 호스트 앱이 갑자기 꺼지면 EOS가 연결이 끊긴 것을 알아차릴 때까지 그만큼 늦게 닫힙니다.
+
+EOS 제품 정보(제품 ID, 클라이언트 ID와 비밀 등)는 개발자마다 달라서 저장소에 들어 있지 않습니다. Android 빌드에서 멀티플레이를 켜려면 다음을 직접 합니다.
+
+1. [Epic 개발자 포털](https://dev.epicgames.com/portal/)에서 제품(Product), 클라이언트 정책(Client Policy), 클라이언트(Client)를 만듭니다. 정책은 로비와 P2P를 쓸 수 있어야 합니다(플러그인 문서는 가장 넉넉한 프리셋 `GameClient /w UnlockAchievements`를 권합니다). Game Services 약관에 동의하면 `Dev`와 `Stage`의 Sandbox, Deployment가 만들어지며 개발 중에는 `Dev`를 씁니다.
+2. Unity에서 **EOS Plugin > EOS Configuration** 창을 열어 Product Name, Product ID, Sandbox ID, Deployment ID, Client ID, Client Secret을 포털의 값으로 채우고 Product Version에 숫자를 하나 넣습니다(비워 둘 수 없습니다). Encryption Key는 EOS 저장소 기능에만 쓰이고 이 프로젝트는 그 기능을 쓰지 않아 기본값으로 둬도 됩니다.
+3. 같은 창에서 **Android** 버튼을 누르고 **Save All Changes**를 누릅니다. 비워 둔 칸이 있어도 눌러야 Android용 설정이 만들어집니다.
+4. Android의 Minimum API Level은 24 이상이어야 합니다(이 프로젝트는 25).
+5. Unity 6에서는 플러그인 문서가 Android 빌드에 맞는 Gradle 설정을 따로 요구합니다(커스텀 `launcherTemplate.gradle`, `mainTemplate.gradle`, `gradleTemplate.properties`, 그리고 패키지 안 `eos_dependencies.androidlib`의 `build.gradle`과 `AndroidManifest.xml` 수정). [플러그인 문서의 Unity 6 항목](https://github.com/EOS-Contrib/eos_plugin_for_unity/blob/stable/com.playeveryware.eos/Documentation~/android/environment_setup_android.md)을 따르세요. 이 저장소의 Android 빌드로는 확인하지 못했습니다.
+
+플러그인은 설정을 `Assets/StreamingAssets/EOS/`에 일반 텍스트 파일로 저장합니다. 이 폴더는 `.gitignore`에 들어 있어 저장소에 올라가지 않으므로 팀원은 각자 설정하거나 파일을 따로 나눠야 합니다. 다만 플러그인 문서에 따르면 클라이언트 ID와 비밀은 빌드에 들어가고 웹 요청에도 나타나 비밀로 지켜지지는 않습니다.
+
+Windows 빌드는 그대로입니다. EOS 코드는 Android 빌드에서만 컴파일되고, Standalone의 스크립트 정의에 `EOS_DISABLE`이 들어 있어(`ProjectSettings`) EOS 플러그인도 Windows에서는 꺼져 있습니다. Steam 멀티플레이는 바뀐 것이 없습니다.
 
 ## 콘솔 명령
 
@@ -797,7 +819,7 @@ using (GameHost host = new GameHost(catalog))
     library.SetQuery("go");          // 이름, id, 설명으로 거르기
     library.Play();                  // 고른 게임으로 새 게임 시작
 
-    Multiplayer online = new Multiplayer(host, backend);   // backend: ILobbyBackend (Steam은 SteamBackend)
+    Multiplayer online = new Multiplayer(host, backend);   // backend: ILobbyBackend (Windows는 SteamBackend, Android는 EosBackend)
     online.Refresh("gomoku");        // 그 게임의 방 목록 요청
     online.HostGame(host.Mod);       // 또는 online.Join(online.Lobbies("gomoku")[0])
     online.Update();                 // 프레임마다
@@ -812,7 +834,7 @@ using (GameHost host = new GameHost(catalog))
 - `IModSource`는 `Origin`, `Description`(찾아보는 곳, 안내 문구에 쓰임), `Discover()`(`ModDiscovery`: 모드와 읽지 못한 모드의 오류)로 이루어집니다. 폴더를 읽는 `FolderModSource`가 들어 있고, `Discover()`가 예외를 던져도 오류로 보고될 뿐 다른 소스는 그대로 읽힙니다.
 - `GameLibrary`는 게임 선택 화면의 상태(검색어, 출처 필터, 고른 게임, 이동, `Rescan`, `Play`)를 화면 없이 다룹니다. 화면(`GameLibraryPanel`)은 이 상태를 그리기만 합니다.
 - `PlaybackQueue`는 세션의 이벤트(`GameSession.EventApplied`)를 두 번째 `ViewModel`에 순서대로 재생하며 `fx`마다 멈춥니다. 화면은 이 `Display`를 그립니다.
-- `Multiplayer`는 방 찾기, 열기, 들어가기와 방의 진행을 맡습니다. 방은 `NetHostRoom`(게임을 실행하는 쪽)과 `NetClientRoom`(보여 주기만 하는 쪽)이고, 로비 서비스는 `ILobbyBackend`, 연결은 `INetTransport`로 분리돼 있습니다. `LoopbackNetwork`는 한 프로세스 안에서 방을 만드는 전송으로 테스트에 쓰입니다.
+- `Multiplayer`는 방 찾기, 열기, 들어가기와 방의 진행을 맡습니다. 방은 `NetHostRoom`(게임을 실행하는 쪽)과 `NetClientRoom`(보여 주기만 하는 쪽)이고, 로비 서비스는 `ILobbyBackend`, 연결은 `INetTransport`로 분리돼 있습니다. `LoopbackNetwork`는 한 프로세스 안에서 방을 만드는 전송으로 테스트에 쓰입니다. 한 번에 작은 패킷만 보낼 수 있는 연결(EOS P2P는 1170바이트)은 `IPacketLink`로 구현하면 `PacketTransport`가 `INetTransport`로 바꿔 줍니다. 방 메시지를 패킷으로 나눠 보내고 받는 쪽에서 합치며, 사용자 ID 문자열은 `NetIds.FromText`로 방이 쓰는 64비트 id로 바꿉니다.
 - `TurnGuard`는 차례가 아닌 좌석의 입력을 스크립트를 실행하지 않고 막는 인터셉터이며, 앱에는 기본으로 붙어 있지 않습니다. 앱은 `RejectionLog`만 붙입니다.
 
 ## 네이티브 라이브러리 빌드
@@ -855,7 +877,7 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 
 | 종류 | 실행 방법 | 범위 |
 |---|---|---|
-| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, APK(zip) 안의 내장 게임 읽기, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 오목과 Cubic 3x3 규칙, Luau 컴퓨터 플레이어(두 번째 VM에서의 실행, 시간 한도, 오류 처리, 단계), 오목과 체스 모드의 `ai.luau`(전술, 단계 간 승률), 기하·장면·오브젝트 계산 |
+| Unity EditMode | **Window > General > Test Runner > EditMode** | `Assets/BoardSandbox/Tests/Editor`: JSON, Luau VM, 모드 로딩, 모드 출처와 카탈로그, APK(zip) 안의 내장 게임 읽기, 게임 선택 상태, AI 콘솔(에이전트 실행과 적용), 세션, 재생 큐, 콘솔, 시뮬레이션, 호스트, 방과 멀티플레이(루프백 전송), 작은 패킷 연결 위의 방(`PacketTransport`: 메시지 쪼개기와 합치기, 잘못된 패킷과 한도, 오목 한 판), 오목과 Cubic 3x3 규칙, Luau 컴퓨터 플레이어(두 번째 VM에서의 실행, 시간 한도, 오류 처리, 단계), 오목과 체스 모드의 `ai.luau`(전술, 단계 간 승률), 기하·장면·오브젝트 계산 |
 | dotnet 하네스 | `Tools\CoreTests\run.cmd [이름 필터]` (Windows), `Tools/CoreTests/run.sh [이름 필터]` | 같은 테스트를 Unity 없이 실행. `Tools/UnityCheck/.reference/UnityEngine.dll`이 없으면 UnityEngine이 필요한 테스트(기하, 장면)는 빼고 실행합니다 |
 | 네이티브 | `bse_luau_tests` (`build_native.py --run-tests`, `ctest`) | ABI, VM 수명, 스냅샷, 뷰 API, 부트 실패, `require`, 샌드박스, 로그, JSON, 한도, 시뮬레이션, 멀티스레드 |
 
@@ -874,10 +896,11 @@ ctest --test-dir Native/build/ci -C Release --output-on-failure
 | 고스톱과 오브젝트 그림 | 규칙과 컴퓨터 플레이어는 dotnet 하네스에서 확인했습니다(모드 안의 `selftest.luau`가 손으로 만든 국면으로 쪽·뻑·따닥·싹쓸이·폭탄·흔들기·보너스 패·고/스톱·박을 검사, 무작위와 컴퓨터 대국 완주, 되돌리기, 헤드리스 시뮬레이션). 모드의 그림 파일을 읽는 부분(폴더, APK)도 하네스에서 확인했습니다. 그림을 화면에 그리는 Unity 코드(`SceneView`의 그림 사각형, `BoardSandbox/Image` 셰이더, `Texture2D.LoadImage`)는 Unity에서 실행해 보지 못했고, 손으로 쓴 UnityEngine 스텁을 기준으로 컴파일만 확인했습니다. 화투 판의 배치는 화면 객체 목록을 그림으로 그려 확인했습니다 |
 | Steam 멀티플레이 | 방과 동기화 로직은 루프백 전송으로 테스트했고, Steam 연동 코드는 Steamworks.NET 소스와 함께 컴파일 검사만 했습니다. 실제 Steam 로비 생성·검색·참가, P2P 전송, 분할 화면과 로딩 화면의 표시는 확인하지 못했습니다 |
 | AI 콘솔 | 요청 구성, 답의 파일 블록 처리, 검사·자동 수정·되돌리기, 자식 프로세스 실행(가짜 에이전트 스크립트), chat completions 호출(로컬 가짜 서버)은 Linux의 dotnet 하네스 테스트로 확인했습니다. 실제 Claude Code·Codex·Gemini·Antigravity·Grok CLI와 실제 API 호출, Windows에서의 프로세스 실행, Unity 안에서의 창 표시와 한글 입력은 확인하지 못했습니다 |
+| Android 멀티플레이 (EOS) | 방 메시지를 작은 패킷으로 나눠 보내고 합치는 전송(`PacketTransport`)과 사용자 ID 변환(`NetIds`)은 dotnet 하네스 테스트 22개로 확인했습니다(쪼개기·합치기 왕복, 잘못된 패킷과 한도, 쏟아지는 패킷, 패킷 크기 100바이트 연결 위에서 오목 한 판). EOS 연동 코드(`Runtime/Client/Eos`)는 EOS Plugin 6.2.0과 6.3.0의 C# SDK 소스와 함께 컴파일 검사만 했고, 이때 `EOSManager`와 UnityEngine은 손으로 쓴 스텁이었습니다. 실제 Android 기기와 실제 EOS 서비스(기기 ID 로그인, 로비 만들기·찾기·들어가기, P2P 연결과 중계)에서는 실행해 보지 못했습니다. Windows 빌드에서 EOS 어셈블리를 끄는 설정(`EOS_DISABLE`)과 위 Gradle 설정을 적용한 Android 빌드도 Unity에서 확인하지 못했습니다 |
 | Android | NDK로 만든 ARM64, ARMv7, x86_64 라이브러리가 `Plugins/Android`에 들어 있고, 모두 ELF 검사(CPU, 필요한 라이브러리 libc·libm·libdl뿐, 내보낸 함수 10개, 64비트 16KB 정렬)를 통과했습니다. 이 라이브러리가 없던 IL2CPP 빌드는 앱이 시작했지만 게임을 불러오지 못했습니다. 내장 게임을 APK 안에서 읽는 `ZipModSource`는 dotnet 하네스에서, 실제 내장 게임을 APK 모양(`assets/Mods`, 서명 블록 포함)으로 압축해 폴더에서 읽을 때와 같은 결과(`ContentHash` 포함)가 나오고 모두 시작되는 것까지 확인했습니다. 라이브러리와 이 읽기를 넣은 빌드를 기기에서 실행해 보는 것은 하지 못했습니다 |
 | 스크립팅 백엔드 | Mono 기준으로 작성했습니다. IL2CPP는 Android 빌드로 만들어 앱이 시작하는 것까지만 확인했습니다 |
 
-기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 Steam 멀티플레이, 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅이 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델은 없습니다. 이미지는 오브젝트 윗면에 붙이는 그림(`image`)만 있습니다. 좌석마다 다르게 보이는 것(`for_seat`, 고스톱의 손패)은 화면에 그릴 때만 가려집니다. 모든 플레이어가 같은 데이터를 받으므로 데이터를 직접 읽는 사람에게까지 숨겨지지는 않습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 생각하는 컴퓨터 플레이어는 모드가 Luau로 쓰며([컴퓨터 플레이어](#컴퓨터-플레이어)) 들어 있는 게임 가운데 오목, 체스, 고스톱에 있고, 다른 게임은 무작위 수를 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
+기능 범위: 로컬 플레이(사람/컴퓨터 좌석)와 멀티플레이(Windows는 Steam, Android는 EOS), 격자 보드와 기본 도형으로 된 3D 오브젝트. 게임 목록은 폴더에서 읽은 모드만 다루며 Steam Workshop 연동(구독한 항목 읽기, 업로드)은 없습니다. 멀티플레이에는 호스트 이전, 친구 초대, 비공개 방, 채팅, Steam과 EOS 사이의 크로스플레이가 없고 참가자는 호스트와 같은 내용의 모드를 갖고 있어야 합니다(모드 전송 없음). 파일 저장(콘솔 `save`는 메모리에만 보관), 카드·주사위 같은 물리 오브젝트, 외부 모델은 없습니다. 이미지는 오브젝트 윗면에 붙이는 그림(`image`)만 있습니다. 좌석마다 다르게 보이는 것(`for_seat`, 고스톱의 손패)은 화면에 그릴 때만 가려집니다. 모든 플레이어가 같은 데이터를 받으므로 데이터를 직접 읽는 사람에게까지 숨겨지지는 않습니다. 회전은 `fx`로만 부드럽게 보여 줄 수 있습니다. 생각하는 컴퓨터 플레이어는 모드가 Luau로 쓰며([컴퓨터 플레이어](#컴퓨터-플레이어)) 들어 있는 게임 가운데 오목, 체스, 고스톱에 있고, 다른 게임은 무작위 수를 둡니다. 씬 파일은 포함하지 않으며 메뉴가 만들어 줍니다.
 
 ## 라이선스
 
@@ -886,5 +909,7 @@ Board Sandbox의 저작권과 사용 조건은 [LICENSE.md](LICENSE.md)에 있�
 Luau는 Board Sandbox의 일부가 아니며 저자의 권한이 미치지 않는 제3자 소프트웨어입니다. MIT 라이선스(Copyright (c) 2019-2026 Roblox Corporation, 1994–2019 Lua.org, PUC-Rio)로 배포되고 `bse_luau.dll`과 `libbse_luau.so`에 정적으로 들어 있습니다. MIT 라이선스는 사본마다 저작권 고지와 허락 문구를 넣도록 요구하므로 DLL, .so나 이를 담은 빌드(APK 포함)를 배포할 때 `THIRD_PARTY_NOTICES.txt`를 함께 넣어야 합니다. zig로 만든 DLL과 NDK로 만든 .so가 담는 런타임 라이브러리(LLVM libc++ 등)의 고지도 같은 파일에 있습니다.
 
 Steam 연동에 쓰는 Steamworks.NET(MIT, Riley Labrecque)과 그 패키지에 든 Steamworks SDK 재배포 파일(`steam_api64.dll`, Valve)도 제3자 소프트웨어입니다. 저장소에는 들어 있지 않고 Unity가 패키지로 받아 오며, 빌드를 배포할 때는 각자의 라이선스와 Steamworks SDK 약관을 따릅니다.
+
+Android 멀티플레이에 쓰는 [EOS Plugin for Unity](https://github.com/EOS-Contrib/eos_plugin_for_unity)(MIT, Copyright (c) 2026 Epic Games Inc)와 그 패키지에 든 Epic Online Services SDK(Epic Games)도 제3자 소프트웨어입니다. 마찬가지로 저장소에는 들어 있지 않고 Unity가 패키지로 받아 오며, 빌드를 배포할 때는 각자의 라이선스와 [Epic Online Services](https://onlineservices.epicgames.com/)의 약관을 따릅니다.
 
 고스톱의 화투 도안(`Assets/StreamingAssets/Mods/gostop/cards.png`)은 Marcus Richert의 [Hwatu overview.svg](https://commons.wikimedia.org/wiki/File:Hwatu_overview.svg)(Louie Mantia, Jr.의 화투 그림을 바탕으로 제작)를 고쳐 만든 것이며 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)으로 배포됩니다. 고친 내용은 48장을 잘라 한 장의 PNG로 모으고, 선 그림 뒤에 흰 바탕을 넣고, 한국식 월 순서(11월 오동, 12월 비)로 배열하고, 뒷면과 보너스 패 석 장을 더한 것입니다(`Tools/Hwatu/make_atlas.py`). 이 라이선스는 `cards.png`에만 적용되며 같은 조건(저작자 표시, 동일 조건 변경 허락)으로 다시 배포해야 합니다. 같은 고지가 `Mods/gostop/ARTWORK-LICENSE.txt`와 `THIRD_PARTY_NOTICES.txt`에 있고, 게임 안에서는 고스톱의 설명과 `query credits`에 표시됩니다.
