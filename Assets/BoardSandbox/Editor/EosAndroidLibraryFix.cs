@@ -12,6 +12,9 @@ namespace BoardSandbox.Client.Editor
     // These functions turn the two files into what such a build accepts. They are only text work, with no Unity types, so that the
     // tests can run without the Editor. A file that is already in the new form is not touched, so a plugin that has been fixed
     // is left alone. EosAndroidLibraryBuildStep applies them to the generated project.
+    //
+    // Tools/FixEosAndroidExport.ps1 is a copy of this class and of EosAndroidProjectFix in PowerShell, for a folder that was
+    // exported without Unity running. A change to the patterns or the steps here is to be made there as well.
     public static class EosAndroidLibraryFix
     {
         public const string LibraryFolder = "eos_dependencies.androidlib";

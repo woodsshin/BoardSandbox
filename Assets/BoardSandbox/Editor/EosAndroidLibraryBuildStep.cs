@@ -10,20 +10,34 @@ using UnityEngine;
 namespace BoardSandbox.Client.Editor
 {
     // Adapts the library module of the EOS Plugin for Unity to the Gradle version of Unity, see EosAndroidLibraryFix and
-    // EosAndroidProjectFix.
+    // EosAndroidProjectFix. It does so at three points of a build. Each of them writes a line to the Console ("[EOS Android] ..."),
+    // which is how to tell which of them ran, and a library that is already in the new form is left alone, so the later points find
+    // the work of the earlier ones done.
     //
-    // Unity calls OnPostGenerateGradleAndroidProject after it has written the Gradle project and before anything builds it, for a
-    // build and for "Export Project" alike (when it exports, the path is the unityLibrary module in the folder of the export), so a
-    // project that is exported and built outside of Unity gets the same files. The project is only edited where the plugin's
-    // library is found, and only if its files are still in the form of the plugin 6.2.0 and 6.3.0. A project without the library
-    // is not changed.
+    // 1. OnPreprocessBuild adapts the copy of the library in Assets/Plugins/Android/EOS, which Unity copies into the Gradle project.
+    //    The EOS plugin writes that copy again for every build, in its own OnPreprocessBuild (the orders 0 and 1), so this step has
+    //    a later order.
+    // 2. OnPostGenerateGradleAndroidProject adapts the library in the Gradle project that Unity has just written, before anything
+    //    builds it, for a build and for "Export Project" alike (when it exports, the path is the unityLibrary module in the folder
+    //    of the export). A project that is exported and built outside of Unity gets the same files.
+    // 3. OnPostprocessBuild looks at an exported project once more when the export is done, and adapts the files if something has
+    //    written them again after the second step.
     //
-    // OnPostprocessBuild looks at an exported project once more when the export is done. It finds the files already adapted and
-    // says so, and it adapts them if something has written them again after the first step. Each step writes a line to the
-    // Console, which is how to tell whether a step ran at all.
-    public sealed class EosAndroidLibraryBuildStep : IPostGenerateGradleAndroidProject, IPostprocessBuildWithReport
+    // The project is only edited where the plugin's library is found, and only if its files are still in the form of the plugin
+    // 6.2.0 and 6.3.0. A project without the library is not changed.
+    public sealed class EosAndroidLibraryBuildStep : IPreprocessBuildWithReport, IPostGenerateGradleAndroidProject, IPostprocessBuildWithReport
     {
-        public int callbackOrder => 0;
+        // After the build steps of the EOS plugin, which have the orders 0 (PlatformSpecificBuilder) and 1 (BuildRunner). The second
+        // one copies the library into the project.
+        public int callbackOrder => 100;
+
+        public void OnPreprocessBuild(BuildReport report)
+        {
+            if (report.summary.platform != BuildTarget.Android)
+                return;
+            Run(Path.Combine(Path.Combine(Path.Combine(Application.dataPath, "Plugins"), "Android"), "EOS"),
+                "before Unity generated the Gradle project");
+        }
 
         // path is the unityLibrary module of the generated project.
         public void OnPostGenerateGradleAndroidProject(string path)
