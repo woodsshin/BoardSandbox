@@ -65,6 +65,8 @@ namespace BoardSandbox.Core.Net
             Arrange();
             if (_fill)
                 Reseat();
+            else if (WaitsForPlayers)
+                SeatPeople();
         }
 
         // Whether a room of this game can be filled by the computer: the seats are not played together or at tables of their
@@ -286,6 +288,14 @@ namespace BoardSandbox.Core.Net
                 _host.SetSeatMode(seat, computer ? _host.ComputerMode : SeatMode.Human);
             }
             RefreshComputerSeats();
+        }
+
+        // A room that waits for people has none of its seats played by the computer, whatever the host had set up for
+        // playing alone: whoever joins takes the next empty seat, and an empty seat is waited for.
+        private void SeatPeople()
+        {
+            for (int seat = 1; seat <= Mod.Manifest.MaxPlayers; seat++)
+                _host.SetSeatMode(seat, SeatMode.Human);
         }
 
         private void RefreshComputerSeats()

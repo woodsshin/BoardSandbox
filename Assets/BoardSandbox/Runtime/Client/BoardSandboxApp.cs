@@ -159,10 +159,17 @@ namespace BoardSandbox.Client
             // The computer player gets stronger with the games played against it, also after the app was closed.
             AiProgress progress = new AiProgress(Path.Combine(Application.persistentDataPath, "ai_progress.json"));
             progress.Load();
+
+            // How the player set up their last games: who plays the seats, and how a room was opened. The next game and the
+            // next room of a game start with the same choices.
+            PlayPreferences preferences = new PlayPreferences(Path.Combine(Application.persistentDataPath, "preferences.json"));
+            preferences.Load();
             _host = new GameHost(new ModCatalog(ModSources()),
-                new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds, AiProgress = progress });
+                new GameHostOptions { AiDelaySeconds = ComputerDelaySeconds, AiProgress = progress, Preferences = preferences });
             if (progress.Problem.Length > 0)
                 _host.Toasts.Add(progress.Problem, ToastLevel.Warning, _host.Now);
+            if (preferences.Problem.Length > 0)
+                _host.Toasts.Add(preferences.Problem, ToastLevel.Warning, _host.Now);
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer = new Multiplayer(_host, CreateLobbyBackend());
             _multiplayer.RoomChanged += OnRoomChanged;

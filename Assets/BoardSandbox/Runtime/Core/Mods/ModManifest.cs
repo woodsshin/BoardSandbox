@@ -100,6 +100,10 @@ namespace BoardSandbox.Core.Mods
         // Whether the mod has a computer player that thinks, as opposed to one that plays random moves.
         public bool HasComputerPlayer => AllowComputer && AiEngine.Length > 0;
 
+        // Whether a person can play it against the computer: the mod has a computer player that thinks and somebody for
+        // it to play against, in seats that are neither played together at one screen nor on the same side.
+        public bool HasComputerOpponent => HasComputerPlayer && !SplitScreen && !Cooperative && MaxPlayers >= 2;
+
         // Whether the host may choose how many people play: the game takes between MinPlayers and MaxPlayers, has an
         // option that says how many ("players.option"), and its seats are not played together or at tables of their own.
         public bool ChoosesPlayerCount => PlayersOption.Length > 0 && MinPlayers < MaxPlayers && !SplitScreen && !Cooperative;

@@ -231,6 +231,7 @@ Cubic 3x3의 조작: 면을 클릭하면 시계 방향, 오른쪽 클릭이나 `
   - `Computer` 좌석은 모드의 무작위 합법 수를 0.45초 간격으로 둡니다. 모드가 `random_command` 또는 `legal_commands`를 제공하지 않으면 선택할 수 없습니다(안내 토스트). 컴퓨터가 둘 수를 못 찾거나 수가 거부되면 그 좌석은 `Human`으로 돌아갑니다. 되돌린 시점이 컴퓨터 차례면 컴퓨터가 다시 둡니다. 차례가 없는 협동 게임에서는 컴퓨터가 맡은 좌석이 여럿이면 번갈아 두고, 사람 좌석에는 영향을 주지 않습니다.
   - 모드가 `config.json`에 `ai`를 쓰고 스크립트에서 수를 고르면(오목, 체스) `Computer` 좌석은 무작위 대신 그 스크립트가 고른 수를 둡니다([컴퓨터 플레이어](#컴퓨터-플레이어)). 좌석 목록 아래에 `Computer level 1/3 (effort 50)`처럼 현재 단계가 표시되고, 사람과 컴퓨터의 대국이 끝날 때마다 한 단계씩 올라갑니다.
   - 좌석 줄은 게임이 쓰는 좌석 수만큼만 나옵니다. `players.option`이 이름 붙인 옵션(고스톱의 `players`)이 2나 3이면 그 수만큼이고, 0이거나 범위 밖이면 모든 좌석이 나옵니다.
+  - **처음 좌석과 마지막 설정**: 생각하는 컴퓨터 플레이어가 있는 한 화면 게임(오목, 체스, 고스톱)을 고르면 1번 좌석은 `Human`(사용자), 나머지 좌석은 `Computer`로 시작합니다(오목·체스는 2번, 고스톱은 2번과 3번). 좌석을 `Human | Computer`로 손으로 바꾸면 그 게임을 다시 고를 때나 앱을 다시 켰을 때도 바꾼 대로 시작합니다(`persistentDataPath/preferences.json`, 게임 id별). 1번 좌석은 저장하지 않으므로 늘 사용자로 시작합니다. 방이 좌석을 나눠 주는 것(컴퓨터가 채우는 방, 사람을 기다리는 방)과 컴퓨터 오류로 좌석이 `Human`으로 돌아가는 것은 저장하지 않고, 사람이 버튼으로 고른 것만 저장합니다. 컴퓨터 플레이어가 없는 게임(스도쿠, Cubic 3x3)과 무작위 수만 두는 게임은 계속 모두 `Human`으로 시작합니다. 파일을 지우면 처음 값으로 돌아가고, 읽지 못하면 토스트로 알리고 처음 값으로 시작합니다.
   - `config.json`의 `players.computer`가 `false`인 게임(스도쿠)에는 좌석 줄이 나오지 않고, 콘솔 등으로 좌석을 컴퓨터에 주려 하면 `'Sudoku' is not played against the computer.` 토스트와 함께 거부됩니다.
   - 컴퓨터가 빈 좌석을 채우는 방과 사람을 기다리는 방([멀티플레이](#멀티플레이))에서는 좌석을 손으로 바꾸지 않으므로 `Human | Computer` 대신 좌석표(`Players`)가 나옵니다. 좌석마다 앉은 사람의 이름, `Computer`, 또는 `Waiting for a player…`가 보이고, 좌석이 없는 사람은 그 아래에 `next game`(컴퓨터가 채우는 방) 또는 `watches`로 나옵니다. 호스트에게는 생각하는 컴퓨터의 단계도 이 아래에 나오고, 상황에 따라 안내 한 줄(`You play the computer. When someone joins, press New game to play with them.` 등)이 `Close room` / `Leave room` 위에 보입니다.
 - **오른쪽 도구 열**: `Fit view` 버튼 하나입니다. 콘솔과 시뮬레이션은 게임을 만들거나 점검하는 사람의 도구라서 버튼을 두지 않았습니다. 콘솔은 `` ` `` 또는 `F1`로 열고, 시뮬레이션은 콘솔의 `sim` 명령으로 돌립니다([콘솔 명령](#콘솔-명령)).
@@ -271,9 +272,11 @@ Steam 로비로 방을 만들고 Steam의 중계 메시지로 통신합니다. S
 | 고르는 것 | 어느 게임 | 선택 |
 |---|---|---|
 | 누구와 하는지 | 생각하는 컴퓨터 플레이어(`ai`)가 있고 `players.computer`가 `false`가 아닌 한 화면 게임(오목, 체스, 고스톱) | `Play the computer`(처음 값), `Play with people` |
-| 몇 명이 하는지 | `players.option`이 있고 `min` < `max`인 한 화면 게임(고스톱) | `2 players`, `3 players`(버튼은 최대 8개) |
+| 몇 명이 하는지 | `players.option`이 있고 `min` < `max`인 한 화면 게임(고스톱) | `2 players`, `3 players`(버튼은 최대 8개; 처음 값은 게임이 기본으로 쓰는 인원이라 고스톱은 `3 players`) |
 
 협동 게임(스도쿠), 분할 화면 게임(Cubic 3x3), 컴퓨터 플레이어가 없는 게임은 물을 것이 없어서 카드 없이 방이 바로 열립니다. 카드에서 `Create room`(또는 `Enter`)으로 방을 열고, `Back`(또는 `Esc`)으로 목록에 돌아갑니다. 인원을 고르는 게임의 방은 로비에 `Ann - Go-Stop (3P)`처럼 인원이 붙고, 정원은 인원에 관전자 8명을 더한 수입니다.
+
+카드는 그 게임의 방을 마지막으로 열 때 고른 것으로 시작합니다. 아직 연 적이 없으면 `Play the computer`와 게임의 기본 인원(고스톱은 3인: 호스트 1, 컴퓨터 2)입니다. 고른 값은 방이 실제로 열렸을 때 `persistentDataPath/preferences.json`에 게임 id별로 저장되므로 `Back`으로 돌아오면 남지 않고, 앱을 다시 켜도 이어집니다. 파일을 지우면 처음 값으로 돌아갑니다.
 
 - **`Play the computer`**: 방이 열리면 호스트가 1번 좌석을 맡고 나머지 좌석은 컴퓨터가 둡니다(오목·체스는 컴퓨터 1, 고스톱은 2인이면 컴퓨터 1, 3인이면 컴퓨터 2). 호스트는 기다리지 않고 바로 컴퓨터와 둡니다.
 - 방에 들어온 사람은 좌석 없이 진행 중인 판을 지켜봅니다(`You watch this game. When the host starts a new game you play it.`). 호스트가 `New game`을 누르면 호스트가 1번 좌석, 들어온 순서대로 다음 좌석을 받아 새 판이 시작되고(각자에게 `A new game has started. You play <좌석>.`이 나옵니다), 남는 좌석은 계속 컴퓨터가 둡니다. 좌석보다 사람이 많으면 나머지는 다음 판까지 지켜봅니다.
@@ -801,6 +804,7 @@ using (GameHost host = new GameHost(catalog))
 
 - `GameSession`은 VM 하나와 화면 미러(`View`), 기록을 가집니다. 한 VM은 한 번에 한 스레드에서만 호출하세요. 서로 다른 VM은 동시에 써도 됩니다(시뮬레이션이 별도 VM을 백그라운드 스레드에서 돌립니다).
 - 좌석 모드는 `SeatMode.Human`, `Random`(무작위 수), `Ai`(모드가 Luau로 쓴 플레이어, `rules.query("think")`)입니다. `host.HasAi`, `AiLevel`, `AiLevelCount`, `AiEffort`, `AiProgress`로 플레이어 유무와 단계를 읽고, `GameHostOptions.AiProgress`에 파일 경로를 준 `AiProgress`를 넘기면 판 수가 저장됩니다. `AiThreaded = false`는 탐색을 `Update` 안에서 실행합니다.
+- `GameHostOptions.Preferences`에 `PlayPreferences`를 넘기면(파일 경로를 주면 `preferences.json`처럼 저장됩니다) 게임을 고를 때(`SelectMod`) 1번 좌석은 사람, 컴퓨터 상대가 있는 게임(`ModManifest.HasComputerOpponent`: 생각하는 컴퓨터 플레이어가 있고 한 화면이며 좌석이 둘 이상)의 나머지 좌석은 컴퓨터로 정하고, 이전에 `ChooseSeatMode(seat, mode)`로 고른 좌석이 있으면 그것을 따릅니다. `ChooseSeatMode`는 `SetSeatMode`에 "다음 판도 이렇게"를 더한 것으로 사람이 버튼으로 고를 때 쓰고(1번 좌석은 저장하지 않음), 방이 좌석을 나누는 것 같은 일은 `SetSeatMode`로 저장 없이 합니다. `RoomSetup(manifest, preferences)`는 마지막으로 연 방의 선택에서 시작하고 `Multiplayer`가 방이 열릴 때 그 선택을 `RememberRoom`으로 저장합니다. 사람을 기다리는 방은 열릴 때 모든 좌석을 사람으로 돌립니다. `Preferences`가 `null`이면 모든 좌석은 사람이고 아무것도 저장하지 않습니다.
 - `GameHost`는 UI가 필요로 하는 것을 묶습니다: 모드 목록(`ModCatalog`), 좌석별 사람/컴퓨터, 컴퓨터 플레이어 스케줄, 토스트, 콘솔, 거부 기록, 백그라운드 시뮬레이션. `StartGame(mod)`는 모드를 고르고 새 게임까지 시작하며, `IsRunning(mod)`는 그 모드의 같은 버전(내용 해시가 같음)이 진행 중인지 알려 줍니다.
 - `ModCatalog`는 `IModSource` 목록에서 모드를 모읍니다. 항목(`ModEntry`)은 모드와 출처(`ModOrigin`: `BuiltIn`, `Local`, `Workshop`)를 가지며, `Search(query, origin)`이 이름, id, 설명으로 찾아 출처, 이름 순으로 돌려줍니다. `Refresh()`는 소스를 다시 읽고, `FindStartup(id)`는 [시작 규칙](#시작-규칙)의 게임을 고릅니다.
 - `IModSource`는 `Origin`, `Description`(찾아보는 곳, 안내 문구에 쓰임), `Discover()`(`ModDiscovery`: 모드와 읽지 못한 모드의 오류)로 이루어집니다. 폴더를 읽는 `FolderModSource`가 들어 있고, `Discover()`가 예외를 던져도 오류로 보고될 뿐 다른 소스는 그대로 읽힙니다.

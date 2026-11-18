@@ -41,6 +41,11 @@ namespace BoardSandbox.Core.App
         // Games finished against the thinking computer player, which set its level. Null keeps them in memory.
         public AiProgress AiProgress;
 
+        // How the player set up their last games, which the next game of the same mod starts with. Where nobody chose yet,
+        // the person at this computer plays seat 1 and the computer plays the other seats of a game that has a computer
+        // player. Null leaves every seat to people and remembers nothing.
+        public PlayPreferences Preferences;
+
         // Seconds on a monotonic clock; defaults to one started with the host.
         public Func<double> Clock;
 
@@ -103,6 +108,9 @@ namespace BoardSandbox.Core.App
         public bool AiPaused { get; set; }
 
         public AiProgress AiProgress { get; }
+
+        // How the player set up their last games; null when they are not kept.
+        public PlayPreferences Preferences => _options.Preferences;
 
         // Whether the mod has a computer player that thinks (SeatMode.Ai).
         public bool HasAi => _player != null;
@@ -194,6 +202,7 @@ namespace BoardSandbox.Core.App
             ResetAi();
             (_player as IDisposable)?.Dispose();
             _player = ComputerPlayers.Create(mod.Manifest);
+            SeatPlayers(mod.Manifest);
             _gameCounted = false;
             SessionReplaced?.Invoke();
             previous?.Dispose();
@@ -320,6 +329,47 @@ namespace BoardSandbox.Core.App
                 _seatModes[seat] = mode;
             ResetAi();
             return true;
+        }
+
+        // SetSeatMode for a choice the player made: the next game of the mod starts with the seats set the same way. Seat 1
+        // is the player's own and is not kept.
+        public bool ChooseSeatMode(int seat, SeatMode mode)
+        {
+            if (!SetSeatMode(seat, mode))
+                return false;
+            RememberSeats();
+            return true;
+        }
+
+        // Who plays the seats of the game that was just chosen. Seat 1 is the person's. The others are as the player left
+        // them the last time and, where they never chose, go to the computer when the game has a computer player that
+        // thinks.
+        private void SeatPlayers(ModManifest manifest)
+        {
+            PlayPreferences preferences = _options.Preferences;
+            if (preferences == null || !CanPlayComputer)
+                return;
+            bool byDefault = HasAi && manifest.HasComputerOpponent;
+            for (int seat = 2; seat <= manifest.MaxPlayers; seat++)
+            {
+                if (preferences.ComputerPlays(manifest.Id, seat, byDefault))
+                    _seatModes[seat] = ComputerMode;
+            }
+        }
+
+        private void RememberSeats()
+        {
+            PlayPreferences preferences = _options.Preferences;
+            GameSession s = Session;
+            if (preferences == null || s == null)
+                return;
+            ModManifest manifest = s.Mod.Manifest;
+            bool[] computer = new bool[manifest.MaxPlayers];
+            for (int seat = 1; seat <= computer.Length; seat++)
+                computer[seat - 1] = GetSeatMode(seat) != SeatMode.Human;
+            preferences.RememberSeats(manifest.Id, computer);
+            if (preferences.Problem.Length > 0)
+                Toasts.Add(preferences.Problem, ToastLevel.Warning, Now);
         }
 
         // The seat a person at this computer plays: the seat on turn, or, in a cooperative game, which has no turns, the

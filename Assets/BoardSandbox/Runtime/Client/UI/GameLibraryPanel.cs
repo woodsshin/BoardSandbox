@@ -464,7 +464,7 @@ namespace BoardSandbox.Client.UI
         // Creates the room of the game: right away when there is nothing to ask, else after the host has chosen how.
         private void OpenSetup(ModEntry entry)
         {
-            RoomSetup setup = new RoomSetup(entry.Mod.Manifest);
+            RoomSetup setup = new RoomSetup(entry.Mod.Manifest, _host.Preferences);
             if (!setup.HasChoices)
             {
                 _multiplayer.HostGame(entry.Mod, setup.ToOptions());

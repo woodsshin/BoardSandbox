@@ -678,7 +678,7 @@ namespace BoardSandbox.Client.UI
                 {
                     int chosenSeat = seat;
                     SeatMode chosenMode = picked == 0 ? SeatMode.Human : _host.HasAi ? SeatMode.Ai : SeatMode.Random;
-                    Defer(() => _host.SetSeatMode(chosenSeat, chosenMode));
+                    Defer(() => _host.ChooseSeatMode(chosenSeat, chosenMode));
                 }
                 GUILayout.EndHorizontal();
             }

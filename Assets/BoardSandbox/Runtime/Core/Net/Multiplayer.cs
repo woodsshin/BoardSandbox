@@ -245,6 +245,7 @@ namespace BoardSandbox.Core.Net
                 }
                 Room = new NetHostRoom(_host, transport, options);
                 Room.Notice += Say;
+                RememberRoom(mod.Manifest, options);
                 RoomChanged?.Invoke();
                 _host.StartNewGame();
             }
@@ -254,6 +255,17 @@ namespace BoardSandbox.Core.Net
                 Room.Notice += Say;
                 RoomChanged?.Invoke();
             }
+        }
+
+        // The next room of the game opens the way this one did, as far as the host had a say in it.
+        private void RememberRoom(ModManifest manifest, RoomOptions options)
+        {
+            PlayPreferences preferences = _host.Preferences;
+            if (preferences == null || options == null || !(manifest.HasComputerOpponent || manifest.ChoosesPlayerCount))
+                return;
+            preferences.RememberRoom(manifest.Id, options.ComputerFills, options.Players);
+            if (preferences.Problem.Length > 0)
+                Say(preferences.Problem, ToastLevel.Warning);
         }
 
         private void Say(string text, ToastLevel level)

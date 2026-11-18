@@ -1,4 +1,5 @@
 using System;
+using BoardSandbox.Core.App;
 using BoardSandbox.Core.Mods;
 
 namespace BoardSandbox.Core.Net
@@ -25,13 +26,22 @@ namespace BoardSandbox.Core.Net
 
         private int _players;
 
-        public RoomSetup(ModManifest manifest)
+        // The room starts out against the computer, with as many players as the game plays with unless it is told
+        // otherwise (Go-Stop: three, the host and two computer players). The choices the host made the last time they
+        // opened a room of the game, which preferences keeps, take the place of those.
+        public RoomSetup(ModManifest manifest, PlayPreferences preferences = null)
         {
             Manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
-            CanPlayComputer = manifest.HasComputerPlayer && !manifest.SplitScreen && !manifest.Cooperative && manifest.MaxPlayers >= 2;
+            CanPlayComputer = manifest.HasComputerOpponent;
             ChoosesPlayers = manifest.ChoosesPlayerCount;
             PlayComputer = CanPlayComputer;
-            Players = manifest.MinPlayers;
+            Players = manifest.SeatCount(manifest.DefaultOptions);
+            if (preferences != null && preferences.TryGetRoom(manifest.Id, out bool computer, out int players))
+            {
+                PlayComputer = CanPlayComputer && computer;
+                if (players > 0)
+                    Players = players;
+            }
         }
 
         public ModManifest Manifest { get; }
