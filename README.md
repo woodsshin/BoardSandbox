@@ -303,14 +303,15 @@ Android 앱은 켜질 때 EOS의 기기 ID(Device ID)로 이 기기만의 익명
 EOS 제품 정보(제품 ID, 클라이언트 ID와 비밀 등)는 개발자마다 달라서 저장소에 들어 있지 않습니다. Android 빌드에서 멀티플레이를 켜려면 다음을 직접 합니다.
 
 1. [Epic 개발자 포털](https://dev.epicgames.com/portal/)에서 제품(Product), 클라이언트 정책(Client Policy), 클라이언트(Client)를 만듭니다. 정책은 로비와 P2P를 쓸 수 있어야 합니다(플러그인 문서는 가장 넉넉한 프리셋 `GameClient /w UnlockAchievements`를 권합니다). Game Services 약관에 동의하면 `Dev`와 `Stage`의 Sandbox, Deployment가 만들어지며 개발 중에는 `Dev`를 씁니다.
-2. Unity에서 **EOS Plugin > EOS Configuration** 창을 열어 Product Name, Product ID, Sandbox ID, Deployment ID, Client ID, Client Secret을 포털의 값으로 채우고 Product Version에 숫자를 하나 넣습니다(비워 둘 수 없습니다). Encryption Key는 EOS 저장소 기능에만 쓰이고 이 프로젝트는 그 기능을 쓰지 않아 기본값으로 둬도 됩니다.
-3. 같은 창에서 **Android** 버튼을 누르고 **Save All Changes**를 누릅니다. 비워 둔 칸이 있어도 눌러야 Android용 설정이 만들어집니다.
-4. Android의 Minimum API Level은 24 이상이어야 합니다(이 프로젝트는 25).
-5. Unity 6에서는 플러그인 문서가 Android 빌드에 맞는 Gradle 설정을 따로 요구합니다(커스텀 `launcherTemplate.gradle`, `mainTemplate.gradle`, `gradleTemplate.properties`, 그리고 패키지 안 `eos_dependencies.androidlib`의 `build.gradle`과 `AndroidManifest.xml` 수정). [플러그인 문서의 Unity 6 항목](https://github.com/EOS-Contrib/eos_plugin_for_unity/blob/stable/com.playeveryware.eos/Documentation~/android/environment_setup_android.md)을 따르세요. 이 저장소의 Android 빌드로는 확인하지 못했습니다.
+2. 활성 빌드 타깃을 Android로 바꿉니다(**File > Build Profiles**에서 Android를 고르고 **Switch Platform**). Windows 타깃에서는 `EOS_DISABLE` 때문에 플러그인의 에디터 도구도 꺼져 있어 `EOS Plugin` 메뉴가 보이지 않습니다. Android 타깃에서도 메뉴가 없으면 **Window > Package Manager**의 **In Project**에 `Epic Online Services Plugin for Unity`가 있는지 보세요. 없으면 패키지를 받지 못한 것이니 오류 메시지를 확인하고(git과 git-lfs가 설치돼 있어야 합니다) Unity를 다시 여세요. Console에 컴파일 오류가 있어도 새 메뉴가 나타나지 않습니다.
+3. Unity에서 **EOS Plugin > EOS Configuration** 창을 열어 Product Name, Product ID, Sandbox ID, Deployment ID, Client ID, Client Secret을 포털의 값으로 채우고 Product Version에 숫자를 하나 넣습니다(비워 둘 수 없습니다). Encryption Key는 EOS 저장소 기능에만 쓰이고 이 프로젝트는 그 기능을 쓰지 않아 기본값으로 둬도 됩니다.
+4. 같은 창에서 **Android** 버튼을 누르고 **Save All Changes**를 누릅니다. 비워 둔 칸이 있어도 눌러야 Android용 설정이 만들어집니다.
+5. Android의 Minimum API Level은 24 이상이어야 합니다(이 프로젝트는 25).
+6. Unity 6에서는 플러그인 문서가 Android 빌드에 맞는 Gradle 설정을 따로 요구합니다(커스텀 `launcherTemplate.gradle`, `mainTemplate.gradle`, `gradleTemplate.properties`, 그리고 패키지 안 `eos_dependencies.androidlib`의 `build.gradle`과 `AndroidManifest.xml` 수정). [플러그인 문서의 Unity 6 항목](https://github.com/EOS-Contrib/eos_plugin_for_unity/blob/stable/com.playeveryware.eos/Documentation~/android/environment_setup_android.md)을 따르세요. 이 저장소의 Android 빌드로는 확인하지 못했습니다.
 
 플러그인은 설정을 `Assets/StreamingAssets/EOS/`에 일반 텍스트 파일로 저장합니다. 이 폴더는 `.gitignore`에 들어 있어 저장소에 올라가지 않으므로 팀원은 각자 설정하거나 파일을 따로 나눠야 합니다. 다만 플러그인 문서에 따르면 클라이언트 ID와 비밀은 빌드에 들어가고 웹 요청에도 나타나 비밀로 지켜지지는 않습니다.
 
-Windows 빌드는 그대로입니다. EOS 코드는 Android 빌드에서만 컴파일되고, Standalone의 스크립트 정의에 `EOS_DISABLE`이 들어 있어(`ProjectSettings`) EOS 플러그인도 Windows에서는 꺼져 있습니다. Steam 멀티플레이는 바뀐 것이 없습니다.
+Windows 빌드는 그대로입니다. EOS 코드는 Android 빌드에서만 컴파일되고, Standalone의 스크립트 정의에 `EOS_DISABLE`이 들어 있어(`ProjectSettings`) EOS 플러그인도 Windows에서는 꺼져 있습니다(활성 빌드 타깃이 Windows이면 `EOS Plugin` 메뉴도 없습니다). Steam 멀티플레이는 바뀐 것이 없습니다.
 
 ## 콘솔 명령
 
