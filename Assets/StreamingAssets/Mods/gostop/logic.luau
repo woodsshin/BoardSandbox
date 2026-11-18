@@ -284,14 +284,20 @@ local function result_lines(state: State): (string, string, string)
 	return `{name} 승리! +{result.total}점`, how, table.concat(pays, "   ")
 end
 
-local function show_button(index: number, text: string?, cmd: any, x: number, width: number?)
-	if text == nil then
-		button_cmd[index] = false
-		bse.view.set(buttons[index], { visible = false, pick = false })
-	else
-		button_cmd[index] = cmd
-		bse.view.set(buttons[index], { visible = true, pick = true, label = text, pos = { x, 0.02, 2.85 }, size = { width or 3.6, 0.06, 0.9 } })
-	end
+local function hide_button(index: number)
+	button_cmd[index] = false
+	bse.view.set(buttons[index], { visible = false, pick = false, for_seat = {} })
+end
+
+-- A button for the player of one seat, the one who has to answer. The properties of an object are what someone without a
+-- seat sees, so the button is hidden there, and "for_seat" shows it on the screen of that seat alone: the other players
+-- neither see it nor can click where it is (the cards of a hand are kept from the others the same way, see flush).
+local function show_button(index: number, seat: number, text: string, cmd: any, x: number, width: number?)
+	button_cmd[index] = cmd
+	bse.view.set(buttons[index], {
+		visible = false, pick = false, label = text, pos = { x, 0.02, 2.85 }, size = { width or 3.6, 0.06, 0.9 },
+		for_seat = { [tostring(seat)] = { visible = true, pick = true } },
+	})
 end
 
 -- The lines in the middle of the table, as the current viewpoint reads them.
@@ -325,9 +331,10 @@ end
 local function sync_controls()
 	local state = S
 	if state == nil then
-		show_button(1, "2인 맞고 (7점)", { action = "players", count = 2 }, -3.6, 6.2)
-		show_button(2, "3인 고스톱 (3점)", { action = "players", count = 3 }, 3.6, 6.2)
-		show_button(3, nil, nil, 0)
+		-- The first player chooses (see rules.command).
+		show_button(1, 1, "2인 맞고 (7점)", { action = "players", count = 2 }, -3.6, 6.2)
+		show_button(2, 1, "3인 고스톱 (3점)", { action = "players", count = 3 }, 3.6, 6.2)
+		hide_button(3)
 		bse.view.set(banner, {
 			label = "몇 명이 칠까요?",
 			labels = { { text = "2인 맞고는 7점, 3인 고스톱은 3점부터 고·스톱", dx = 0, dy = 0.5, size = 0.3, color = "#f2efe2" } },
@@ -336,31 +343,32 @@ local function sync_controls()
 		return
 	end
 
+	-- What the buttons ask is for the player on turn alone: go or stop, bomb or shake, and flipping only.
 	local seat: number = state.turn
 	if state.phase == "over" or state.phase == "pick" then
-		show_button(1, nil, nil, 0)
-		show_button(2, nil, nil, 0)
-		show_button(3, nil, nil, 0)
+		hide_button(1)
+		hide_button(2)
+		hide_button(3)
 	elseif prompt ~= nil then
 		if prompt.kind == "bomb" then
-			show_button(1, "폭탄", { action = "play", card = prompt.card, bomb = true }, -2.2)
-			show_button(2, "한 장만", { action = "play", card = prompt.card }, 2.2)
+			show_button(1, seat, "폭탄", { action = "play", card = prompt.card, bomb = true }, -2.2)
+			show_button(2, seat, "한 장만", { action = "play", card = prompt.card }, 2.2)
 		else
-			show_button(1, "흔들기", { action = "play", card = prompt.card, shake = true }, -2.2)
-			show_button(2, "그냥 내기", { action = "play", card = prompt.card }, 2.2)
+			show_button(1, seat, "흔들기", { action = "play", card = prompt.card, shake = true }, -2.2)
+			show_button(2, seat, "그냥 내기", { action = "play", card = prompt.card }, 2.2)
 		end
-		show_button(3, nil, nil, 0)
+		hide_button(3)
 	elseif state.phase == "gostop" then
-		show_button(1, "고", { action = "go" }, -2.2)
-		show_button(2, "스톱", { action = "stop" }, 2.2)
-		show_button(3, nil, nil, 0)
+		show_button(1, seat, "고", { action = "go" }, -2.2)
+		show_button(2, seat, "스톱", { action = "stop" }, 2.2)
+		hide_button(3)
 	else
-		show_button(1, nil, nil, 0)
-		show_button(2, nil, nil, 0)
+		hide_button(1)
+		hide_button(2)
 		if G.can_flip(state, seat) then
-			show_button(3, "뒤집기만", { action = "flip" }, 0)
+			show_button(3, seat, "뒤집기만", { action = "flip" }, 0)
 		else
-			show_button(3, nil, nil, 0)
+			hide_button(3)
 		end
 	end
 
