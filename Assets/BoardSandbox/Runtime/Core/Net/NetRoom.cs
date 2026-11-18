@@ -42,6 +42,7 @@ namespace BoardSandbox.Core.Net
         protected readonly INetTransport Transport;
         protected readonly List<NetPlayer> PlayerList = new List<NetPlayer>();
         protected readonly List<NetBoard> BoardList = new List<NetBoard>();
+        protected readonly List<int> ComputerSeatList = new List<int>();
 
         protected NetRoom(INetTransport transport, ModPackage mod)
         {
@@ -55,6 +56,39 @@ namespace BoardSandbox.Core.Net
         public ulong LocalId => Transport.LocalId;
         public IReadOnlyList<NetPlayer> Players => PlayerList;
         public IReadOnlyList<NetBoard> Boards => BoardList;
+
+        // The computer plays the seats that nobody sits at (RoomOptions.ComputerFills). Someone who joins watches the
+        // game that is on until the host starts the next one, which seats them.
+        public bool ComputerFills { get; protected set; }
+
+        // How many seats the game plays with, and the ones of them that the computer plays at the moment.
+        public int SeatCount { get; protected set; }
+        public IReadOnlyList<int> ComputerSeats => ComputerSeatList;
+
+        public bool IsComputerSeat(int seat)
+        {
+            return ComputerSeatList.Contains(seat);
+        }
+
+        // The people who have no seat in the game that is on while the computer fills the room: they watch until the host
+        // starts the next game.
+        public int WaitingCount
+        {
+            get
+            {
+                int waiting = 0;
+                if (ComputerFills)
+                {
+                    foreach (NetPlayer player in PlayerList)
+                        waiting += player.Seat <= 0 ? 1 : 0;
+                }
+                return waiting;
+            }
+        }
+
+        // The host opened the room for people only: a seat that nobody sits at stays empty and the game waits for someone to
+        // take it, instead of the host playing it too.
+        public bool WaitsForPlayers { get; protected set; }
 
         // Grows whenever the list of tables changes.
         public int BoardsVersion { get; protected set; }

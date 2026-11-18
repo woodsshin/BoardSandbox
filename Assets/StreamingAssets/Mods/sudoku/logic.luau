@@ -28,14 +28,23 @@
 -- nine are on the grid the key goes from the pad (a digit can not be on the grid more than nine times), and comes
 -- back when one of them is taken out.
 --
+-- Hints: instead of a computer to play with (config.json: players.computer is false) the players have three hints
+-- (option hints), one pool for both seats. The "?" key at the end of the pad, or the H key, fills in the right digit
+-- of one cell and makes the cell flash. The cell is a wrong digit of the players when there is one (the first in
+-- reading order), else the empty cell with the fewest digits that still fit it (the first of them in reading
+-- order). A hint ignores strict: it puts the right digit where it belongs and the digit that is in its way is shown
+-- as conflicting. The key shows how many hints are left and is grayed out when none are.
+--
 -- Commands:  place {x, y, digit}   put a digit in a cell, over the digit that was there
 --            clear {x, y}          take a digit the player entered out of its cell
 --            cycle {x, y}          the digit after the one in the cell (1 to 9, then empty)
 --            note {x, y, digit}    write a candidate in an empty cell, or rub it out
+--            hint {x, y}           spend a hint: x and y name the cell, and without them the game picks one (see above)
 --            select {digit}        choose a digit (1 to 9), the eraser (10) or nothing (0) for the seat; again to let go
 --            tap {id, hold}        what a click sends: on a key, select it; on a cell, enter the chosen digit
 --                                  (again to take it out), or with hold, shift or the right button note it.
---                                  A tap on a filled cell with nothing chosen chooses its digit.
+--                                  A tap on a filled cell with nothing chosen chooses its digit. A tap on the hint
+--                                  key spends a hint.
 --
 -- Options:   level   how hard the puzzle is: 1 normal, 2 hard, 3 expert. A normal puzzle is thinned down to `clues`
 --                    clues. A hard one can not be solved with singles alone (a cell with one digit left, a digit
@@ -45,6 +54,7 @@
 --            clues   how many clues a normal puzzle is left with (it keeps more when it cannot be made any thinner)
 --            seed    the same seed always gives the same puzzle; 0 deals a new one
 --            strict  refuse digits that are already in the row, the column or the box of the cell
+--            hints   how many hints the players have, 0 to 9 (3 when the option is not set); 0 leaves the hint key off
 --            puzzle  81 digits, 0 or . for an empty cell, to play a puzzle of your own instead of a dealt one
 --
 -- Queries:   state                the level that was asked for (0 for a puzzle of your own) and the grade of the
@@ -53,15 +63,18 @@
 --                                 puzzle as 81 digits (0 is empty),
 --                                 what seat 1 chose on the pad (selected) and what each seat chose (chosen), who put
 --                                 the digit in each cell (owners: 81 digits, 0 for a clue or an empty cell, else the
---                                 seat), how many of each digit are still to be put on the grid (9 digits) and how
---                                 many cells are locked
+--                                 seat), how many of each digit are still to be put on the grid (9 digits), how
+--                                 many cells are locked and how many hints are left (of how many there were)
 --            notes                the cells with notes and their digits
 --            solution             the solution as 81 digits
 --            conflicts            the digits of the player that clash with another digit
 --            units                the rows, columns and boxes (1 to 9 each) that are finished
 --            candidates {x, y}    the digits that are not yet in the row, the column or the box of a cell
+--            hint                 the cell the next hint would fill in and its digit (x, y, digit); nil when no hint is
+--                                 left or no cell can take one
 --
--- The computer player knows the solution: it puts the right digit in a cell where the grid is wrong.
+-- config.json does not offer a computer player to play with (players.computer). The mod still has one for the
+-- simulations and tests, which knows the solution: it puts the right digit in a cell where the grid is wrong.
 
 local Grid = require("./lib/grid")
 local Generator = require("./lib/generator")
@@ -81,6 +94,8 @@ local UNIT_CELLS = Grid.UNIT_CELLS
 local UNITS_OF = Grid.UNITS_OF
 
 local DEFAULT_CLUES = 36
+local DEFAULT_HINTS = 3
+local MAX_HINTS = 9
 local MIN_CLUES = 17
 local MAX_CLUES = 80
 local MAX_SEED = 2147483646
@@ -120,6 +135,13 @@ local KEY_LOOKS: { [string]: { [string]: any } } = {
 	chosen2 = { color = SEAT_COLORS[2], label_color = "#ffffff" }, -- by seat 2
 	both = { color = BOTH_COLOR, label_color = "#ffffff" }, -- by both
 }
+
+-- The hint key follows the eraser on the pad; it says how many hints are left, and goes gray when there are none.
+local HINT_LOOKS: { [string]: { [string]: any } } = {
+	ready = { color = "#f5c84b", label_color = "#4a3300" },
+	spent = { color = "#e8ecf2", label_color = "#a3abb8" },
+}
+local HINT_STEP = 0.16 -- the seconds that a cell shows its hint at a time
 
 -- Under a key a small number says how many of its digit are still to be put on the grid. Its place is a share of
 -- the width of the key, down from the middle of it, which puts it just below the key.
@@ -187,6 +209,10 @@ local key_of_object: { [number]: number } = {}
 local tile_look: { string } = {} -- what the table shows now, so that only changes are sent
 local tile_notes: { string } = {}
 local key_look: { string } = {}
+local hints_total = 0 -- how many hints the game started with
+local hints_left = 0
+local hint_id = 0 -- the hint key on the table, 0 for none
+local hint_look = ""
 
 local function clamp_integer(value: any, fallback: number, low: number, high: number): number
 	if type(value) ~= "number" or value ~= value then
@@ -438,6 +464,25 @@ local function key_props(key: number): { [string]: any }
 	return props
 end
 
+-- What the hint key looks like: gone (no hints in this game), or ready or spent with the number of hints left.
+local function hint_state(): string
+	if hint_id == 0 then
+		return "gone"
+	end
+	local word = if hints_left > 0 then "ready" else "spent"
+	return `{word}:{hints_left}`
+end
+
+local function hint_props(): { [string]: any }
+	local colors = if hints_left > 0 then HINT_LOOKS.ready else HINT_LOOKS.spent
+	return {
+		visible = true,
+		color = colors.color,
+		label_color = colors.label_color,
+		labels = { { text = tostring(hints_left), dx = 0, dy = COUNT_DY, size = COUNT_SIZE, color = COUNT_COLOR, bold = false } },
+	}
+end
+
 -- What the tiles and keys should show, without telling the table: after a restore the table already shows it.
 local function remember_looks()
 	for i = 1, CELLS do
@@ -447,6 +492,7 @@ local function remember_looks()
 	for key = 1, KEYS do
 		key_look[key] = key_state(key)
 	end
+	hint_look = hint_state()
 end
 
 -- Brings the tiles and the keys up to date; only what changed is sent to the table.
@@ -481,6 +527,13 @@ local function refresh_table()
 			bse.view.set(keys[key], key_props(key))
 		end
 	end
+	if hint_id ~= 0 then
+		local state = hint_state()
+		if state ~= hint_look then
+			hint_look = state
+			bse.view.set(hint_id, hint_props())
+		end
+	end
 end
 
 -- The tiles under the cells and the pad below the grid. Mods place free objects with x to the right and z
@@ -490,6 +543,7 @@ local function spawn_table()
 	keys = {}
 	cell_of_tile = {}
 	key_of_object = {}
+	hint_id = 0
 	remember_looks()
 	for i = 1, CELLS do
 		local look = TILE_LOOKS[tile_look[i]]
@@ -499,13 +553,22 @@ local function spawn_table()
 		tiles[i] = id
 		cell_of_tile[id] = i
 	end
+	-- The pad is centered under the grid; the hint key, when the game has hints, is the last one of it.
+	local slots = if hints_total > 0 then KEYS + 1 else KEYS
 	for key = 1, KEYS do
 		local props = key_props(key)
-		props.pos = { (key - 5.5) * KEY_STEP, 0, KEY_ROW }
+		props.pos = { (key - (slots + 1) / 2) * KEY_STEP, 0, KEY_ROW }
 		props.label = if key == ERASER then "X" else tostring(key)
 		local id = bse.view.spawn("key", 0, 0, { props = props })
 		keys[key] = id
 		key_of_object[id] = key
+	end
+	if hints_total > 0 then
+		local props = hint_props()
+		props.pos = { (slots - (slots + 1) / 2) * KEY_STEP, 0, KEY_ROW }
+		props.label = "?"
+		hint_id = bse.view.spawn("hint", 0, 0, { props = props })
+		hint_look = hint_state()
 	end
 end
 
@@ -679,6 +742,8 @@ end
 
 function rules.new_game(options: { [string]: any })
 	strict = options.strict == true
+	hints_total = clamp_integer(options.hints, DEFAULT_HINTS, 0, MAX_HINTS)
+	hints_left = hints_total
 
 	local cells: { number }
 	local answer: { number }
@@ -891,6 +956,95 @@ local function why_fixed(i: number): any
 	return bse.reject("CELL_LOCKED", "that cell is in a row, a column or a box that is finished", { x = COLUMN[i], y = ROW[i] })
 end
 
+-- How many digits can still go in the cell: the ones that are free in its row, column and box and that are not
+-- used up.
+local function candidate_count(i: number): number
+	local count = 0
+	for digit = 1, 9 do
+		if not is_used_up(digit) and fits(i, digit) then
+			count += 1
+		end
+	end
+	return count
+end
+
+-- The cell the next hint fills in, 0 when there is none. A digit that a player entered and that is wrong comes
+-- first, the one that comes first in reading order. Without such a digit it is the empty cell with the fewest digits
+-- left to choose from, the first of them in reading order when several are as good. A cell whose digit is used up
+-- is left out: it would have to wait for a wrong digit of the same kind to be taken out.
+local function hint_cell(): number
+	local best = 0
+	local fewest = 10
+	for i = 1, CELLS do
+		if grid[i] ~= solution[i] and not is_used_up(solution[i]) then
+			if grid[i] ~= 0 then
+				return i
+			end
+			local count = candidate_count(i)
+			if count < fewest then
+				best = i
+				fewest = count
+			end
+		end
+	end
+	return best
+end
+
+-- Makes the cell of a hint stand out: the tile and the digit light up twice. Without a screen there is nothing to
+-- show.
+local function point_out(c: number)
+	if bse.is_headless() then
+		return
+	end
+	for _ = 1, 2 do
+		light(c, "flash")
+		bse.emit({ t = "fx", kind = "wait", seconds = HINT_STEP })
+		light(c, "settle")
+		bse.emit({ t = "fx", kind = "wait", seconds = HINT_STEP })
+	end
+end
+
+-- Spends a hint of the pool for the seat: the right digit goes in the cell the players asked for (a number from 1
+-- to 81), or in the one the game picks when it is 0.
+local function use_hint(seat: number, target: number): any
+	if hint_id == 0 then
+		return bse.reject("NO_HINTS", "this puzzle has no hints")
+	end
+	if hints_left <= 0 then
+		return bse.reject("NO_HINTS", "no hints are left")
+	end
+	local i = target
+	if i == 0 then
+		i = hint_cell()
+		if i == 0 then
+			return bse.reject("NOTHING_TO_HINT", "no cell can take a hint right now: take out the digits that are wrong first")
+		end
+	else
+		if given[i] or locked[i] then
+			return why_fixed(i)
+		end
+		if grid[i] == solution[i] then
+			return bse.reject("ALREADY_RIGHT", "that cell is already right", { x = COLUMN[i], y = ROW[i] })
+		end
+		if is_used_up(solution[i]) then
+			return bse.reject("DIGIT_USED", `all nine {solution[i]}s are already on the grid`, { x = COLUMN[i], y = ROW[i], digit = solution[i] })
+		end
+	end
+
+	local digit = solution[i]
+	hints_left -= 1
+	enter(seat, i, digit)
+	if finished then
+		return nil
+	end
+	if not locked[i] then
+		point_out(i)
+	end
+	local left = if hints_left == 0 then "no hints left" elseif hints_left == 1 then "1 hint left" else `{hints_left} hints left`
+	bse.status(`Hint: {digit} goes in column {COLUMN[i]}, row {ROW[i]} ({left})`)
+	return nil
+end
+
 -- A tap of the seat on a cell: what it does depends on what the seat chose on the pad and on whether it is a note.
 local function tap_cell(seat: number, i: number, as_note: boolean): any
 	local x = COLUMN[i]
@@ -954,7 +1108,15 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 		return bse.reject("BAD_SEAT", `there is no seat {seat}`, { seat = seat })
 	end
 	local action = cmd.action
-	if action ~= "place" and action ~= "clear" and action ~= "cycle" and action ~= "note" and action ~= "select" and action ~= "tap" then
+	if
+		action ~= "place"
+		and action ~= "clear"
+		and action ~= "cycle"
+		and action ~= "note"
+		and action ~= "select"
+		and action ~= "tap"
+		and action ~= "hint"
+	then
 		return bse.reject("UNKNOWN_ACTION", "unknown action", { action = if type(action) == "string" then action else nil })
 	end
 	if finished then
@@ -980,6 +1142,9 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 		if not is_integer(id) then
 			return bse.reject("INVALID_ARGUMENT", "id must be an integer")
 		end
+		if hint_id ~= 0 and id == hint_id then
+			return use_hint(seat, 0)
+		end
 		local key = key_of_object[id]
 		if key ~= nil then
 			return choose(seat, key)
@@ -993,6 +1158,9 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 
 	local x = cmd.x
 	local y = cmd.y
+	if action == "hint" and x == nil and y == nil then
+		return use_hint(seat, 0)
+	end
 	if not is_integer(x) or not is_integer(y) then
 		return bse.reject("INVALID_ARGUMENT", "x and y must be integers")
 	end
@@ -1000,6 +1168,9 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 		return bse.reject("OUT_OF_BOUNDS", "the cell is outside the grid", { x = x, y = y, size = SIZE })
 	end
 	local i = Grid.index(x, y)
+	if action == "hint" then
+		return use_hint(seat, i)
+	end
 	if given[i] or locked[i] then
 		return why_fixed(i)
 	end
@@ -1146,7 +1317,18 @@ function rules.query(name: string, args: any): any
 			owners = owners_text(),
 			remaining = remaining_text(),
 			locked = locked_count(),
+			hints = hints_left,
+			hints_total = hints_total,
 		}
+	elseif name == "hint" then
+		if hint_id == 0 or hints_left <= 0 then
+			return nil
+		end
+		local i = hint_cell()
+		if i == 0 then
+			return nil
+		end
+		return { x = COLUMN[i], y = ROW[i], digit = solution[i] }
 	elseif name == "notes" then
 		local list = {}
 		for i = 1, CELLS do
@@ -1224,6 +1406,9 @@ function rules.snapshot(): any
 		ids = table.clone(ids),
 		tiles = table.clone(tiles),
 		keys = table.clone(keys),
+		hint = hint_id,
+		hints = hints_left,
+		hints_total = hints_total,
 		notes = table.clone(notes),
 		selected = selected[1],
 		chosen = table.clone(selected),
@@ -1340,6 +1525,21 @@ function rules.restore(data: any)
 		end
 		new_selected[1] = pick
 	end
+	-- The hint key; a snapshot from a game without hints has none.
+	local new_hint = 0
+	local hint_object = data.hint
+	if hint_object ~= nil then
+		if not is_integer(hint_object) then
+			refuse_snapshot("the hint key does not match the table")
+		end
+		if hint_object ~= 0 then
+			local object = bse.view.get(hint_object)
+			if object == nil or object.kind ~= "hint" then
+				refuse_snapshot("the hint key does not match the table")
+			end
+		end
+		new_hint = hint_object
+	end
 	local new_cell_of_tile: { [number]: number } = {}
 	local new_key_of_object: { [number]: number } = {}
 	for i = 1, CELLS do
@@ -1372,6 +1572,9 @@ function rules.restore(data: any)
 	entered = new_entered
 	selected = new_selected
 	clues = new_clues
+	hint_id = new_hint
+	hints_total = if new_hint ~= 0 then clamp_integer(data.hints_total, DEFAULT_HINTS, 1, MAX_HINTS) else 0
+	hints_left = if new_hint ~= 0 then clamp_integer(data.hints, 0, 0, hints_total) else 0
 	recount()
 	-- A digit that has been used up has no key to be chosen on.
 	for seat = 1, SEATS do

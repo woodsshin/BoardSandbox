@@ -26,17 +26,32 @@ namespace BoardSandbox.Core.Net
         private readonly GameHost _host;
         private readonly List<Table> _tables = new List<Table>();
         private readonly Random _random = new Random();
+        private readonly bool _fill;
+        private readonly int _players;
         private JsonValue _options;
         private int _nextBoard = 1;
         private bool _drewSeed;
 
-        public NetHostRoom(GameHost host, INetTransport transport)
+        // options: what the host chose for the room; null opens a room like any other, where the seats go to the people
+        // in the order they come and the host plays the ones that nobody takes.
+        public NetHostRoom(GameHost host, INetTransport transport, RoomOptions options = null)
             : base(transport, (host ?? throw new ArgumentNullException(nameof(host))).Mod ?? throw new InvalidOperationException("no game is selected"))
         {
             if (!transport.IsHost)
                 throw new ArgumentException("the transport is not the host of its room", nameof(transport));
             _host = host;
+            ModManifest manifest = Mod.Manifest;
+            // The number of people that the host chose is kept for every game of the room.
+            _players = options != null && manifest.ChoosesPlayerCount && options.Players > 0
+                ? Math.Max(manifest.MinPlayers, Math.Min(manifest.MaxPlayers, options.Players))
+                : 0;
+            if (_players > 0)
+                host.SetOption(manifest.PlayersOption, JsonValue.Of(_players));
             _options = host.NewGameOptions.DeepClone();
+            _fill = options != null && options.ComputerFills && CanFill(host);
+            ComputerFills = _fill;
+            WaitsForPlayers = options != null && !_fill && !Mod.Manifest.SplitScreen && !Mod.Manifest.Cooperative;
+            SeatCount = SeatsOfGame;
             _host.SessionReplaced += OnSessionReplaced;
             _host.GameStarting += OnGameStarting;
             _host.GameStarted += OnGameStarted;
@@ -48,7 +63,22 @@ namespace BoardSandbox.Core.Net
             Listen(own);
             own.Board.Queue.Reset(own.Session.View);
             Arrange();
+            if (_fill)
+                Reseat();
+            else if (WaitsForPlayers)
+                SeatPeople();
         }
+
+        // Whether a room of this game can be filled by the computer: the seats are not played together or at tables of their
+        // own, there is somebody to play against and the computer may play them.
+        public static bool CanFill(GameHost host)
+        {
+            ModManifest manifest = host?.Mod?.Manifest;
+            return manifest != null && !manifest.SplitScreen && !manifest.Cooperative && manifest.MaxPlayers >= 2 && host.CanPlayComputer;
+        }
+
+        // How many seats the game that is on, or about to be started, plays with.
+        private int SeatsOfGame => Mod.Manifest.SeatCount(_options);
 
         public override bool CanAct
         {
@@ -135,7 +165,7 @@ namespace BoardSandbox.Core.Net
             _tables.Clear();
         }
 
-        // A seat belongs to the player who sits on it; the host plays the seats nobody took.
+        // A seat belongs to the player who sits on it; the host plays the seats nobody took, unless the room waits for people.
         private bool MayPlay(ulong player, int seat)
         {
             if (seat <= 0)
@@ -145,7 +175,7 @@ namespace BoardSandbox.Core.Net
                 if (other.Seat == seat)
                     return other.Id == player;
             }
-            return player == LocalId;
+            return player == LocalId && !WaitsForPlayers;
         }
 
         private void Receive(ulong peer, JsonValue message)
@@ -212,7 +242,10 @@ namespace BoardSandbox.Core.Net
                 if (table.Outbox.Count == 0)
                     SendState(peer, table);
             }
-            Tell(player.Name + " joined.");
+            if (_fill)
+                Tell(player.Name + (ComputerSeatList.Count > 0 ? " joined. Start a new game to play with them." : " joined and watches."));
+            else
+                Tell(player.Name + " joined.");
         }
 
         private void Remove(ulong peer)
@@ -221,8 +254,59 @@ namespace BoardSandbox.Core.Net
             if (player == null)
                 return;
             PlayerList.Remove(player);
-            Tell(player.Name + " left.");
+            if (_fill && player.Seat > 0 && player.Seat <= SeatsOfGame && _host.SetSeatMode(player.Seat, _host.ComputerMode))
+            {
+                // The game goes on from where it stands, with the computer in the seat.
+                RefreshComputerSeats();
+                Tell(player.Name + " left. The computer plays " + SeatLabel(player.Seat) + " now.");
+            }
+            else
+            {
+                Tell(player.Name + " left.");
+            }
             Arrange();
+        }
+
+        private string SeatLabel(int seat)
+        {
+            SeatInfo info = Mod.Manifest.GetSeat(seat);
+            return info != null ? info.Name : "seat " + seat;
+        }
+
+        // Gives the seats of the next game to the people in the room, the host first and then the others in the order they
+        // came; the computer plays the seats that are left. A person who comes after the seats are gone keeps watching.
+        private void Reseat()
+        {
+            int seats = Math.Min(SeatsOfGame, Mod.Manifest.MaxPlayers);
+            int next = 1;
+            foreach (NetPlayer player in PlayerList)
+                player.Seat = next <= seats ? next++ : 0;
+            for (int seat = 1; seat <= Mod.Manifest.MaxPlayers; seat++)
+            {
+                // A seat that the game does not use has nobody to play it either.
+                bool computer = seat >= next && seat <= seats;
+                _host.SetSeatMode(seat, computer ? _host.ComputerMode : SeatMode.Human);
+            }
+            RefreshComputerSeats();
+        }
+
+        // A room that waits for people has none of its seats played by the computer, whatever the host had set up for
+        // playing alone: whoever joins takes the next empty seat, and an empty seat is waited for.
+        private void SeatPeople()
+        {
+            for (int seat = 1; seat <= Mod.Manifest.MaxPlayers; seat++)
+                _host.SetSeatMode(seat, SeatMode.Human);
+        }
+
+        private void RefreshComputerSeats()
+        {
+            ComputerSeatList.Clear();
+            int seats = Math.Min(SeatsOfGame, Mod.Manifest.MaxPlayers);
+            for (int seat = 1; seat <= seats; seat++)
+            {
+                if (_host.GetSeatMode(seat) != SeatMode.Human)
+                    ComputerSeatList.Add(seat);
+            }
         }
 
         // Hands out seats or tables in the order the players came, and tells everyone when something changed.
@@ -255,6 +339,11 @@ namespace BoardSandbox.Core.Net
                     player.Board = board;
                 }
             }
+            else if (_fill)
+            {
+                // Seats change hands when a game starts (Reseat) or somebody leaves (Remove), not as people come.
+                changed = true;
+            }
             else
             {
                 HashSet<int> taken = new HashSet<int>();
@@ -263,11 +352,12 @@ namespace BoardSandbox.Core.Net
                     if (player.Seat > 0)
                         taken.Add(player.Seat);
                 }
+                int seats = Math.Min(SeatsOfGame, Mod.Manifest.MaxPlayers);
                 foreach (NetPlayer player in PlayerList)
                 {
                     if (player.Seat > 0)
                         continue;
-                    for (int seat = 1; seat <= Mod.Manifest.MaxPlayers; seat++)
+                    for (int seat = 1; seat <= seats; seat++)
                     {
                         if (taken.Add(seat))
                         {
@@ -363,6 +453,13 @@ namespace BoardSandbox.Core.Net
                 Close("The host chose another game.");
                 return;
             }
+            // Choosing the game again starts from its defaults; the room keeps what the host chose for it.
+            if (_players > 0)
+                _host.SetOption(Mod.Manifest.PlayersOption, JsonValue.Of(_players));
+            _options = _host.NewGameOptions.DeepClone();
+            SeatCount = SeatsOfGame;
+            if (_fill)
+                Reseat();
             Table own = _tables[0];
             own.Session.EventApplied -= own.Listener;
             own.Session = session;
@@ -384,6 +481,10 @@ namespace BoardSandbox.Core.Net
             if (_drewSeed)
                 options.Set(seed, _random.Next(1, int.MaxValue));
             _options = options.DeepClone();
+            SeatCount = SeatsOfGame;
+            // The game that starts now is played by the people who are here now: the ones who waited sit down.
+            if (_fill)
+                Reseat();
         }
 
         private void OnGameStarted()
@@ -395,6 +496,18 @@ namespace BoardSandbox.Core.Net
             for (int i = 1; i < _tables.Count; i++)
                 Start(_tables[i]);
             Broadcast(Roster());
+            if (_fill)
+                TellTheirSeats();
+        }
+
+        // Tells every guest that has a seat in the game that has just started which one it is.
+        private void TellTheirSeats()
+        {
+            foreach (NetPlayer player in PlayerList)
+            {
+                if (player.Id != LocalId && player.Seat > 0)
+                    Note(player.Id, "A new game has started. You play " + SeatLabel(player.Seat) + ".", ToastLevel.Info);
+            }
         }
 
         private void Broadcast(JsonValue message)
@@ -468,7 +581,11 @@ namespace BoardSandbox.Core.Net
             JsonValue boards = JsonValue.NewArray();
             foreach (NetBoard board in BoardList)
                 boards.Add(JsonValue.NewObject().Set("id", board.Id).Set("owner", IdText(board.Owner)).Set("title", board.Title));
-            return Message("roster").Set("players", players).Set("boards", boards).Set("finished", Finished);
+            JsonValue computer = JsonValue.NewArray();
+            foreach (int seat in ComputerSeatList)
+                computer.Add(seat);
+            return Message("roster").Set("players", players).Set("boards", boards).Set("finished", Finished)
+                .Set("fill", _fill).Set("wait", WaitsForPlayers).Set("seats", SeatCount).Set("ai", computer);
         }
     }
 }

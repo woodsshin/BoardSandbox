@@ -38,6 +38,23 @@ namespace BoardSandbox.Tests
             return ModLoader.LoadDirectory(Path.Combine(ModsRoot, id));
         }
 
+        // The sudoku that ships with the platform, with its computer player switched on. The shipped game keeps it off
+        // (players.computer is false: three hints take its place); the tests of computer seats in a cooperative game
+        // play this one.
+        public static ModPackage LoadSudokuWithComputer()
+        {
+            ModPackage shipped = LoadMod("sudoku");
+            JsonValue manifest = JsonValue.Parse(shipped.ManifestJson);
+            manifest["players"].Set("computer", true);
+            Dictionary<string, string> sources = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, string> pair in shipped.Sources)
+                sources[pair.Key] = pair.Value;
+            Dictionary<string, byte[]> assets = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, byte[]> pair in shipped.Assets)
+                assets[pair.Key] = pair.Value;
+            return new ModPackage(manifest.ToJson(), sources, assets, shipped.Directory);
+        }
+
         public static ModPackage InlineMod(string source, string optionsJson = "{}", int maxPlayers = 2)
         {
             string manifest = "{\"id\":\"inline\",\"name\":\"Inline\",\"api\":1,\"entry\":\"main.luau\",\"players\":{\"min\":1,\"max\":" + maxPlayers + "},\"options\":" +

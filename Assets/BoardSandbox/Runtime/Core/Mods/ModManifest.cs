@@ -60,6 +60,16 @@ namespace BoardSandbox.Core.Mods
         public string Entry { get; private set; }
         public int MinPlayers { get; private set; }
         public int MaxPlayers { get; private set; }
+
+        // The option that tells the game how many seats it plays with, from MinPlayers to MaxPlayers ("players.option");
+        // empty when the mod names none and plays with all of its seats.
+        public string PlayersOption { get; private set; }
+
+        // Whether a seat may be handed to the computer ("players.computer", true unless the mod says false). A mod that
+        // turns it off, like a puzzle that helps with hints instead, shows no Human / Computer switch and refuses
+        // computer seats.
+        public bool AllowComputer { get; private set; }
+
         public IReadOnlyList<SeatInfo> Seats { get; private set; }
         public JsonValue DefaultOptions { get; private set; }
 
@@ -87,9 +97,34 @@ namespace BoardSandbox.Core.Mods
         // number means is up to the player; the mod's own gets it as args.effort.
         public IReadOnlyList<int> AiLevels { get; private set; }
 
+        // Whether the mod has a computer player that thinks, as opposed to one that plays random moves.
+        public bool HasComputerPlayer => AllowComputer && AiEngine.Length > 0;
+
+        // Whether a person can play it against the computer: the mod has a computer player that thinks and somebody for
+        // it to play against, in seats that are neither played together at one screen nor on the same side.
+        public bool HasComputerOpponent => HasComputerPlayer && !SplitScreen && !Cooperative && MaxPlayers >= 2;
+
+        // Whether the host may choose how many people play: the game takes between MinPlayers and MaxPlayers, has an
+        // option that says how many ("players.option"), and its seats are not played together or at tables of their own.
+        public bool ChoosesPlayerCount => PlayersOption.Length > 0 && MinPlayers < MaxPlayers && !SplitScreen && !Cooperative;
+
         public SeatInfo GetSeat(int seat)
         {
             return seat >= 1 && seat <= Seats.Count ? Seats[seat - 1] : null;
+        }
+
+        // How many seats a game started with these options plays with: the number "players.option" names when it is
+        // a whole number from MinPlayers to MaxPlayers, else all of the seats (a game that has not been told asks its
+        // players itself).
+        public int SeatCount(JsonValue options)
+        {
+            if (PlayersOption.Length == 0 || options == null || !options.IsObject)
+                return MaxPlayers;
+            JsonValue value = options[PlayersOption];
+            if (!value.IsNumber)
+                return MaxPlayers;
+            double count = value.AsDouble();
+            return count >= MinPlayers && count <= MaxPlayers && count == Math.Floor(count) ? (int)count : MaxPlayers;
         }
 
         public static ModManifest Parse(string json)
@@ -130,6 +165,14 @@ namespace BoardSandbox.Core.Mods
                 throw new ModException("'players' must satisfy 1 <= min <= max <= " + MaxSeats + ".");
             manifest.MinPlayers = min;
             manifest.MaxPlayers = max;
+            JsonValue playersOption = players["option"];
+            if (!playersOption.IsNull && (!playersOption.IsString || playersOption.AsString().Length == 0))
+                throw new ModException("'players.option' must be the name of an option.");
+            manifest.PlayersOption = playersOption.AsString();
+            JsonValue computer = players["computer"];
+            if (!computer.IsNull && !computer.IsBool)
+                throw new ModException("'players.computer' must be true or false.");
+            manifest.AllowComputer = computer.AsBool(true);
 
             JsonValue seatList = root["seats"];
             List<SeatInfo> seats = new List<SeatInfo>(max);
@@ -148,6 +191,8 @@ namespace BoardSandbox.Core.Mods
             if (!options.IsNull && !options.IsObjectLike)
                 throw new ModException("'options' must be an object.");
             manifest.DefaultOptions = options.IsObject ? options : JsonValue.NewObject();
+            if (manifest.PlayersOption.Length > 0 && !manifest.DefaultOptions.Has(manifest.PlayersOption))
+                throw new ModException("'players.option' names '" + manifest.PlayersOption + "', which is not one of the 'options'.");
 
             JsonValue multiplayer = root["multiplayer"];
             manifest.SplitScreen = multiplayer["mode"].AsString() == "split";

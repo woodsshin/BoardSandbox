@@ -1,17 +1,17 @@
 {
   "id": "sudoku",
   "name": "Sudoku",
-  "version": "1.4.0",
-  "description": "Put 1-9 in every row, column and 3x3 box exactly once. Choose a digit on the pad, tap a cell to enter it, hold to note it. A finished row, column or box lights up and is locked. Option level: 1 normal, 2 hard (needs pairs and locked candidates), 3 expert (needs more than those). Up to two players solve one puzzle together in an online room: one grid, no turns, each with a pad of their own.",
+  "version": "1.5.0",
+  "description": "Put 1-9 in every row, column and 3x3 box exactly once. Choose a digit on the pad, tap a cell to enter it, hold to note it. A finished row, column or box lights up and is locked. Option level: 1 normal, 2 hard (needs pairs and locked candidates), 3 expert (needs more than those). Stuck? The ? key (or H) fills in one cell for you; you have three hints per puzzle. Up to two players solve one puzzle together in an online room: one grid, no turns, each with a pad of their own, and the hints are shared.",
   "api": 1,
   "entry": "logic.luau",
-  "players": { "min": 1, "max": 2 },
+  "players": { "min": 1, "max": 2, "computer": false },
   "seats": [
     { "name": "Blue", "color": "#4d8fe6" },
     { "name": "Orange", "color": "#e68a2e" }
   ],
   "multiplayer": { "cooperative": true },
-  "options": { "level": 1, "clues": 36, "seed": 0, "strict": false },
+  "options": { "level": 1, "clues": 36, "seed": 0, "strict": false, "hints": 3 },
   "client": {
     "board": {
       "style": "grid", "columns": 9, "rows": 9, "block": 3, "margin": 0.62,
@@ -31,12 +31,14 @@
       "keypad4": { "action": "select", "digit": 4 }, "keypad5": { "action": "select", "digit": 5 }, "keypad6": { "action": "select", "digit": 6 },
       "keypad7": { "action": "select", "digit": 7 }, "keypad8": { "action": "select", "digit": 8 }, "keypad9": { "action": "select", "digit": 9 },
       "0": { "action": "select", "digit": 10 }, "backspace": { "action": "select", "digit": 10 }, "delete": { "action": "select", "digit": 10 },
-      "escape": { "action": "select", "digit": 0 }
+      "escape": { "action": "select", "digit": 0 },
+      "h": { "action": "hint" }
     },
     "pieces": {
       "digit": { "shape": "box", "size": [0.8, 0.01, 0.8], "alpha": 0, "shadow": false, "pick": false, "label_size": 0.82 },
       "cell": { "shape": "box", "size": [0.93, 0.01, 0.93], "color": "#4d8fe6", "anchor": "bottom", "shadow": false, "gloss": 0 },
-      "key": { "shape": "box", "size": [0.86, 0.1, 0.86], "anchor": "bottom", "shadow": false, "gloss": 0.15, "label_size": 0.62 }
+      "key": { "shape": "box", "size": [0.86, 0.1, 0.86], "anchor": "bottom", "shadow": false, "gloss": 0.15, "label_size": 0.62 },
+      "hint": { "shape": "box", "size": [0.86, 0.1, 0.86], "anchor": "bottom", "shadow": false, "gloss": 0.15, "label_size": 0.62 }
     }
   }
 }

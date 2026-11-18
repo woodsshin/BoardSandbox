@@ -25,6 +25,7 @@ namespace BoardSandbox.Core.Net
                 throw new ArgumentException("the transport is the host of its room", nameof(transport));
             Send(transport.HostId, Message("hello").Set("proto", Protocol).Set("mod", mod.Manifest.Id).Set("hash", mod.ContentHash)
                 .Set("name", CleanName(transport.LocalName)));
+            SeatCount = mod.Manifest.MaxPlayers;
         }
 
         // True once the host has let the local player in.
@@ -171,8 +172,25 @@ namespace BoardSandbox.Core.Net
             BoardList.Clear();
             BoardList.AddRange(kept);
             Finished = message["finished"].AsBool(false);
+            ReadSeats(message);
             if (changed)
                 BoardsVersion++;
+        }
+
+        // Who plays the seats that no person sits at. An older host says nothing about it: the room is not filled.
+        private void ReadSeats(JsonValue message)
+        {
+            int seats = Mod.Manifest.MaxPlayers;
+            ComputerFills = message["fill"].AsBool(false);
+            WaitsForPlayers = message["wait"].AsBool(false);
+            SeatCount = Math.Max(1, Math.Min(seats, message["seats"].AsInt(seats)));
+            ComputerSeatList.Clear();
+            foreach (JsonValue entry in message["ai"].Items)
+            {
+                int seat = entry.AsInt(0);
+                if (seat >= 1 && seat <= SeatCount && !ComputerSeatList.Contains(seat))
+                    ComputerSeatList.Add(seat);
+            }
         }
 
         // The state of a table arrives in parts; it is shown once the last part is there.
