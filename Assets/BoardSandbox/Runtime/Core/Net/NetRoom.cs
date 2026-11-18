@@ -39,10 +39,19 @@ namespace BoardSandbox.Core.Net
         public const int MaxClientMessageBytes = 32 * 1024;
         public const int EventsPerMessage = 200;
 
+        // The least time between two views that the local player passes on, in seconds.
+        public const double ViewInterval = 0.1;
+
         protected readonly INetTransport Transport;
         protected readonly List<NetPlayer> PlayerList = new List<NetPlayer>();
         protected readonly List<NetBoard> BoardList = new List<NetBoard>();
         protected readonly List<int> ComputerSeatList = new List<int>();
+
+        // How each player looks at their own table, as far as it is known.
+        protected readonly Dictionary<ulong, ViewPose> ViewList = new Dictionary<ulong, ViewPose>();
+
+        private ViewPose _sentView;
+        private double _sentViewAt;
 
         protected NetRoom(INetTransport transport, ModPackage mod)
         {
@@ -115,6 +124,43 @@ namespace BoardSandbox.Core.Net
                 NetPlayer me = LocalPlayer;
                 return me == null ? null : FindBoard(me.Board);
             }
+        }
+
+        // Whether the players see each other's tables the way their owners look at them: in a game where everybody has a table of their
+        // own, with a host that passes the views on. A host that does not knows nothing of them, and the tables stay as each player
+        // turns them.
+        public abstract bool SharesViews { get; }
+
+        // How the player looks at their own table, as far as it is known; null for none.
+        public ViewPose ViewOf(ulong player)
+        {
+            return ViewList.TryGetValue(player, out ViewPose pose) ? pose : null;
+        }
+
+        // Tells the others how the local player looks at their table. Call it every frame with the way it is looked at now: a change
+        // goes out at once the first time and then at most ViewInterval apart, and a view that nobody could tell from the one that went
+        // out last is not sent at all.
+        public void ShareView(ViewPose pose, double now)
+        {
+            if (pose == null || IsClosed || !SharesViews)
+                return;
+            if (_sentView != null && (now - _sentViewAt < ViewInterval || pose.Near(_sentView)))
+                return;
+            _sentView = pose;
+            _sentViewAt = now;
+            PassOnView(pose);
+        }
+
+        protected abstract void PassOnView(ViewPose pose);
+
+        // The message that carries a view; from is the player whose view it is, 0 in a message to the host, which knows who sent it.
+        protected static JsonValue ViewMessage(ViewPose pose, ulong from)
+        {
+            JsonValue message = Message("view");
+            if (from != 0)
+                message.Set("from", IdText(from));
+            pose.WriteTo(message);
+            return message;
         }
 
         // Whether the local player may make a move right now.

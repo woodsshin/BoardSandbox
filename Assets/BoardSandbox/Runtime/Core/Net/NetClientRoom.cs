@@ -18,6 +18,9 @@ namespace BoardSandbox.Core.Net
         private readonly Dictionary<int, ViewModel> _incoming = new Dictionary<int, ViewModel>();
         private readonly HashSet<int> _shown = new HashSet<int>();
 
+        // Set by the welcome of a host that passes the views of the players on. An older host does not say so.
+        private bool _hostViews;
+
         public NetClientRoom(ModPackage mod, INetTransport transport)
             : base(transport, mod)
         {
@@ -45,6 +48,13 @@ namespace BoardSandbox.Core.Net
                 }
                 return true;
             }
+        }
+
+        public override bool SharesViews => Joined && !IsClosed && SplitScreen && _hostViews;
+
+        protected override void PassOnView(ViewPose pose)
+        {
+            Send(Transport.HostId, ViewMessage(pose, 0));
         }
 
         public override bool CanAct
@@ -110,9 +120,13 @@ namespace BoardSandbox.Core.Net
             {
                 case "welcome":
                     Joined = true;
+                    _hostViews = message["view"].AsBool(false);
                     break;
                 case "roster":
                     ReadRoster(message);
+                    break;
+                case "view":
+                    ReadView(message);
                     break;
                 case "sync":
                     ReadState(message);
@@ -175,6 +189,27 @@ namespace BoardSandbox.Core.Net
             ReadSeats(message);
             if (changed)
                 BoardsVersion++;
+
+            // Whoever left takes the way they looked at their table with them.
+            List<ulong> gone = new List<ulong>();
+            foreach (ulong id in ViewList.Keys)
+            {
+                if (FindPlayer(id) == null)
+                    gone.Add(id);
+            }
+            foreach (ulong id in gone)
+                ViewList.Remove(id);
+        }
+
+        // How another player looks at their own table. Only a game with tables of their own has such views, and the views of the local
+        // player are not taken from the host: the local player knows how they look at their own table.
+        private void ReadView(JsonValue message)
+        {
+            if (!SplitScreen || !TryId(message["from"], out ulong from) || from == LocalId || !ViewPose.TryRead(message, out ViewPose pose))
+                return;
+            if (ViewList.Count >= MaxPlayers && !ViewList.ContainsKey(from))
+                return;
+            ViewList[from] = pose;
         }
 
         // Who plays the seats that no person sits at. An older host says nothing about it: the room is not filled.

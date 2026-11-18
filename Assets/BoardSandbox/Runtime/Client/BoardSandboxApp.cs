@@ -53,6 +53,10 @@ namespace BoardSandbox.Client
             public GameObject OwnedCamera;
             public PlaybackQueue Queue;
             public string Title = string.Empty;
+
+            // The player whose table this is when it is not the local player's, in a game where everybody has a table of their own; 0 for
+            // none. The table is shown the way that player looks at it.
+            public ulong Owner;
             public Rect Area;
             public int FramedVersion = -1;
             public bool OverflowReported;
@@ -297,11 +301,13 @@ namespace BoardSandbox.Client
 
             List<PlaybackQueue> queues = new List<PlaybackQueue>();
             List<string> titles = new List<string>();
+            List<ulong> owners = new List<ulong>();
             PlaybackQueue acting = _queue;
             if (room == null)
             {
                 queues.Add(_queue);
                 titles.Add(string.Empty);
+                owners.Add(0);
             }
             else
             {
@@ -311,6 +317,7 @@ namespace BoardSandbox.Client
                 {
                     queues.Add(own.Queue);
                     titles.Add(room.SplitScreen ? own.Title + " (you)" : string.Empty);
+                    owners.Add(0);
                 }
                 foreach (NetBoard board in room.Boards)
                 {
@@ -318,12 +325,14 @@ namespace BoardSandbox.Client
                     {
                         queues.Add(board.Queue);
                         titles.Add(board.Title);
+                        owners.Add(room.SplitScreen ? board.Owner : 0);
                     }
                 }
                 if (queues.Count == 0)
                 {
                     queues.Add(_queue);
                     titles.Add(string.Empty);
+                    owners.Add(0);
                     acting = null;
                 }
             }
@@ -357,6 +366,7 @@ namespace BoardSandbox.Client
             {
                 Panel panel = _panels[i];
                 panel.Title = titles[i];
+                panel.Owner = owners[i];
                 if (!ReferenceEquals(panel.Queue, queues[i]) || !ReferenceEquals(panel.View.Manifest, _manifest))
                 {
                     panel.Queue = queues[i];
@@ -462,17 +472,21 @@ namespace BoardSandbox.Client
                         _host.Toasts.Add("This game has more than " + SceneView.MaxPieces + " pieces; the rest are not drawn.", ToastLevel.Warning, _host.Now);
                     }
                     panel.Rig.Background = panel.View.Stage.Background;
+                    bool jump = false;
                     if (panel.View.FrameVersion != panel.FramedVersion)
                     {
                         bool first = panel.FramedVersion < 0;
                         panel.FramedVersion = panel.View.FrameVersion;
                         panel.Rig.Frame(panel.View.Stage.Camera, panel.View.Layout, first);
+                        jump = first;
                     }
+                    MirrorView(panel, room, jump);
                     panel.View.Tick(delta);
                     panel.Rig.Tick(delta);
                     Rect pixels = panel.Rig.Camera.pixelRect;
                     panel.Area = new Rect(pixels.x, Screen.height - pixels.yMax, pixels.width, pixels.height);
                 }
+                ShareView(room);
                 UpdatePreview();
                 _hud.Snapshot(_host.Now);
             }
@@ -480,6 +494,24 @@ namespace BoardSandbox.Client
             {
                 Fail(e);
             }
+        }
+
+        // The table of another player is shown the way its owner looks at it, as soon as the owner has said how that is. Until then, and with
+        // a host that does not pass the views on, the player here may turn it as they like.
+        private static void MirrorView(Panel panel, NetRoom room, bool jump)
+        {
+            ViewPose pose = panel.Owner != 0 && room != null && room.SharesViews ? room.ViewOf(panel.Owner) : null;
+            if (pose != null)
+                panel.Rig.Mirror(pose, jump);
+            else
+                panel.Rig.Release();
+        }
+
+        // The table of the local player is shown to the others the way it is looked at here. The room sends what changed, and not too often.
+        private void ShareView(NetRoom room)
+        {
+            if (room != null && room.SharesViews && _active != null && _active.FramedVersion >= 0)
+                room.ShareView(_active.Rig.GetPose(), _host.Now);
         }
 
         private void UpdatePreview()
