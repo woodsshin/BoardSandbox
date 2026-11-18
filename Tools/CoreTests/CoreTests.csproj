@@ -20,6 +20,7 @@
     <Compile Include="../../Assets/BoardSandbox/Runtime/Core/**/*.cs" />
     <Compile Include="../../Assets/BoardSandbox/Tests/Editor/**/*.cs" Exclude="../../Assets/BoardSandbox/Tests/Editor/Client/**/*.cs" />
     <Compile Include="../../Assets/BoardSandbox/Editor/EosAndroidLibraryFix.cs" />
+    <Compile Include="../../Assets/BoardSandbox/Editor/EosAndroidProjectFix.cs" />
     <Compile Include="NUnitShim.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>

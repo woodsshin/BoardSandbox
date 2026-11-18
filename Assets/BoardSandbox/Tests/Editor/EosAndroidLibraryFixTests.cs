@@ -1,16 +1,54 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
 using BoardSandbox.Client.Editor;
 using NUnit.Framework;
 
 namespace BoardSandbox.Tests
 {
-    // The adaptation of the library of the EOS Plugin for Unity 6.2.0 to Gradle 9.1 and Android Gradle plugin 9.0, the build tools of
-    // Unity 6000.3.17 and later: the old file stops Gradle at jcenter(), and then at the missing namespace.
+    // The adaptation of the library of the EOS Plugin for Unity (6.2.0, and 6.3.0 has the same files) to Gradle 9.1 and Android Gradle
+    // plugin 9.0, the build tools of Unity 6000.3.17 and later: the old file stops Gradle at jcenter(), and then at the missing
+    // namespace. The first tests are on the text of the two files, the last ones on a folder that holds them.
     [TestFixture]
     public class EosAndroidLibraryFixTests
     {
+        private readonly List<string> _temporary = new List<string>();
+
+        [TearDown]
+        public void RemoveTemporaryDirectories()
+        {
+            foreach (string path in _temporary)
+            {
+                try
+                {
+                    Directory.Delete(path, true);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+            _temporary.Clear();
+        }
+
+        private string NewDirectory()
+        {
+            string path = TestSupport.TempDirectory();
+            _temporary.Add(path);
+            return path;
+        }
+
         private static string Lines(params string[] lines)
         {
             return string.Join("\n", lines);
+        }
+
+        // The files of the plugin have Windows line endings.
+        private static string Crlf(string text)
+        {
+            return text.Replace("\n", "\r\n");
         }
 
         // eos_dependencies.androidlib/build.gradle of the plugin, after the plugin has put the SDK and the build tools of Unity in.
@@ -272,6 +310,234 @@ namespace BoardSandbox.Tests
             Assert.IsNull(package);
             Assert.IsFalse(EosAndroidLibraryFix.ManifestNeedsFix(null));
             Assert.IsFalse(EosAndroidLibraryFix.ManifestNeedsFix("not a manifest"));
+        }
+
+        // ---- a folder with the library in it -------------------------------------------------------------------------------
+
+        private static readonly string FixedManifest = PluginManifest.Replace("\"\n    package=\"com.pew.eos_dependencies\">", "\">");
+
+        // The unityLibrary module of a Gradle project, with the SDK that Unity compiles it against; returns the module.
+        private string NewModule(string compileSdk = "36")
+        {
+            string module = Path.Combine(NewDirectory(), "unityLibrary");
+            TestSupport.WriteFile(module, "build.gradle", "apply plugin: 'com.android.library'\nandroid {\n    compileSdk " + compileSdk + "\n}\n");
+            return module;
+        }
+
+        private static string Library(string parent)
+        {
+            return Path.Combine(parent, "eos_dependencies.androidlib");
+        }
+
+        // The two files as the plugin writes them, with the line endings of the plugin.
+        private static void WritePluginFiles(string library)
+        {
+            TestSupport.WriteFile(library, "build.gradle", Crlf(PluginGradle));
+            TestSupport.WriteFile(library, "AndroidManifest.xml", Crlf(PluginManifest));
+        }
+
+        private static string Read(string library, string file)
+        {
+            return File.ReadAllText(Path.Combine(library, file));
+        }
+
+        private static void AssertAdapted(string library)
+        {
+            Assert.AreEqual(Crlf(FixedGradle), Read(library, "build.gradle"));
+            Assert.AreEqual(Crlf(FixedManifest), Read(library, "AndroidManifest.xml"));
+        }
+
+        [Test]
+        public void ALibraryInTheUnityLibraryModuleIsAdapted()
+        {
+            string module = NewModule();
+            string library = Library(module);
+            WritePluginFiles(library);
+
+            EosAndroidProjectFix.Result result = EosAndroidProjectFix.Adapt(module);
+
+            Assert.IsTrue(result.Found);
+            Assert.AreEqual(library, result.Library);
+            Assert.IsTrue(result.GradleChanged);
+            Assert.IsTrue(result.ManifestChanged);
+            Assert.IsFalse(result.GradleStillOld);
+            AssertAdapted(library);
+            StringAssert.Contains("Adapted the library of the EOS plugin", result.Describe());
+            StringAssert.Contains("build.gradle, AndroidManifest.xml", result.Describe());
+        }
+
+        [Test]
+        public void TheExportedProjectOrTheLibraryItselfCanBeGivenInsteadOfTheModule()
+        {
+            string module = NewModule();
+            string library = Library(module);
+            WritePluginFiles(library);
+            string exported = Path.GetDirectoryName(module);
+
+            Assert.AreEqual(library, EosAndroidProjectFix.FindLibrary(exported));
+            Assert.AreEqual(library, EosAndroidProjectFix.FindLibrary(module));
+            Assert.AreEqual(library, EosAndroidProjectFix.FindLibrary(library));
+            Assert.AreEqual(library, EosAndroidProjectFix.FindLibrary(library + Path.DirectorySeparatorChar));
+
+            EosAndroidProjectFix.Result result = EosAndroidProjectFix.Adapt(exported);
+
+            Assert.IsTrue(result.Changed);
+            AssertAdapted(library);
+        }
+
+        [Test]
+        public void ALibraryBesideTheModuleOrDeeperInItIsFound()
+        {
+            string module = NewModule();
+            string beside = Library(Path.GetDirectoryName(module));
+            WritePluginFiles(beside);
+            Assert.AreEqual(beside, EosAndroidProjectFix.FindLibrary(module));
+
+            string other = NewModule();
+            string deeper = Library(Path.Combine(Path.Combine(other, "plugins"), "android"));
+            WritePluginFiles(deeper);
+            Assert.AreEqual(deeper, EosAndroidProjectFix.FindLibrary(other));
+
+            Assert.IsTrue(EosAndroidProjectFix.Adapt(other).Changed);
+            AssertAdapted(deeper);
+        }
+
+        [Test]
+        public void TheLibraryInTheModuleIsPreferredToOneThatLiesElsewhere()
+        {
+            string module = NewModule();
+            WritePluginFiles(Library(module));
+            WritePluginFiles(Library(Path.Combine(module, "build")));
+
+            Assert.AreEqual(Library(module), EosAndroidProjectFix.FindLibrary(module));
+        }
+
+        [Test]
+        public void AProjectWithoutTheLibraryIsLeftAlone()
+        {
+            string module = NewModule();
+            string gradle = Read(module, "build.gradle");
+
+            EosAndroidProjectFix.Result result = EosAndroidProjectFix.Adapt(module);
+
+            Assert.IsFalse(result.Found);
+            Assert.IsFalse(result.Changed);
+            Assert.IsNull(result.Library);
+            StringAssert.Contains("There is no eos_dependencies.androidlib in " + module, result.Describe());
+            Assert.AreEqual(gradle, Read(module, "build.gradle"));
+
+            Assert.IsFalse(EosAndroidProjectFix.Adapt(Path.Combine(module, "no-such-folder")).Found);
+            Assert.IsFalse(EosAndroidProjectFix.Adapt(string.Empty).Found);
+            Assert.IsFalse(EosAndroidProjectFix.Adapt(null).Found);
+        }
+
+        [Test]
+        public void AdaptingAgainChangesNothing()
+        {
+            string module = NewModule();
+            string library = Library(module);
+            WritePluginFiles(library);
+            EosAndroidProjectFix.Adapt(module);
+
+            EosAndroidProjectFix.Result again = EosAndroidProjectFix.Adapt(module);
+
+            Assert.IsTrue(again.Found);
+            Assert.IsFalse(again.Changed);
+            Assert.IsFalse(again.GradleStillOld);
+            StringAssert.Contains("already in the form", again.Describe());
+            AssertAdapted(library);
+        }
+
+        [Test]
+        public void TheSdkOfTheUnityModuleIsUsedWhenTheLibraryDoesNotSayWhichOne()
+        {
+            string module = NewModule("35");
+            string library = Library(module);
+            // The plugin leaves the placeholder in the file when it cannot tell the SDK.
+            TestSupport.WriteFile(library, "build.gradle", PluginGradle.Replace("compileSdkVersion 36", "compileSdkVersion **APIVERSION**"));
+            TestSupport.WriteFile(library, "AndroidManifest.xml", PluginManifest);
+
+            EosAndroidProjectFix.Adapt(module);
+
+            StringAssert.Contains("    compileSdk 35\n", Read(library, "build.gradle"));
+            StringAssert.DoesNotContain("APIVERSION", Read(library, "build.gradle"));
+        }
+
+        [Test]
+        public void ThePackageOfTheManifestIsTheNamespaceOfTheLibrary()
+        {
+            string module = NewModule();
+            string library = Library(module);
+            TestSupport.WriteFile(library, "build.gradle", PluginGradle);
+            TestSupport.WriteFile(library, "AndroidManifest.xml", PluginManifest.Replace("com.pew.eos_dependencies", "my.own.package"));
+
+            EosAndroidProjectFix.Adapt(module);
+
+            StringAssert.Contains("namespace 'my.own.package'", Read(library, "build.gradle"));
+            StringAssert.DoesNotContain("package=", Read(library, "AndroidManifest.xml"));
+        }
+
+        [Test]
+        public void AManifestThatWasAdaptedBeforeStillGivesTheLibraryItsNamespace()
+        {
+            // A first run that stopped after the manifest: the package is gone from it, build.gradle is still the old file.
+            string module = NewModule();
+            string library = Library(module);
+            TestSupport.WriteFile(library, "build.gradle", PluginGradle);
+            TestSupport.WriteFile(library, "AndroidManifest.xml", FixedManifest);
+
+            EosAndroidProjectFix.Result result = EosAndroidProjectFix.Adapt(module);
+
+            Assert.IsTrue(result.GradleChanged);
+            Assert.IsFalse(result.ManifestChanged);
+            Assert.AreEqual(FixedGradle, Read(library, "build.gradle"));
+            StringAssert.DoesNotContain("package=", Read(library, "AndroidManifest.xml"));
+            StringAssert.DoesNotContain(", AndroidManifest.xml", result.Describe());
+        }
+
+        [Test]
+        public void ABuildGradleThatCannotBeAdaptedIsReportedAndLeftAlone()
+        {
+            string module = NewModule();
+            string library = Library(module);
+            string old = Lines("buildscript {", "    repositories {", "        jcenter()", "    }", "}");
+            TestSupport.WriteFile(library, "build.gradle", old);
+            TestSupport.WriteFile(library, "AndroidManifest.xml", FixedManifest);
+
+            EosAndroidProjectFix.Result result = EosAndroidProjectFix.Adapt(module);
+
+            Assert.IsTrue(result.Found);
+            Assert.IsFalse(result.GradleChanged);
+            Assert.IsTrue(result.GradleStillOld);
+            Assert.AreEqual(old, Read(library, "build.gradle"));
+            StringAssert.Contains("left as it is", result.Describe());
+        }
+
+        [Test]
+        public void ReadOnlyFilesAreAdaptedToo()
+        {
+            // A file that Unity copied from a read-only one is read-only. (Where the tests run as a user that may write anyway, such
+            // as root on Linux, this only shows that the attribute does not get in the way.)
+            string module = NewModule();
+            string library = Library(module);
+            WritePluginFiles(library);
+            string gradlePath = Path.Combine(library, "build.gradle");
+            string manifestPath = Path.Combine(library, "AndroidManifest.xml");
+            File.SetAttributes(gradlePath, FileAttributes.ReadOnly);
+            File.SetAttributes(manifestPath, FileAttributes.ReadOnly);
+            try
+            {
+                EosAndroidProjectFix.Result result = EosAndroidProjectFix.Adapt(module);
+
+                Assert.IsTrue(result.GradleChanged);
+                Assert.IsTrue(result.ManifestChanged);
+                AssertAdapted(library);
+            }
+            finally
+            {
+                File.SetAttributes(gradlePath, FileAttributes.Normal);
+                File.SetAttributes(manifestPath, FileAttributes.Normal);
+            }
         }
     }
 }
