@@ -685,7 +685,7 @@ namespace BoardSandbox.Tests
                 Assert.AreEqual(9, board.Raw["columns"].AsInt());
                 Assert.AreEqual(9, board.Raw["rows"].AsInt());
                 Assert.AreEqual(3, board.Raw["block"].AsInt());
-                Assert.AreEqual(30 + 92, Count(events, "spawn"), "the clues, the tiles, the pad and the hint button");
+                Assert.AreEqual(30 + 93, Count(events, "spawn"), "the clues, the tiles, the pad, the note key and the hint button");
                 Assert.AreEqual(ViewEventKind.Turn, events[events.Count - 1].Kind);
                 Assert.AreEqual(1, events[events.Count - 1].Seat);
 
@@ -1675,7 +1675,7 @@ namespace BoardSandbox.Tests
                 string started = console.Execute("new puzzle=" + Puzzle);
                 StringAssert.StartsWith("new game started", started);
                 StringAssert.Contains("turn: none (cooperative: every seat plays at once)", started);
-                StringAssert.Contains("objects: 122", started);
+                StringAssert.Contains("objects: 123", started);
 
                 string[] lines = console.Execute("board").Split('\n');
                 string[] expected =
@@ -1752,7 +1752,7 @@ namespace BoardSandbox.Tests
                 }
                 Assert.AreEqual(81, tiles);
                 Assert.AreEqual(10, keys);
-                Assert.AreEqual(30 + 92, session.View.ObjectCount, "the clues, the tiles, the pad and the hint button");
+                Assert.AreEqual(30 + 93, session.View.ObjectCount, "the clues, the tiles, the pad, the note key and the hint button");
                 Assert.AreEqual(0, State(session)["selected"].AsInt());
                 for (int key = 1; key <= 10; key++)
                     Assert.AreEqual("#e8ecf2", Key(session, key).Props["color"].AsString());
@@ -3221,11 +3221,11 @@ namespace BoardSandbox.Tests
                 Assert.AreEqual("3", HintsShown(session));
                 Assert.AreEqual("#f5c84b", hint.Props["color"].AsString(), "a key that can be used is lit");
 
-                // The pad keeps to its one row and stays centered under the grid with the hint key as its eleventh place.
+                // The pad keeps to its one row and stays centered under the grid with the note key and the hint key as its eleventh and twelfth places.
                 JsonValue eraser = Key(session, 10).Props["pos"];
                 JsonValue first = Key(session, 1).Props["pos"];
                 Assert.AreEqual(eraser[2].AsDouble(), hint.Props["pos"][2].AsDouble(), 1e-9);
-                Assert.AreEqual(0.96, hint.Props["pos"][0].AsDouble() - eraser[0].AsDouble(), 1e-9, "next to the eraser");
+                Assert.AreEqual(2 * 0.88, hint.Props["pos"][0].AsDouble() - eraser[0].AsDouble(), 1e-9, "after the note key, which follows the eraser");
                 Assert.AreEqual(-first[0].AsDouble(), hint.Props["pos"][0].AsDouble(), 1e-9, "centered");
                 Assert.Less(Math.Abs(hint.Props["pos"][0].AsDouble()), 5.0);
             }
@@ -3239,8 +3239,8 @@ namespace BoardSandbox.Tests
                 Assert.IsNull(HintKey(none));
                 Assert.AreEqual(0, HintsLeft(none));
                 Assert.AreEqual(0, State(none)["hints_total"].AsInt());
-                Assert.AreEqual(30 + 91, none.View.ObjectCount, "the grid and the pad, as before there were hints");
-                Assert.AreEqual(-4.32, Key(none, 1).Props["pos"][0].AsDouble(), 1e-9, "ten keys are centered by themselves");
+                Assert.AreEqual(30 + 92, none.View.ObjectCount, "the grid, the pad and the note key, as before there were hints");
+                Assert.AreEqual(-4.4, Key(none, 1).Props["pos"][0].AsDouble(), 1e-9, "eleven keys are centered by themselves");
                 Assert.AreEqual("NO_HINTS", Hint(none).Code);
                 Assert.AreEqual("NO_HINTS", HintAt(none, 7, 9).Code);
                 Assert.IsTrue(none.Query("hint").IsNull);
@@ -3639,7 +3639,7 @@ namespace BoardSandbox.Tests
                 foreach (ViewObject o in session.View.Objects)
                     keys += o.Kind == "hint" ? 1 : 0;
                 Assert.AreEqual(1, keys, "one hint key on the table");
-                Assert.AreEqual(30 + 92, session.View.ObjectCount);
+                Assert.AreEqual(30 + 93, session.View.ObjectCount);
             }
         }
 
