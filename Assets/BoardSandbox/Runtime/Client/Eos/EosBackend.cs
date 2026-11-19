@@ -1,4 +1,4 @@
-#if BSE_EOS && UNITY_ANDROID
+#if BSE_EOS && !EOS_DISABLE && (UNITY_ANDROID || UNITY_STANDALONE_WIN)
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -13,9 +13,10 @@ using UnityEngine;
 
 namespace BoardSandbox.Client.Eos
 {
-    // Rooms as Epic Online Services lobbies, for Android. Nobody has to sign in: the first time the app starts, the device makes
-    // itself an anonymous account (a "device id"), and that account is what the other players of a room see. The account goes
-    // away with the app (or when its data is cleared), and the next start makes a new one.
+    // Rooms as Epic Online Services lobbies, for Android and Windows. Nobody has to sign in: the first time the app starts, the
+    // device makes itself an anonymous account (a "device id"), and that account is what the other players of a room see. The
+    // account lasts as long as the device id does (on Android it goes away with the app or its data), and the next start after
+    // that makes a new one.
     //
     // A lobby carries the game it plays in its public attributes, so that a search finds the rooms of one game; the members
     // talk to each other through peer to peer connections (EosSession).
@@ -62,6 +63,7 @@ namespace BoardSandbox.Client.Eos
         private EosSession _session;
         private INetTransport _ready;
         private string _error;
+        private string _startProblem;
         private bool _disposed;
 
         public EosBackend()
@@ -97,7 +99,7 @@ namespace BoardSandbox.Client.Eos
             switch (_phase)
             {
                 case Phase.Starting:
-                    if (_eos.GetEOSPlatformInterface() != null)
+                    if (PlatformIsUp())
                         BeginSignIn();
                     else if (now > _giveUpAt)
                         Fail("Online play is not set up in this build: the Epic Online Services settings are missing or wrong.");
@@ -228,12 +230,36 @@ namespace BoardSandbox.Client.Eos
             Log(message);
         }
 
+        // Whether the plugin has made the platform of the service. Until it has, the plugin answers null in an Android player, but in a
+        // Windows player it asks the native side for the platform on every call and throws while there is none, which is the case for good
+        // when the settings are missing or wrong. Either is "not yet" here, and the time limit says what is wrong in the end: an exception
+        // must not reach the frame loop of the app, which stops at the first one and takes the local game with it.
+        private bool PlatformIsUp()
+        {
+            try
+            {
+                return _eos.GetEOSPlatformInterface() != null;
+            }
+            catch (Exception e)
+            {
+                if (e.Message != _startProblem)
+                {
+                    _startProblem = e.Message;
+                    Log("The online service is not up yet: " + e.Message);
+                }
+                return false;
+            }
+        }
+
+        // What the service is told the device is called when Unity does not know its model.
+        private static string UnnamedDevice => Application.platform == RuntimePlatform.Android ? "Android device" : "Windows device";
+
         private void BeginSignIn()
         {
             _phase = Phase.SigningIn;
             Status = "Signing in to the online service…";
             string model = ServiceText.ClipUtf8(SystemInfo.deviceModel, ConnectInterface.CREATEDEVICEID_DEVICEMODEL_MAX_LENGTH);
-            CreateDeviceIdOptions options = new CreateDeviceIdOptions { DeviceModel = model.Length > 0 ? model : "Android device" };
+            CreateDeviceIdOptions options = new CreateDeviceIdOptions { DeviceModel = model.Length > 0 ? model : UnnamedDevice };
             _eos.GetEOSConnectInterface().CreateDeviceId(ref options, null, OnDeviceId);
         }
 

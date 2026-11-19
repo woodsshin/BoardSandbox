@@ -1,4 +1,4 @@
-#if BSE_EOS && UNITY_ANDROID
+#if BSE_EOS && !EOS_DISABLE && (UNITY_ANDROID || UNITY_STANDALONE_WIN)
 using System;
 using System.Collections.Generic;
 using BoardSandbox.Core.Net;
