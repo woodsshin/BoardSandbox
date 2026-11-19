@@ -205,11 +205,16 @@ namespace BoardSandbox.Client
                 _hud.OpenLibrary();
         }
 
+        // The online service of a build is chosen by its scripting defines (Project Settings > Player > Scripting Define Symbols, which
+        // are set for each platform): a Windows build that defines STEAMWORKS_NET uses Steam; every other Windows build, and Android,
+        // uses Epic Online Services. EOS_DISABLE takes the Epic plugin out of a platform, and with it that service. See the readme.
         private static ILobbyBackend CreateLobbyBackend()
         {
-#if BSE_STEAM && UNITY_STANDALONE_WIN
+#if BSE_STEAM && STEAMWORKS_NET && UNITY_STANDALONE_WIN
+            Debug.Log("[Board Sandbox online] This build uses Steam.");
             return new Steam.SteamBackend();
-#elif BSE_EOS && UNITY_ANDROID
+#elif BSE_EOS && !EOS_DISABLE && (UNITY_ANDROID || UNITY_STANDALONE_WIN)
+            Debug.Log("[Board Sandbox online] This build uses Epic Online Services.");
             return new Eos.EosBackend();
 #else
             return null;

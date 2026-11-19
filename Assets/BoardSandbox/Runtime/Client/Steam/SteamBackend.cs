@@ -1,4 +1,4 @@
-#if BSE_STEAM && UNITY_STANDALONE_WIN
+#if BSE_STEAM && STEAMWORKS_NET && UNITY_STANDALONE_WIN
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
