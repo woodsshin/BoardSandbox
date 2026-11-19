@@ -18,7 +18,7 @@
       "hash": "ea51b029a5dbcb47a99d3c1fac930b811672ed32"
     },
     "com.unity.editorcoroutines": {
-      "version": "1.0.0",
+      "version": "1.1.0",
       "depth": 1,
       "source": "registry",
       "dependencies": {},
@@ -38,7 +38,7 @@
       "url": "https://packages.unity.com"
     },
     "com.unity.nuget.newtonsoft-json": {
-      "version": "3.0.2",
+      "version": "3.2.2",
       "depth": 1,
       "source": "registry",
       "dependencies": {},

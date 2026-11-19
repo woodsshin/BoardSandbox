@@ -267,11 +267,18 @@ namespace BoardSandbox.Client.UI
                 _listScroll.y = bottom - view;
         }
 
+        // The buttons for the list as a whole are at the top, by the title: one that has an AI agent write a new game
+        // (left out when there is no AI console to open) and one that reads the folders again.
         private void DrawHeader()
         {
             GUILayout.BeginHorizontal();
             GUILayout.Label("Games", _theme.Heading);
             GUILayout.FlexibleSpace();
+            if (_openStudio != null && GUILayout.Button("Custom Game", _theme.Button, GUILayout.Width(_theme.Sf(120f))))
+                _defer(() => _openStudio(null));
+            if (GUILayout.Button("Rescan", _theme.Button, GUILayout.Width(_theme.Sf(80f))))
+                _defer(Rescan);
+            GUILayout.Space(_theme.Sf(10f));
             if (GUILayout.Button("Close", _theme.Button, GUILayout.Width(_theme.Sf(80f))))
                 _defer(Close);
             GUILayout.EndHorizontal();
@@ -674,45 +681,39 @@ namespace BoardSandbox.Client.UI
                 GUILayout.Label("Board Sandbox looked in:", _theme.Wrapped);
                 foreach (IModSource source in _host.Catalog.Sources)
                     GUILayout.Label(source.Origin.Label() + ": " + DisplayText.Clip(source.Description, 120), _theme.Muted);
-                GUILayout.Label("A game is a folder with a config.json and its .luau files. Put such a folder into one of the places above and press Rescan, or press Create to have an AI agent write one.", _theme.Wrapped);
+                GUILayout.Label("A game is a folder with a config.json and its .luau files. Put such a folder into one of the places above and press Rescan, or press Custom Game to have an AI agent write one.", _theme.Wrapped);
             }
             GUILayout.FlexibleSpace();
         }
 
+        // What can be done with the selected game; the buttons for the list as a whole are in the header.
         private void DrawActions(ModEntry entry)
         {
+            if (entry == null)
+                return;
+
             GUILayout.Space(_theme.Sf(6f));
             GUILayout.BeginHorizontal();
-            if (entry != null)
+            bool running = _library.IsRunning(entry);
+            if (GUILayout.Button(running ? "Resume" : "Single Play", _theme.Button, GUILayout.Width(_theme.Sf(120f)), GUILayout.Height(_theme.Sf(34f))))
             {
-                bool running = _library.IsRunning(entry);
-                if (GUILayout.Button(running ? "Resume" : "Play", _theme.Button, GUILayout.Width(_theme.Sf(110f)), GUILayout.Height(_theme.Sf(34f))))
-                {
-                    if (running)
-                        _defer(Choose);
-                    else
-                        _defer(Play);
-                }
-                if (running && GUILayout.Button("New game", _theme.Button, GUILayout.Width(_theme.Sf(96f)), GUILayout.Height(_theme.Sf(34f))))
+                if (running)
+                    _defer(Choose);
+                else
                     _defer(Play);
             }
+            if (running && GUILayout.Button("New game", _theme.Button, GUILayout.Width(_theme.Sf(96f)), GUILayout.Height(_theme.Sf(34f))))
+                _defer(Play);
             GUILayout.FlexibleSpace();
-            if (_openStudio != null)
+            // Only games in a folder of the player can be changed; the ones that come with the app cannot.
+            if (_openStudio != null && entry.Origin == ModOrigin.Local && entry.Mod.Directory != null
+                && GUILayout.Button("Edit with AI", _theme.Button, GUILayout.Width(_theme.Sf(100f)), GUILayout.Height(_theme.Sf(34f))))
             {
-                // Only games in a folder of the player can be changed; the ones that come with the app cannot.
-                if (entry != null && entry.Origin == ModOrigin.Local && entry.Mod.Directory != null
-                    && GUILayout.Button("Edit with AI", _theme.Button, GUILayout.Width(_theme.Sf(100f)), GUILayout.Height(_theme.Sf(34f))))
-                {
-                    ModEntry edited = entry;
-                    _defer(() => _openStudio(edited));
-                }
-                if (GUILayout.Button("Create", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(34f))))
-                    _defer(() => _openStudio(null));
+                ModEntry edited = entry;
+                _defer(() => _openStudio(edited));
             }
-            if (GUILayout.Button("Rescan", _theme.Button, GUILayout.Width(_theme.Sf(80f)), GUILayout.Height(_theme.Sf(34f))))
-                _defer(Rescan);
             GUILayout.EndHorizontal();
-            if (entry != null && _detailDeletable)
+            if (_detailDeletable)
                 DrawDelete(entry);
         }
 
