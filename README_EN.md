@@ -68,9 +68,12 @@ To avoid affecting the ongoing game state, the current board state is restored i
 
 When you describe the rules of a desired board game in natural language inside the in-game AI console, the integrated AI agent automatically generates `config.json` and Luau scripts.
 
-![Edit with AI](Image/EditwithAI.png)
+![Go](Image/Go.png)
 
 * **Supported Agents**: Claude Code, Codex CLI, Gemini CLI, Antigravity, Grok, local Ollama, and OpenAI-compatible API endpoints
+
+![Edit with AI](Image/Go.png)
+
 * **Automated Validation and Self-Correction**: The engine immediately loads the generated mod and simulates up to 60 random moves; if an error occurs, the error log is fed back to the agent so it can self-correct (up to 2 retries).
 * **Safety and Recovery**: You can revert to previous versions of files at any time using the `/undo` command, and user prompts are passed securely via standard input (`stdin`) or temporary files to prevent command-line argument exposure.
 

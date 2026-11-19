@@ -68,9 +68,12 @@
 
 게임 내 AI 콘솔에 원하는 보드게임의 규칙을 자연어로 설명하면 연동된 AI 에이전트가 `config.json`과 Luau 스크립트를 자동으로 생성합니다.
 
-![Edit with AI](Image/EditwithAI.png)
+![Go](Image/Go.png)
 
 * **지원 에이전트**: Claude Code, Codex CLI, Gemini CLI, Antigravity, Grok, 로컬 Ollama 및 OpenAI 호환 API 엔드포인트
+
+![Edit with AI](Image/EditwithAI.png)
+
 * **자동 검증 및 자가 수정**: 엔진이 생성된 모드를 즉시 로드해 무작위 수를 최대 60수까지 시뮬레이션하며, 오류 발생 시 에러 로그를 에이전트에게 전달해 스스로 수정하도록 합니다(최대 2회 재시도).
 * **안전성 및 복구**: `/undo` 명령어로 언제든 이전 버전의 파일로 되돌릴 수 있으며, 사용자 프롬프트는 커맨드라인 인자 노출을 피해 표준 입력(stdin)이나 임시 파일로만 안전하게 전달됩니다.
 
