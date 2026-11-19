@@ -35,13 +35,15 @@ local function moves_text(count: number): string
 end
 
 -- Everything on screen besides the cubies: no board, no table, a camera that circles the cube.
+-- The light is bright and soft, with most of it ambient: a face turned away from it still shows its stickers at four fifths
+-- of their color, so the dark ones, the slate and the violet, do not sink into the background.
 local function announce_stage()
 	bse.emit({
 		t = "stage",
 		background = "#10131a",
 		board = { visible = false },
 		table = { visible = false },
-		light = { direction = { -0.4, 0.8, 0.55 }, ambient = 0.5, intensity = 0.6 },
+		light = { direction = { -0.4, 0.8, 0.55 }, ambient = 0.8, intensity = 0.5 },
 		camera = {
 			yaw = 32,
 			pitch = 26,
