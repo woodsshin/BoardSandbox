@@ -55,6 +55,11 @@ namespace UnityEditor
         {
             return true;
         }
+
+        public static string OpenFolderPanel(string title, string folder, string defaultName)
+        {
+            return null;
+        }
     }
 
     public class AssetImporter

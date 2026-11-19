@@ -3,7 +3,9 @@
   "rootNamespace": "BoardSandbox.Client",
   "references": [
     "BoardSandbox.Core",
-    "com.rlabrecque.steamworks.net"
+    "com.rlabrecque.steamworks.net",
+    "com.playeveryware.eos.core",
+    "com.Epic.OnlineServices"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
@@ -17,6 +19,11 @@
       "name": "com.rlabrecque.steamworks.net",
       "expression": "",
       "define": "BSE_STEAM"
+    },
+    {
+      "name": "com.playeveryware.eos",
+      "expression": "",
+      "define": "BSE_EOS"
     }
   ],
   "noEngineReferences": false

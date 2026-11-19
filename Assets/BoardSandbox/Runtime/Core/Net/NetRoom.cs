@@ -39,10 +39,26 @@ namespace BoardSandbox.Core.Net
         public const int MaxClientMessageBytes = 32 * 1024;
         public const int EventsPerMessage = 200;
 
+        // The least time between two views that the local player passes on, in seconds.
+        public const double ViewInterval = 0.1;
+
+        // How many lines of the chat a room keeps; the oldest go first.
+        public const int MaxChatLines = 100;
+
         protected readonly INetTransport Transport;
         protected readonly List<NetPlayer> PlayerList = new List<NetPlayer>();
         protected readonly List<NetBoard> BoardList = new List<NetBoard>();
         protected readonly List<int> ComputerSeatList = new List<int>();
+
+        // How each player looks at their own table, as far as it is known.
+        protected readonly Dictionary<ulong, ViewPose> ViewList = new Dictionary<ulong, ViewPose>();
+
+        // What the players have said, the newest last.
+        protected readonly List<ChatLine> ChatList = new List<ChatLine>();
+
+        private readonly ChatLimiter _chatLimiter = new ChatLimiter();
+        private ViewPose _sentView;
+        private double _sentViewAt;
 
         protected NetRoom(INetTransport transport, ModPackage mod)
         {
@@ -115,6 +131,89 @@ namespace BoardSandbox.Core.Net
                 NetPlayer me = LocalPlayer;
                 return me == null ? null : FindBoard(me.Board);
             }
+        }
+
+        // Whether the players see each other's tables the way their owners look at them: in a game where everybody has a table of their
+        // own, with a host that passes the views on. A host that does not knows nothing of them, and the tables stay as each player
+        // turns them.
+        public abstract bool SharesViews { get; }
+
+        // How the player looks at their own table, as far as it is known; null for none.
+        public ViewPose ViewOf(ulong player)
+        {
+            return ViewList.TryGetValue(player, out ViewPose pose) ? pose : null;
+        }
+
+        // Tells the others how the local player looks at their table. Call it every frame with the way it is looked at now: a change
+        // goes out at once the first time and then at most ViewInterval apart, and a view that nobody could tell from the one that went
+        // out last is not sent at all.
+        public void ShareView(ViewPose pose, double now)
+        {
+            if (pose == null || IsClosed || !SharesViews)
+                return;
+            if (_sentView != null && (now - _sentViewAt < ViewInterval || pose.Near(_sentView)))
+                return;
+            _sentView = pose;
+            _sentViewAt = now;
+            PassOnView(pose);
+        }
+
+        protected abstract void PassOnView(ViewPose pose);
+
+        // The message that carries a view; from is the player whose view it is, 0 in a message to the host, which knows who sent it.
+        protected static JsonValue ViewMessage(ViewPose pose, ulong from)
+        {
+            JsonValue message = Message("view");
+            if (from != 0)
+                message.Set("from", IdText(from));
+            pose.WriteTo(message);
+            return message;
+        }
+
+        // Whether the players can talk to each other: a host always passes the lines on, a guest can only talk through a host
+        // that does (an older host knows nothing of the chat).
+        public abstract bool CanChat { get; }
+
+        // What has been said in the room, the newest line last, at most MaxChatLines of them.
+        public IReadOnlyList<ChatLine> Chat => ChatList;
+
+        // How many lines have been said in all, counting the ones that were dropped; the Number of the newest line.
+        public int ChatTotal { get; private set; }
+
+        // Says something to everybody in the room. The line comes back through the host like everybody else's and is added then, so
+        // that it reads the same on every screen. False when nothing was said: there is nobody to say it to, nothing is left of the
+        // text once it is cleaned (ChatText.Clean), or the player has said too much lately (ChatLimiter), and then the player is told.
+        public bool Say(string text, double now)
+        {
+            if (IsClosed || !CanChat)
+                return false;
+            string clean = ChatText.Clean(text);
+            if (clean.Length == 0)
+                return false;
+            if (!_chatLimiter.Allow(now))
+            {
+                if (_chatLimiter.ShouldWarn(now))
+                    Tell("You are talking too fast.", ToastLevel.Warning);
+                return false;
+            }
+            PassOnChat(clean);
+            return true;
+        }
+
+        protected abstract void PassOnChat(string text);
+
+        protected void AddChat(ulong from, string name, string text)
+        {
+            if (ChatList.Count >= MaxChatLines)
+                ChatList.RemoveAt(0);
+            ChatTotal++;
+            ChatList.Add(new ChatLine(ChatTotal, from, name, text));
+        }
+
+        // The message that carries a line to the players: who said it, by the name that the host has of them, and what.
+        protected static JsonValue ChatMessage(ulong from, string name, string text)
+        {
+            return Message("chat").Set("from", IdText(from)).Set("name", name).Set("text", text);
         }
 
         // Whether the local player may make a move right now.

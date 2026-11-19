@@ -19,12 +19,16 @@
   <ItemGroup>
     <Compile Include="../../Assets/BoardSandbox/Runtime/Core/**/*.cs" />
     <Compile Include="../../Assets/BoardSandbox/Tests/Editor/**/*.cs" Exclude="../../Assets/BoardSandbox/Tests/Editor/Client/**/*.cs" />
+    <Compile Include="../../Assets/BoardSandbox/Editor/EosAndroidLibraryFix.cs" />
+    <Compile Include="../../Assets/BoardSandbox/Editor/EosAndroidDesugaringFix.cs" />
+    <Compile Include="../../Assets/BoardSandbox/Editor/EosAndroidProjectFix.cs" />
     <Compile Include="NUnitShim.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="Exists('$(UnityEngineDll)')">
     <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Geometry/**/*.cs" />
+    <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Cameras/CameraRig.cs" />
     <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/ViewHints.cs" />
     <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/ObjectLook.cs" />
     <Compile Include="../../Assets/BoardSandbox/Runtime/Client/Views/StageSettings.cs" />

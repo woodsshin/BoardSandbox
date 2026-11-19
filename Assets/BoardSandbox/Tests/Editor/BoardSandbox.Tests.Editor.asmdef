@@ -4,6 +4,7 @@
   "references": [
     "BoardSandbox.Core",
     "BoardSandbox.Client",
+    "BoardSandbox.Client.Editor",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"
   ],

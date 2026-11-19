@@ -33,3 +33,16 @@ __pycache__/
 
 !Tools/**/*.csproj
 .vsconfig
+
+# The plugin for Epic Online Services (Android) writes the keys of the product here. They belong to whoever builds the app and
+# are not for a public repository.
+/Assets/StreamingAssets/EOS/
+/Assets/StreamingAssets/EOS.meta
+
+# The same plugin fills these in at every Android build: a copy of its library module (with a scheme derived from the client id) and
+# the AAR files of the SDK. They are made again from the package each time, so they do not belong in the repository.
+/Assets/Plugins/Android/EOS/
+/Assets/Plugins/Android/EOS.meta
+/Assets/Plugins/Android/aar/
+/Assets/Plugins/Android/aar.meta
+Build_Android/

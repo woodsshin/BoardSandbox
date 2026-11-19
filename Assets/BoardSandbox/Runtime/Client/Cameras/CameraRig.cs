@@ -1,5 +1,6 @@
 using BoardSandbox.Client.Geometry;
 using BoardSandbox.Client.Views;
+using BoardSandbox.Core.Net;
 using UnityEngine;
 
 namespace BoardSandbox.Client.Cameras
@@ -32,6 +33,9 @@ namespace BoardSandbox.Client.Cameras
         private Quaternion _orientation = Quaternion.identity;
         private Quaternion _goalOrientation = Quaternion.identity;
 
+        // How the player whose table this is looks at it, while the camera shows it that way; null while the player here moves the camera.
+        private ViewPose _shared;
+
         public CameraRig(Camera camera)
         {
             _camera = camera;
@@ -42,6 +46,9 @@ namespace BoardSandbox.Client.Cameras
         }
 
         public Camera Camera => _camera;
+
+        // True while the camera follows the view of somebody else: what the player does with it here is left alone.
+        public bool Mirrored => _shared != null;
 
         public Color32 Background
         {
@@ -63,20 +70,75 @@ namespace BoardSandbox.Client.Cameras
             _goalTarget = _plan.Target;
             _goalDistance = _plan.Distance;
             _goalOrientation = CameraMath.Orientation(_goalYaw, _goalPitch);
+            if (_shared != null)
+                TakeShared();
             if (jump)
-            {
-                _orientation = _goalOrientation;
-                _target = _goalTarget;
-                _yaw = _goalYaw;
-                _pitch = _goalPitch;
-                _distance = _goalDistance;
-                Apply();
-            }
+                Snap();
         }
 
         public void Reframe()
         {
-            Frame(_settings, _layout, false);
+            if (_shared == null)
+                Frame(_settings, _layout, false);
+        }
+
+        // Shows the table the way the player whose table it is looks at it: the camera glides there, or jumps. Whatever the player here
+        // does with the camera is left alone from then on, and so is the frame of the stage, until Release. Call it every frame with what
+        // is known now: a new view is taken at once, and a framing of the stage does not take it away.
+        public void Mirror(ViewPose pose, bool jump)
+        {
+            if (pose == null)
+            {
+                Release();
+                return;
+            }
+            _shared = pose;
+            TakeShared();
+            if (jump)
+                Snap();
+        }
+
+        // Gives the camera back to the player here; it stays where it is.
+        public void Release()
+        {
+            _shared = null;
+        }
+
+        // How the camera is turned and how far it is, in terms that hold on any screen, for the other players to see the table that way.
+        public ViewPose GetPose()
+        {
+            float zoom = _plan.Distance > 0f ? _goalDistance / _plan.Distance : 1f;
+            return _plan.Trackball
+                ? ViewPose.Trackball(_goalOrientation.x, _goalOrientation.y, _goalOrientation.z, _goalOrientation.w, _goalYaw, _goalPitch, zoom)
+                : ViewPose.Orbit(_goalYaw, _goalPitch, zoom);
+        }
+
+        // What the view of somebody else asks for on this screen: the zoom is a multiple of the distance that frames the table here.
+        private void TakeShared()
+        {
+            ViewPose pose = _shared;
+            _goalDistance = Mathf.Clamp(pose.Zoom * _plan.Distance, _plan.MinDistance, _plan.MaxDistance);
+            if (_plan.Trackball)
+            {
+                if (pose.HasTurn)
+                    _goalOrientation = Quaternion.Normalize(new Quaternion(pose.TurnX, pose.TurnY, pose.TurnZ, pose.TurnW));
+            }
+            else if (!pose.HasTurn)
+            {
+                _goalYaw = CameraMath.WrapDegrees(pose.Yaw);
+                _goalPitch = _plan.FreePitch ? CameraMath.WrapDegrees(pose.Pitch) : CameraMath.ClampPitch(pose.Pitch, _plan.MinPitch, _plan.MaxPitch);
+            }
+        }
+
+        // Puts the camera where it wants to go at once.
+        private void Snap()
+        {
+            _orientation = _goalOrientation;
+            _target = _goalTarget;
+            _yaw = _goalYaw;
+            _pitch = _goalPitch;
+            _distance = _goalDistance;
+            Apply();
         }
 
         public void Drag(DragMode mode, Vector2 mouseDelta, float screenHeight)
@@ -89,6 +151,8 @@ namespace BoardSandbox.Client.Cameras
 
         public void Orbit(Vector2 mouseDelta)
         {
+            if (_shared != null)
+                return;
             _userMoved = true;
             if (_plan.Trackball)
             {
@@ -100,6 +164,8 @@ namespace BoardSandbox.Client.Cameras
 
         public void Pan(Vector2 mouseDelta, float screenHeight)
         {
+            if (_shared != null)
+                return;
             _userMoved = true;
             Vector3 moved = _goalTarget + (_plan.Trackball
                 ? CameraMath.ScreenPanOffset(_goalOrientation, mouseDelta, _goalDistance, _plan.Fov, screenHeight)
@@ -113,7 +179,7 @@ namespace BoardSandbox.Client.Cameras
 
         public void Zoom(float wheelNotches)
         {
-            if (!_settings.Zoom)
+            if (_shared != null || !_settings.Zoom)
                 return;
             _userMoved = true;
             _goalDistance = CameraMath.Zoom(_goalDistance, wheelNotches, _plan.MinDistance, _plan.MaxDistance);

@@ -14,6 +14,10 @@ namespace BoardSandbox.Core.Net
     {
         private const int MaxCommandsPerUpdate = 30;
 
+        // The least time between two views of one player that go out to the others, in seconds. A player who sends more often has the
+        // views in between left out; the newest one is always passed on.
+        private const double ViewRelayInterval = 0.05;
+
         private sealed class Table
         {
             public NetBoard Board;
@@ -26,6 +30,10 @@ namespace BoardSandbox.Core.Net
         private readonly GameHost _host;
         private readonly List<Table> _tables = new List<Table>();
         private readonly Random _random = new Random();
+        private readonly HashSet<ulong> _viewsDue = new HashSet<ulong>();
+        private readonly Dictionary<ulong, double> _viewRelayedAt = new Dictionary<ulong, double>();
+        private readonly List<ulong> _viewsNow = new List<ulong>();
+        private readonly Dictionary<ulong, ChatLimiter> _chatLimiters = new Dictionary<ulong, ChatLimiter>();
         private readonly bool _fill;
         private readonly int _players;
         private JsonValue _options;
@@ -79,6 +87,21 @@ namespace BoardSandbox.Core.Net
 
         // How many seats the game that is on, or about to be started, plays with.
         private int SeatsOfGame => Mod.Manifest.SeatCount(_options);
+
+        public override bool SharesViews => !IsClosed && SplitScreen;
+
+        protected override void PassOnView(ViewPose pose)
+        {
+            ViewList[LocalId] = pose;
+            Relay(LocalId, pose);
+        }
+
+        public override bool CanChat => !IsClosed;
+
+        protected override void PassOnChat(string text)
+        {
+            Post(LocalId, text);
+        }
 
         public override bool CanAct
         {
@@ -150,6 +173,7 @@ namespace BoardSandbox.Core.Net
             }
             if (IsClosed)
                 return;
+            RelayViews();
             Flush();
             CheckFinished();
         }
@@ -187,6 +211,18 @@ namespace BoardSandbox.Core.Net
             if (type == "hello" && player == null)
             {
                 Welcome(peer, message);
+                return;
+            }
+            if (type == "view")
+            {
+                if (player != null)
+                    ReceiveView(player, message);
+                return;
+            }
+            if (type == "chat")
+            {
+                if (player != null)
+                    ReceiveChat(player, message);
                 return;
             }
             if (type != "cmd" || player == null || !message["command"].IsObject)
@@ -234,13 +270,22 @@ namespace BoardSandbox.Core.Net
             Flush();
             NetPlayer player = new NetPlayer { Id = peer, Name = CleanName(hello["name"].AsString()) };
             PlayerList.Add(player);
-            Send(peer, Message("welcome").Set("proto", Protocol).Set("you", IdText(peer)));
+            Send(peer, Message("welcome").Set("proto", Protocol).Set("you", IdText(peer)).Set("view", SplitScreen).Set("chat", true));
             Arrange();
             foreach (Table table in _tables)
             {
                 // A table that was opened just now tells its whole story with the next flush.
                 if (table.Outbox.Count == 0)
                     SendState(peer, table);
+            }
+            if (SplitScreen)
+            {
+                // The newcomer sees the tables of the others the way their owners look at them from the start.
+                foreach (KeyValuePair<ulong, ViewPose> view in ViewList)
+                {
+                    if (view.Key != peer && FindPlayer(view.Key) != null)
+                        Send(peer, ViewMessage(view.Value, view.Key));
+                }
             }
             if (_fill)
                 Tell(player.Name + (ComputerSeatList.Count > 0 ? " joined. Start a new game to play with them." : " joined and watches."));
@@ -254,6 +299,10 @@ namespace BoardSandbox.Core.Net
             if (player == null)
                 return;
             PlayerList.Remove(player);
+            ViewList.Remove(peer);
+            _viewsDue.Remove(peer);
+            _viewRelayedAt.Remove(peer);
+            _chatLimiters.Remove(peer);
             if (_fill && player.Seat > 0 && player.Seat <= SeatsOfGame && _host.SetSeatMode(player.Seat, _host.ComputerMode))
             {
                 // The game goes on from where it stands, with the computer in the seat.
@@ -515,6 +564,79 @@ namespace BoardSandbox.Core.Net
             foreach (NetPlayer player in PlayerList)
             {
                 if (player.Id != LocalId)
+                    Send(player.Id, message);
+            }
+        }
+
+        // What a player says goes to everybody, the player included, under the name that the room has of them: the host does not take
+        // a name or a sender from the message. The text is cleaned, and a player who says too much is not passed on and told so.
+        private void ReceiveChat(NetPlayer player, JsonValue message)
+        {
+            string text = ChatText.Clean(message["text"].AsString());
+            if (text.Length == 0)
+                return;
+            if (!_chatLimiters.TryGetValue(player.Id, out ChatLimiter limiter))
+            {
+                limiter = new ChatLimiter();
+                _chatLimiters[player.Id] = limiter;
+            }
+            double now = _host.Now;
+            if (!limiter.Allow(now))
+            {
+                if (limiter.ShouldWarn(now))
+                    Note(player.Id, "You are talking too fast.", ToastLevel.Warning);
+                return;
+            }
+            Post(player.Id, text);
+        }
+
+        // Adds a line to the chat here and tells everybody else, the player who said it among them.
+        private void Post(ulong from, string text)
+        {
+            NetPlayer player = FindPlayer(from);
+            string name = player != null ? player.Name : "Player";
+            AddChat(from, name, text);
+            Broadcast(ChatMessage(from, name, text));
+        }
+
+        // What a player sends about how they look at their table is kept, and goes out to the others with the next RelayViews.
+        private void ReceiveView(NetPlayer player, JsonValue message)
+        {
+            if (!SplitScreen || !ViewPose.TryRead(message, out ViewPose pose))
+                return;
+            ViewList[player.Id] = pose;
+            _viewsDue.Add(player.Id);
+        }
+
+        // Passes the views that came in on to the others: every player's at most once in ViewRelayInterval, and of several that came
+        // in meanwhile the newest only, so that the last one of a movement is never lost.
+        private void RelayViews()
+        {
+            if (_viewsDue.Count == 0)
+                return;
+            double now = _host.Now;
+            _viewsNow.Clear();
+            foreach (ulong id in _viewsDue)
+            {
+                if (!_viewRelayedAt.TryGetValue(id, out double last) || now - last >= ViewRelayInterval)
+                    _viewsNow.Add(id);
+            }
+            foreach (ulong id in _viewsNow)
+            {
+                _viewsDue.Remove(id);
+                _viewRelayedAt[id] = now;
+                if (ViewList.TryGetValue(id, out ViewPose pose) && FindPlayer(id) != null)
+                    Relay(id, pose);
+            }
+        }
+
+        // Tells everybody but the player whose view it is, and the host itself.
+        private void Relay(ulong from, ViewPose pose)
+        {
+            JsonValue message = ViewMessage(pose, from);
+            foreach (NetPlayer player in PlayerList)
+            {
+                if (player.Id != LocalId && player.Id != from)
                     Send(player.Id, message);
             }
         }

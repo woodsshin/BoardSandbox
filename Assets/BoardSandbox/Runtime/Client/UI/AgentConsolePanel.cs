@@ -94,7 +94,7 @@ namespace BoardSandbox.Client.UI
             IsOpen = false;
             _submitIn = 0;
             _inputFocused = false;
-            ImeSupport.Prefer(false);
+            ImeSupport.Prefer(this, false);
             Area = default;
             _releaseFocus();
         }
@@ -112,7 +112,7 @@ namespace BoardSandbox.Client.UI
             if (!_drawn && _inputFocused)
             {
                 _inputFocused = false;
-                ImeSupport.Prefer(false);
+                ImeSupport.Prefer(this, false);
             }
             _drawn = false;
 
@@ -159,7 +159,7 @@ namespace BoardSandbox.Client.UI
                     _focusInput = false;
                 }
                 _inputFocused = GUI.GetNameOfFocusedControl() == InputField;
-                ImeSupport.Prefer(_inputFocused);
+                ImeSupport.Prefer(this, _inputFocused);
             }
         }
 

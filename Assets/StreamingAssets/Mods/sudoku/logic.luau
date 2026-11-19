@@ -24,6 +24,11 @@
 -- up, the digit grows, then both settle in green), and from then on the digits of the unit are locked: they can
 -- not be changed or taken out any more. When one digit finishes several units, they are one wave.
 --
+-- Notes: a long press on a cell (or the right button, or shift) writes the chosen digit in it as a small candidate.
+-- The note key on the pad, after the eraser (or the M key), switches note mode on and off for the seat; while it is
+-- on, a plain tap writes the note and a long press still does. The eraser works as it did in note mode. Whether a
+-- seat is in note mode is its own, like what it chose on the pad, and the key is lit in the color of every seat that is.
+--
 -- Under every key of a digit a small number says how many of that digit are still to be put on the grid. When all
 -- nine are on the grid the key goes from the pad (a digit can not be on the grid more than nine times), and comes
 -- back when one of them is taken out.
@@ -41,10 +46,11 @@
 --            note {x, y, digit}    write a candidate in an empty cell, or rub it out
 --            hint {x, y}           spend a hint: x and y name the cell, and without them the game picks one (see above)
 --            select {digit}        choose a digit (1 to 9), the eraser (10) or nothing (0) for the seat; again to let go
+--            note_mode {on}        switch note mode on or off for the seat (the other of the two without on)
 --            tap {id, hold}        what a click sends: on a key, select it; on a cell, enter the chosen digit
---                                  (again to take it out), or with hold, shift or the right button note it.
+--                                  (again to take it out), or with hold, shift, the right button or note mode note it.
 --                                  A tap on a filled cell with nothing chosen chooses its digit. A tap on the hint
---                                  key spends a hint.
+--                                  key spends a hint, and a tap on the note key switches note mode.
 --
 -- Options:   level   how hard the puzzle is: 1 normal, 2 hard, 3 expert. A normal puzzle is thinned down to `clues`
 --                    clues. A hard one can not be solved with singles alone (a cell with one digit left, a digit
@@ -61,7 +67,8 @@
 --                                 puzzle as the game measured it (1 to 3 like the levels, 0 when the puzzle has
 --                                 more than one solution), the clues, how far the puzzle is, the grid and the
 --                                 puzzle as 81 digits (0 is empty),
---                                 what seat 1 chose on the pad (selected) and what each seat chose (chosen), who put
+--                                 what seat 1 chose on the pad (selected) and what each seat chose (chosen), whether each
+--                                 seat is in note mode (noting), who put
 --                                 the digit in each cell (owners: 81 digits, 0 for a clue or an empty cell, else the
 --                                 seat), how many of each digit are still to be put on the grid (9 digits), how
 --                                 many cells are locked and how many hints are left (of how many there were)
@@ -124,10 +131,11 @@ local CONFLICT_COLOR = "#ff5c5c"
 local DONE_COLOR = "#1f9d6b" -- a digit of a finished unit
 local DIGIT_SIZE = 0.82 -- the label_size of a digit, as in config.json
 
--- The pad: keys 1 to 9 and the eraser, in a row below the grid.
+-- The pad: keys 1 to 9 and the eraser, in a row below the grid, then the note key and the hint key. The step is as small
+-- as it takes to keep the row as wide as it was before the note key.
 local KEYS = 10
 local ERASER = 10
-local KEY_STEP = 0.96
+local KEY_STEP = 0.88
 local KEY_ROW = 5.75
 local KEY_LOOKS: { [string]: { [string]: any } } = {
 	idle = { color = "#e8ecf2", label_color = "#2f343d" },
@@ -213,6 +221,9 @@ local hints_total = 0 -- how many hints the game started with
 local hints_left = 0
 local hint_id = 0 -- the hint key on the table, 0 for none
 local hint_look = ""
+local noting: { boolean } = { false, false } -- whether each seat writes a note with a plain tap (note mode)
+local note_key = 0 -- the note key on the table, 0 for none
+local note_key_look = ""
 
 local function clamp_integer(value: any, fallback: number, low: number, high: number): number
 	if type(value) ~= "number" or value ~= value then
@@ -318,6 +329,7 @@ local function set_puzzle(cells: { number }, answer: { number })
 	notes = table.create(CELLS, 0)
 	entered = table.create(CELLS, 0)
 	selected = { 0, 0 }
+	noting = { false, false }
 	clues = 0
 	for i = 1, CELLS do
 		given[i] = cells[i] ~= 0
@@ -483,6 +495,32 @@ local function hint_props(): { [string]: any }
 	}
 end
 
+-- What the note key looks like: gone (not on the table), or lit in the color of each seat in note mode, with "on" or "off"
+-- under it.
+local function mode_look(): string
+	local first = noting[1]
+	local second = noting[2]
+	if first and second then
+		return "both"
+	end
+	return if first then "chosen" elseif second then "chosen2" else "idle"
+end
+
+local function mode_state(): string
+	return if note_key == 0 then "gone" else mode_look()
+end
+
+local function mode_props(): { [string]: any }
+	local look = mode_look()
+	local colors = KEY_LOOKS[look]
+	return {
+		visible = true,
+		color = colors.color,
+		label_color = colors.label_color,
+		labels = { { text = if look == "idle" then "off" else "on", dx = 0, dy = COUNT_DY, size = COUNT_SIZE, color = COUNT_COLOR, bold = false } },
+	}
+end
+
 -- What the tiles and keys should show, without telling the table: after a restore the table already shows it.
 local function remember_looks()
 	for i = 1, CELLS do
@@ -493,6 +531,7 @@ local function remember_looks()
 		key_look[key] = key_state(key)
 	end
 	hint_look = hint_state()
+	note_key_look = mode_state()
 end
 
 -- Brings the tiles and the keys up to date; only what changed is sent to the table.
@@ -534,6 +573,13 @@ local function refresh_table()
 			bse.view.set(hint_id, hint_props())
 		end
 	end
+	if note_key ~= 0 then
+		local state = mode_state()
+		if state ~= note_key_look then
+			note_key_look = state
+			bse.view.set(note_key, mode_props())
+		end
+	end
 end
 
 -- The tiles under the cells and the pad below the grid. Mods place free objects with x to the right and z
@@ -544,6 +590,7 @@ local function spawn_table()
 	cell_of_tile = {}
 	key_of_object = {}
 	hint_id = 0
+	note_key = 0
 	remember_looks()
 	for i = 1, CELLS do
 		local look = TILE_LOOKS[tile_look[i]]
@@ -553,8 +600,9 @@ local function spawn_table()
 		tiles[i] = id
 		cell_of_tile[id] = i
 	end
-	-- The pad is centered under the grid; the hint key, when the game has hints, is the last one of it.
-	local slots = if hints_total > 0 then KEYS + 1 else KEYS
+	-- The pad is centered under the grid; the note key follows the eraser, and the hint key, when the game has hints, is
+	-- the last one of it.
+	local slots = if hints_total > 0 then KEYS + 2 else KEYS + 1
 	for key = 1, KEYS do
 		local props = key_props(key)
 		props.pos = { (key - (slots + 1) / 2) * KEY_STEP, 0, KEY_ROW }
@@ -563,6 +611,11 @@ local function spawn_table()
 		keys[key] = id
 		key_of_object[id] = key
 	end
+	local mode = mode_props()
+	mode.pos = { (KEYS + 1 - (slots + 1) / 2) * KEY_STEP, 0, KEY_ROW }
+	mode.label = "Note"
+	note_key = bse.view.spawn("mode", 0, 0, { props = mode })
+	note_key_look = mode_state()
 	if hints_total > 0 then
 		local props = hint_props()
 		props.pos = { (slots - (slots + 1) / 2) * KEY_STEP, 0, KEY_ROW }
@@ -948,6 +1001,16 @@ local function choose(seat: number, key: number): any
 	return nil
 end
 
+-- Switches note mode on or off for the seat.
+local function set_note_mode(seat: number, on: boolean): any
+	if noting[seat] == on then
+		return bse.reject("UNCHANGED", if on then "note mode is on already" else "note mode is off already")
+	end
+	noting[seat] = on
+	refresh_table()
+	return nil
+end
+
 -- Why nobody can change the cell: it is part of the puzzle or of a finished unit.
 local function why_fixed(i: number): any
 	if given[i] then
@@ -1045,8 +1108,10 @@ local function use_hint(seat: number, target: number): any
 	return nil
 end
 
--- A tap of the seat on a cell: what it does depends on what the seat chose on the pad and on whether it is a note.
-local function tap_cell(seat: number, i: number, as_note: boolean): any
+-- A tap of the seat on a cell: what it does depends on what the seat chose on the pad and on whether it is a note. A hold,
+-- shift or the right button (held) makes it one, and so does every tap while the seat is in note mode.
+local function tap_cell(seat: number, i: number, held: boolean): any
+	local as_note = held or noting[seat]
 	local x = COLUMN[i]
 	local y = ROW[i]
 	local pick = selected[seat]
@@ -1061,7 +1126,8 @@ local function tap_cell(seat: number, i: number, as_note: boolean): any
 		if given[i] or locked[i] then
 			return why_fixed(i)
 		end
-		if grid[i] ~= 0 and not as_note then
+		-- Note mode does not keep the eraser from taking a digit out.
+		if grid[i] ~= 0 and not held then
 			enter(seat, i, 0)
 			return nil
 		end
@@ -1114,6 +1180,7 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 		and action ~= "cycle"
 		and action ~= "note"
 		and action ~= "select"
+		and action ~= "note_mode"
 		and action ~= "tap"
 		and action ~= "hint"
 	then
@@ -1137,6 +1204,14 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 		return choose(seat, if key == 0 then selected[seat] else key)
 	end
 
+	if action == "note_mode" then
+		local on = cmd.on
+		if on ~= nil and type(on) ~= "boolean" then
+			return bse.reject("INVALID_ARGUMENT", "on must be true or false")
+		end
+		return set_note_mode(seat, if on == nil then not noting[seat] else on)
+	end
+
 	if action == "tap" then
 		local id = cmd.id
 		if not is_integer(id) then
@@ -1144,6 +1219,9 @@ function rules.command(seat: number, cmd: { [string]: any }): any
 		end
 		if hint_id ~= 0 and id == hint_id then
 			return use_hint(seat, 0)
+		end
+		if note_key ~= 0 and id == note_key then
+			return set_note_mode(seat, not noting[seat])
 		end
 		local key = key_of_object[id]
 		if key ~= nil then
@@ -1314,6 +1392,7 @@ function rules.query(name: string, args: any): any
 			puzzle = puzzle_text(),
 			selected = selected[1],
 			chosen = { selected[1], selected[2] },
+			noting = { noting[1], noting[2] },
 			owners = owners_text(),
 			remaining = remaining_text(),
 			locked = locked_count(),
@@ -1407,6 +1486,8 @@ function rules.snapshot(): any
 		tiles = table.clone(tiles),
 		keys = table.clone(keys),
 		hint = hint_id,
+		note_key = note_key,
+		noting = table.clone(noting),
 		hints = hints_left,
 		hints_total = hints_total,
 		notes = table.clone(notes),
@@ -1540,6 +1621,35 @@ function rules.restore(data: any)
 		end
 		new_hint = hint_object
 	end
+	-- The note key and who is in note mode; a snapshot from before there was a note key has neither.
+	local new_note_key = 0
+	local note_object = data.note_key
+	if note_object ~= nil then
+		if not is_integer(note_object) then
+			refuse_snapshot("the note key does not match the table")
+		end
+		if note_object ~= 0 then
+			local object = bse.view.get(note_object)
+			if object == nil or object.kind ~= "mode" then
+				refuse_snapshot("the note key does not match the table")
+			end
+		end
+		new_note_key = note_object
+	end
+	local new_noting: { boolean } = { false, false }
+	local noting_list = data.noting
+	if noting_list ~= nil then
+		if type(noting_list) ~= "table" or #noting_list ~= SEATS then
+			refuse_snapshot("note mode does not match the seats")
+		end
+		for seat = 1, SEATS do
+			local on = noting_list[seat]
+			if type(on) ~= "boolean" then
+				refuse_snapshot("note mode does not match the seats")
+			end
+			new_noting[seat] = on
+		end
+	end
 	local new_cell_of_tile: { [number]: number } = {}
 	local new_key_of_object: { [number]: number } = {}
 	for i = 1, CELLS do
@@ -1573,6 +1683,8 @@ function rules.restore(data: any)
 	selected = new_selected
 	clues = new_clues
 	hint_id = new_hint
+	note_key = new_note_key
+	noting = new_noting
 	hints_total = if new_hint ~= 0 then clamp_integer(data.hints_total, DEFAULT_HINTS, 1, MAX_HINTS) else 0
 	hints_left = if new_hint ~= 0 then clamp_integer(data.hints, 0, 0, hints_total) else 0
 	recount()
