@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 
@@ -20,6 +21,7 @@ namespace BoardSandbox.Client.UI
 
         private static readonly PropertyInfo Composition = Find("compositionString", typeof(string));
         private static readonly PropertyInfo Mode = Find("imeCompositionMode", null);
+        private static readonly List<object> Wanting = new List<object>();
         private static bool _preferred;
 
         // Whether the state of the composition can be read at all.
@@ -44,10 +46,23 @@ namespace BoardSandbox.Client.UI
             }
         }
 
-        // Keeps the input method switched on while a field that takes prose has the keyboard, and gives the
-        // decision back to Unity when it has not. Unity normally does this by itself for a focused text field; this
-        // makes sure of it.
-        public static void Prefer(bool on)
+        // Keeps the input method switched on while a field that takes prose has the keyboard, and gives the decision
+        // back to Unity when none has. Unity normally does this by itself for a focused text field; this makes sure of
+        // it. Every field says for itself, with its owner as the key, so that two windows that each have a field do not
+        // undo what the other asked for: the input method is on while any of them wants it.
+        public static void Prefer(object owner, bool on)
+        {
+            if (owner == null)
+                return;
+            int index = Wanting.IndexOf(owner);
+            if (on && index < 0)
+                Wanting.Add(owner);
+            else if (!on && index >= 0)
+                Wanting.RemoveAt(index);
+            Apply(Wanting.Count > 0);
+        }
+
+        private static void Apply(bool on)
         {
             if (on == _preferred || Mode == null)
                 return;

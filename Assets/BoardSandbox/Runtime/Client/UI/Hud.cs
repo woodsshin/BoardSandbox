@@ -51,6 +51,7 @@ namespace BoardSandbox.Client.UI
         private bool _showOptions = true;
 
         private readonly ChatWatch _chatWatch = new ChatWatch();
+        private bool _chatFolded;
 
         private double _now;
         private string _status = string.Empty;
@@ -67,19 +68,27 @@ namespace BoardSandbox.Client.UI
             _library = new GameLibraryPanel(host, multiplayer, theme, Defer, () => _releaseFocus = true, OpenStudio,
                 entry => studio.CanDelete(entry.Mod), entry => DeleteGame(studio, entry));
             _agents = new AgentConsolePanel(studio, theme, () => _host.Now, Defer, () => _releaseFocus = true);
-            _chat = new ChatPanel(theme);
+            _chat = new ChatPanel(theme, () => Defer(ToggleChat));
             _library.GameChosen += PutAwayConsole;
             _host.SessionReplaced += OnSessionReplaced;
             _multiplayer.RoomChanged += OnRoomChanged;
             _multiplayer.RoomLost += OpenLibrary;
         }
 
-        // True while the panels are folded away so that they do not cover the table.
+        // True while the panels of the game (its options and the room) are folded away so that they do not cover the table. The chat is
+        // not one of them: it has a button of its own, see ToggleChat.
         public bool Collapsed { get; private set; }
 
         public void ToggleCollapsed()
         {
             Collapsed = !Collapsed;
+            _releaseFocus = true;
+        }
+
+        // Folds the chat of a room away, so that only a tab is left of it, or shows it again. It runs between two frames, deferred.
+        private void ToggleChat()
+        {
+            _chatFolded = !_chatFolded;
             _releaseFocus = true;
         }
 
@@ -202,15 +211,16 @@ namespace BoardSandbox.Client.UI
             }
         }
 
-        // Where the chat of the room stands on the screen. There is one in a room whose host passes it on, unless the panels are folded away
-        // or a list covers the screen. The AI console and the console of commands are in its way where they are.
+        // Where the chat of the room stands on the screen. There is one in a room whose host passes it on, unless a list covers the screen;
+        // folded away, it is a tab. The panels of the game being folded away has no say in it. The AI console and the console of commands
+        // are in its way where they are.
         private ChatPlacement ChatNow()
         {
             NetRoom room = _multiplayer.Room;
-            bool available = room != null && room.CanChat && !Collapsed && !ModalOpen;
+            bool available = room != null && room.CanChat && !ModalOpen;
             float rightEdge = _agents.IsOpen && _agents.Area.width > 0f ? _agents.Area.x : Width;
             float console = _showConsole ? _theme.Sf(240) + Margin : 0f;
-            return ChatLayout.Place(Width, Height, _theme.Scale, Margin, available, rightEdge, console);
+            return ChatLayout.Place(Width, Height, _theme.Scale, Margin, available, rightEdge, console, _chatFolded);
         }
 
         public void Defer(Action action)
@@ -254,8 +264,9 @@ namespace BoardSandbox.Client.UI
             _toasts.AddRange(_host.Toasts.Active(now));
             _agents.Snapshot();
             _chat.Snapshot(_multiplayer.Room, now);
-            // What is said while the chat is put away would be missed.
-            _chatWatch.Update(_multiplayer.Room, ChatNow().Dock != ChatDock.None, _host.Toasts, now);
+            // What is said while the chat is put away, or has no room, would be missed.
+            ChatDock dock = ChatNow().Dock;
+            _chatWatch.Update(_multiplayer.Room, dock == ChatDock.Right || dock == ChatDock.Bottom, _host.Toasts, now);
 
             SampleStatus();
         }
@@ -292,6 +303,10 @@ namespace BoardSandbox.Client.UI
 
             HandleKeys(e);
             DrawChatBackground();
+            // The chat is drawn before the panels, not after them: the controls of IMGUI are known by the order they are made in, so a
+            // field that comes after panels whose buttons come and go with the game would be taken for another control, and lose
+            // the keyboard, in the middle of a line.
+            DrawChat();
             DrawBanner();
             if (Collapsed)
             {
@@ -306,7 +321,6 @@ namespace BoardSandbox.Client.UI
                 DrawGamePanel();
                 DrawConsole();
             }
-            DrawChat();
             if (_agents.IsOpen)
             {
                 // No camera draws into the strip that the console takes, so it gets a background of its own.
@@ -328,7 +342,7 @@ namespace BoardSandbox.Client.UI
             if (Event.current.type != EventType.Repaint)
                 return;
             ChatPlacement chat = ChatNow();
-            if (chat.Dock == ChatDock.None)
+            if (chat.Dock != ChatDock.Right && chat.Dock != ChatDock.Bottom)
                 return;
             Rect rect = chat.Dock == ChatDock.Right
                 ? new Rect(chat.X - Margin * 0.5f, 0f, Width - chat.X + Margin * 0.5f, Height)
@@ -342,10 +356,9 @@ namespace BoardSandbox.Client.UI
             ChatPlacement chat = ChatNow();
             if (room == null || chat.Dock == ChatDock.None)
                 return;
-            Rect area = new Rect(chat.X, chat.Y, chat.Width, chat.Height);
-            _chat.Draw(room, area);
+            _chat.Draw(chat, _chatWatch.Unread);
             if (Event.current.type == EventType.Repaint)
-                _rects.Add(area);
+                _rects.Add(new Rect(chat.X, chat.Y, chat.Width, chat.Height));
         }
 
         // Covers the table while a room is being opened or entered.
@@ -391,11 +404,9 @@ namespace BoardSandbox.Client.UI
             NetRoom guest = GuestRoom;
             ModManifest manifest = guest != null ? guest.Mod.Manifest : _host.Session?.Mod.Manifest;
             float width = _theme.Sf(250);
-            BeginArea(new Rect(Margin, Margin, width, Height - 2f * Margin));
+            BeginArea(new Rect(Margin, Margin, width, PanelHeight));
             BeginBox(width);
             DrawPanelHeader(manifest != null ? DisplayText.Clip(manifest.Name, 18) : "Board Sandbox");
-            if (_chatWatch.Unread > 0)
-                GUILayout.Label(_chatWatch.Unread == 1 ? "1 new chat message" : _chatWatch.Unread + " new chat messages", _theme.Muted);
             EndBox();
             EndArea();
         }

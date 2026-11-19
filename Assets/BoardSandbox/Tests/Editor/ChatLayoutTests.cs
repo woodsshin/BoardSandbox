@@ -10,9 +10,10 @@ namespace BoardSandbox.Tests
         private const float Margin = 12f;
         private const float Tolerance = 0.01f;
 
-        private static ChatPlacement Place(float width, float height, float scale = 1f, bool available = true, float rightEdge = 0f, float reserved = 0f)
+        private static ChatPlacement Place(float width, float height, float scale = 1f, bool available = true, float rightEdge = 0f, float reserved = 0f,
+            bool folded = false)
         {
-            return ChatLayout.Place(width, height, scale, Margin, available, rightEdge > 0f ? rightEdge : width, reserved);
+            return ChatLayout.Place(width, height, scale, Margin, available, rightEdge > 0f ? rightEdge : width, reserved, folded);
         }
 
         [Test]
@@ -136,6 +137,102 @@ namespace BoardSandbox.Tests
             Assert.IsTrue(crowded.Height > 0f);
             Assert.AreEqual(0.7f, crowded.BottomFraction, 1e-5f);
             Assert.AreEqual(ChatDock.None, Place(1080f, 2400f, 2.5f, true, 0f, 2400f).Dock, "no room left at all");
+        }
+
+        [Test]
+        public void FoldedAwayTheChatIsATabInTheCornerWhereItStood()
+        {
+            // Beside the table: at the top of where the column was, at its right end.
+            ChatPlacement tab = Place(1920f, 1080f, 1f, true, 0f, 0f, true);
+            Assert.AreEqual(ChatDock.Tab, tab.Dock);
+            Assert.AreEqual(ChatLayout.TabWidth, tab.Width, Tolerance);
+            Assert.AreEqual(ChatLayout.TabHeight, tab.Height, Tolerance);
+            Assert.AreEqual(1920f - Margin - ChatLayout.TabWidth, tab.X, Tolerance);
+            Assert.AreEqual(Margin, tab.Y, Tolerance);
+            Assert.AreEqual(0f, tab.RightFraction, "a tab takes no room from the table");
+            Assert.AreEqual(0f, tab.BottomFraction);
+
+            // Under the table: at the bottom right, and as big as the interface is.
+            ChatPlacement phone = Place(1080f, 2400f, 2.5f, true, 0f, 0f, true);
+            Assert.AreEqual(ChatDock.Tab, phone.Dock);
+            Assert.AreEqual(ChatLayout.TabWidth * 2.5f, phone.Width, Tolerance);
+            Assert.AreEqual(ChatLayout.TabHeight * 2.5f, phone.Height, Tolerance);
+            Assert.AreEqual(1080f - Margin - phone.Width, phone.X, Tolerance);
+            Assert.AreEqual(2400f - Margin - phone.Height, phone.Y, Tolerance);
+            Assert.AreEqual(0f, phone.RightFraction);
+            Assert.AreEqual(0f, phone.BottomFraction);
+
+            // Shown again, the window is back and the table gives up its room.
+            Assert.AreEqual(ChatDock.Right, Place(1920f, 1080f, 1f, true, 0f, 0f, false).Dock);
+        }
+
+        [Test]
+        public void TheTabStaysClearOfTheConsolesAndIsNotWhereThereIsNoChat()
+        {
+            float edge = 1920f - 640f - Margin;
+            ChatPlacement besideConsole = Place(1920f, 1080f, 1f, true, edge, 0f, true);
+            Assert.AreEqual(ChatDock.Tab, besideConsole.Dock);
+            Assert.AreEqual(edge - Margin, besideConsole.X + besideConsole.Width, Tolerance, "left of the AI console");
+            Assert.AreEqual(1080f - Margin - ChatLayout.TabHeight, besideConsole.Y, Tolerance);
+
+            float console = 240f * 2.5f + Margin;
+            ChatPlacement aboveConsole = Place(1080f, 2400f, 2.5f, true, 0f, console, true);
+            Assert.AreEqual(ChatDock.Tab, aboveConsole.Dock);
+            Assert.AreEqual(2400f - Margin - console, aboveConsole.Y + aboveConsole.Height, Tolerance, "above the console of commands");
+
+            // Where the chat has no place its tab has none either, and nothing is shown for a screen or a room that is none.
+            Assert.AreEqual(ChatDock.None, Place(1080f, 2400f, 2.5f, true, 200f, 0f, true).Dock);
+            Assert.AreEqual(ChatDock.None, Place(1920f, 1080f, 1f, false, 0f, 0f, true).Dock);
+            Assert.AreEqual(ChatDock.None, Place(0f, 1080f, 1f, true, 0f, 0f, true).Dock);
+            Assert.AreEqual(ChatDock.None, Place(float.NaN, 1080f, 1f, true, 0f, 0f, true).Dock);
+        }
+
+        [Test]
+        public void TheTabIsThereWheneverTheChatIsAndStaysWhereItDoesNotGetInTheWay()
+        {
+            float[] widths = { 320f, 480f, 568f, 640f, 800f, 1024f, 1080f, 1280f, 1920f, 2400f, 3840f };
+            float[] heights = { 320f, 480f, 600f, 800f, 1080f, 1600f, 2400f };
+            float[] scales = { 0.75f, 1f, 1.5f, 2f, 2.5f, 3f };
+            float[] edges = { 0f, 0.3f, 0.5f, 0.8f };
+            float[] reserved = { 0f, 100f, 250f, 600f };
+            int tabs = 0;
+            foreach (float width in widths)
+            {
+                foreach (float height in heights)
+                {
+                    foreach (float scale in scales)
+                    {
+                        foreach (float edgeShare in edges)
+                        {
+                            foreach (float below in reserved)
+                            {
+                                float edge = edgeShare <= 0f ? width : width * edgeShare;
+                                string where = width + "x" + height + " scale " + scale + " edge " + edge + " reserved " + below;
+                                ChatPlacement window = ChatLayout.Place(width, height, scale, Margin, true, edge, below, false);
+                                ChatPlacement tab = ChatLayout.Place(width, height, scale, Margin, true, edge, below, true);
+                                if (window.Dock == ChatDock.None)
+                                {
+                                    Assert.AreEqual(ChatDock.None, tab.Dock, where);
+                                    continue;
+                                }
+                                tabs++;
+                                Assert.AreEqual(ChatDock.Tab, tab.Dock, where);
+                                Assert.AreEqual(0f, tab.RightFraction, where);
+                                Assert.AreEqual(0f, tab.BottomFraction, where);
+                                Assert.IsTrue(tab.Width > 0f && tab.Height > 0f, where);
+                                Assert.IsTrue(tab.Width <= ChatLayout.TabWidth * scale + Tolerance && tab.Height <= ChatLayout.TabHeight * scale + Tolerance, where);
+                                Assert.IsTrue(tab.X >= Margin - Tolerance && tab.Y >= Margin - Tolerance, where);
+                                Assert.IsTrue(tab.X + tab.Width <= edge - Margin + Tolerance, "not over the console, " + where);
+                                if (window.Dock == ChatDock.Right)
+                                    Assert.AreEqual(Margin, tab.Y, Tolerance, "at the top of the column, " + where);
+                                else
+                                    Assert.IsTrue(tab.Y + tab.Height <= height - below - Margin + Tolerance, "above the console of commands, " + where);
+                            }
+                        }
+                    }
+                }
+            }
+            Assert.Greater(tabs, 500, "the sweep has to reach the cases it is about");
         }
 
         [Test]

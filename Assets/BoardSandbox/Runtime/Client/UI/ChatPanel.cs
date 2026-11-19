@@ -7,7 +7,11 @@ using UnityEngine;
 namespace BoardSandbox.Client.UI
 {
     // The chat of a room: what the players have said, and a field to say something. Like the other panels it only reads state while
-    // it draws, and what it changes goes through Snapshot, which runs between two frames.
+    // it draws, and what it changes goes through Snapshot, which runs between two frames, and through the action it was given for
+    // folding the chat away, which has to defer what it does.
+    //
+    // The chat has a button of its own for that: "Hide" in its title bar puts it away, and what is left is a tab with "Show chat" on it
+    // over a corner of the table (see ChatLayout), which brings it back. The keys of the interface have nothing to do with it.
     public sealed class ChatPanel
     {
         private const string InputField = "bse-chat-input";
@@ -18,6 +22,7 @@ namespace BoardSandbox.Client.UI
         private const int SubmitFrames = 2;
 
         private readonly GuiTheme _theme;
+        private readonly Action _toggle;
         private readonly List<string> _lines = new List<string>();
         private readonly List<bool> _mine = new List<bool>();
 
@@ -27,12 +32,14 @@ namespace BoardSandbox.Client.UI
         private Vector2 _scroll;
         private bool _focusInput;
         private bool _inputFocused;
-        private bool _drawn;
+        private bool _inputDrawn;
         private int _submitIn;
 
-        public ChatPanel(GuiTheme theme)
+        // toggle: what the buttons of the chat do to fold it away or show it again; it has to be deferred by the one who gives it.
+        public ChatPanel(GuiTheme theme, Action toggle)
         {
             _theme = theme ?? throw new ArgumentNullException(nameof(theme));
+            _toggle = toggle ?? throw new ArgumentNullException(nameof(toggle));
         }
 
         // Samples what changes with time and sends what was asked for; call it once per frame before OnGUI, so that every pass of a
@@ -49,17 +56,17 @@ namespace BoardSandbox.Client.UI
                 _lines.Clear();
                 _mine.Clear();
             }
-            if (room == null)
-                return;
 
-            // While something else covers the chat its field cannot have the keyboard.
-            if (!_drawn && _inputFocused)
+            // While something else covers the field, or the chat is folded away, it cannot have the keyboard.
+            if (!_inputDrawn && _inputFocused)
             {
                 _inputFocused = false;
-                ImeSupport.Prefer(false);
+                ImeSupport.Prefer(this, false);
             }
-            _drawn = false;
+            _inputDrawn = false;
 
+            if (room == null)
+                return;
             if (_shownTotal != room.ChatTotal)
                 Rebuild(room);
 
@@ -68,11 +75,18 @@ namespace BoardSandbox.Client.UI
                 Submit(room, now);
         }
 
-        // Draws the chat in the given part of the screen.
-        public void Draw(NetRoom room, Rect area)
+        // Draws the chat where the placement says: its window, or the tab that is left of it when it is folded away. unread: how many
+        // lines of the others came in while it was folded away, for the tab.
+        public void Draw(ChatPlacement place, int unread)
         {
+            Rect area = new Rect(place.X, place.Y, place.Width, place.Height);
+            if (place.Dock == ChatDock.Tab)
+            {
+                DrawTab(area, unread);
+                return;
+            }
+
             Event e = Event.current;
-            _drawn = true;
 
             // The field uses up the keys it understands, so these are looked at before it is drawn.
             if (_inputFocused && e.type == EventType.KeyDown)
@@ -80,7 +94,7 @@ namespace BoardSandbox.Client.UI
 
             GUILayout.BeginArea(area);
             GUILayout.BeginVertical(_theme.Panel, GUILayout.Width(area.width), GUILayout.Height(area.height));
-            GUILayout.Label("Chat", _theme.Heading);
+            DrawHeader();
             DrawLines();
             DrawInput();
             GUILayout.EndVertical();
@@ -94,7 +108,7 @@ namespace BoardSandbox.Client.UI
                     _focusInput = false;
                 }
                 _inputFocused = GUI.GetNameOfFocusedControl() == InputField;
-                ImeSupport.Prefer(_inputFocused);
+                ImeSupport.Prefer(this, _inputFocused);
             }
         }
 
@@ -114,6 +128,23 @@ namespace BoardSandbox.Client.UI
             _scroll.y = float.MaxValue;
         }
 
+        // All that is left of the chat while it is folded away.
+        private void DrawTab(Rect area, int unread)
+        {
+            string label = unread <= 0 ? "Show chat" : "Show chat (" + (unread > 99 ? "99+" : unread.ToString()) + ")";
+            if (GUI.Button(area, label, _theme.Button))
+                _toggle();
+        }
+
+        private void DrawHeader()
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Chat", _theme.Heading, GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("Hide", _theme.Button, GUILayout.Width(_theme.Sf(64f))))
+                _toggle();
+            GUILayout.EndHorizontal();
+        }
+
         private void DrawLines()
         {
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
@@ -124,15 +155,22 @@ namespace BoardSandbox.Client.UI
             GUILayout.EndScrollView();
         }
 
+        // Where there is a keyboard, the field is the kind that the AI console has, the one Korean is typed into: it wraps a long line
+        // instead of scrolling it sideways. On a screen with a keyboard of its own it is the field that TouchText makes of a button.
         private void DrawInput()
         {
+            _inputDrawn = true;
+            float height = _theme.Sf(30f);
             GUILayout.BeginHorizontal();
             GUI.SetNextControlName(InputField);
-            _input = TouchText.Field(InputField, _input, ChatText.MaxLength, _theme.Field);
+            if (TouchText.Active)
+                _input = TouchText.Field(InputField, _input, ChatText.MaxLength, _theme.Field);
+            else
+                _input = TouchText.Area(InputField, _input, ChatText.MaxLength, _theme.Area, GUILayout.MinHeight(height), GUILayout.MaxHeight(_theme.Sf(96f)));
             // The done key of a keyboard on the screen is the enter key of this field.
             bool done = TouchText.Submitted(InputField);
             GUI.enabled = _input.Trim().Length > 0;
-            if (GUILayout.Button("Send", _theme.Button, GUILayout.Width(_theme.Sf(64f))) || done)
+            if (GUILayout.Button("Send", _theme.Button, GUILayout.Width(_theme.Sf(64f)), GUILayout.Height(height)) || done)
                 RequestSubmit();
             GUI.enabled = true;
             GUILayout.EndHorizontal();
@@ -144,6 +182,11 @@ namespace BoardSandbox.Client.UI
             {
                 e.Use();
                 RequestSubmit();
+            }
+            else if (e.character == '\n')
+            {
+                // The character that follows the key would put a line break into the emptied field.
+                e.Use();
             }
         }
 
